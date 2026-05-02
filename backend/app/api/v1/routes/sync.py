@@ -4,6 +4,7 @@ Endpoints de sincronização Clinicorp.
 POST /sync/clinicorp/static                   — 8 entidades estáticas
 POST /sync/clinicorp/transactional            — 1 entidade transacional / 1 mês
 POST /sync/clinicorp/transactional/batch      — N entidades transacionais / 1 mês
+POST /sync/clinicorp/kpis_monthly             — 10 endpoints agregados / 1 mês
 GET  /sync/jobs                               — lista jobs de sync recentes
 GET  /sync/checkpoints                        — estado por entidade
 """
@@ -18,6 +19,7 @@ from app.db.session import get_db
 from app.integrations.clinicorp.sync_service import (
     get_entity_spec,
     sync_all_static,
+    sync_kpis_monthly,
     sync_transactional_batch,
     sync_transactional_entity,
     TRANSACTIONAL_ENTITIES,
@@ -27,6 +29,7 @@ from app.models.sync_job import SyncJob
 from app.schemas.auth import UserMe
 from app.schemas.sync import (
     CheckpointResponse,
+    KpisMonthlyRequest,
     StaticSyncResponse,
     SyncJobResponse,
     TransactionalBatchRequest,
@@ -107,6 +110,24 @@ async def sync_clinicorp_transactional_batch(
         total_updated=sum(j.records_updated or 0 for j in jobs),
         total_errors=sum(j.errors_count or 0 for j in jobs),
     )
+
+
+@router.post("/clinicorp/kpis_monthly", response_model=SyncJobResponse, status_code=200)
+async def sync_clinicorp_kpis_monthly(
+    payload: KpisMonthlyRequest,
+    current_user: UserMe = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> SyncJobResponse:
+    """
+    Sincroniza os 10 endpoints agregados num único job mensal,
+    com chamadas em paralelo. Grava 1 linha em stg_cc_kpis_monthly.
+    """
+    tenant_id = _require_tenant(current_user)
+    try:
+        job = await sync_kpis_monthly(db, tenant_id, payload.year, payload.month)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return SyncJobResponse.model_validate(job)
 
 
 @router.get("/jobs", response_model=List[SyncJobResponse])

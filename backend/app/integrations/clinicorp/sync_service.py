@@ -12,6 +12,7 @@ Idempotência: chave única (tenant_id, external_id). Re-rodar nunca duplica.
 """
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Iterable
@@ -29,6 +30,7 @@ from app.models.staging import (
     StgCcCrmCampaigns,
     StgCcEstimates,
     StgCcInvoices,
+    StgCcKpisMonthly,
     StgCcPayments,
     StgCcProcedures,
     StgCcProfessionals,
@@ -114,9 +116,17 @@ TRANSACTIONAL_ENTITIES: tuple[EntitySpec, ...] = (
 )
 
 
+# ── Configuração das entidades agregadas ────────────────────────
+# kpis_monthly não tem client_method único (chama 10 endpoints) nem PK numérico
+# (PK = 'YYYY-MM-01'). Entrada aqui serve apenas para o lookup de modelo no checkpoint.
+AGGREGATED_ENTITIES: tuple[EntitySpec, ...] = (
+    EntitySpec("kpis_monthly", StgCcKpisMonthly, "", "external_id", None),
+)
+
+
 # Lookup name → spec, para resolver entidades vindas da API
 _ALL_ENTITIES_BY_NAME: dict[str, EntitySpec] = {
-    s.name: s for s in (*STATIC_ENTITIES, *TRANSACTIONAL_ENTITIES)
+    s.name: s for s in (*STATIC_ENTITIES, *TRANSACTIONAL_ENTITIES, *AGGREGATED_ENTITIES)
 }
 
 
@@ -371,3 +381,141 @@ async def sync_transactional_batch(
     for spec in specs:
         jobs.append(await sync_transactional_entity(db, tenant_id, spec, year, month))
     return jobs
+
+
+# ── KPIs mensais agregados ──────────────────────────────────────
+# 10 endpoints chamados em paralelo via asyncio.gather, gravados como
+# 1 linha por mês em stg_cc_kpis_monthly com external_id='YYYY-MM-01'.
+#
+# Alimentam dashboards executivos rápidos sem recalcular dos eventos.
+# Os values[] de financial/list_summary NÃO entram aqui (já estão em
+# stg_cc_summary_entries) — guardamos só os agregados.
+
+KPI_ENDPOINTS = (
+    "cash_flow",
+    "payments_aggregated",
+    "financial_summary",
+    "average_installments",
+    "appointment_info",
+    "estimates_conversion",
+    "expertise_revenue",
+    "patient_estimates",
+    "misses_goals",
+    "sales_goals",
+)
+
+
+async def _fetch_kpi_payloads(
+    client: ClinicorpClient, from_date: str, to_date: str,
+) -> tuple[dict[str, Any], dict[str, str]]:
+    """
+    Chama os 10 endpoints em paralelo. Retorna (payloads_ok, errors).
+    Falhas isoladas viram entradas no dict errors em vez de derrubar tudo.
+    """
+    methods = {
+        "cash_flow":            client.list_cash_flow,
+        "payments_aggregated":  client.list_payments_aggregated,
+        "financial_summary":    client.list_summary,
+        "average_installments": client.average_installments,
+        "appointment_info":     client.list_appointment_info,
+        "estimates_conversion": client.list_estimates_conversion,
+        "expertise_revenue":    client.list_expertise_revenue,
+        "patient_estimates":    client.list_patient_estimates,
+        "misses_goals":         client.list_misses_goals,
+        "sales_goals":          client.list_sales_goals,
+    }
+    keys = list(methods.keys())
+    results = await asyncio.gather(
+        *(m(from_date, to_date) for m in methods.values()),
+        return_exceptions=True,
+    )
+    payloads: dict[str, Any] = {}
+    errors: dict[str, str] = {}
+    for key, res in zip(keys, results):
+        if isinstance(res, Exception):
+            errors[key] = f"{type(res).__name__}: {res}"
+        else:
+            payloads[key] = res
+    return payloads, errors
+
+
+def _strip_summary_values(payload: Any) -> Any:
+    """list_summary retorna {From, To, ..., values[..]} — descartamos values[] aqui (já capturado em summary_entries)."""
+    if isinstance(payload, dict) and "values" in payload:
+        return {k: v for k, v in payload.items() if k != "values"}
+    return payload
+
+
+async def sync_kpis_monthly(
+    db: AsyncSession, tenant_id: str, year: int, month: int,
+) -> SyncJob:
+    """
+    Sincroniza os KPIs mensais agregados num único job.
+    Grava 1 linha em stg_cc_kpis_monthly com external_id='YYYY-MM-01'.
+    """
+    from_date, to_date = _period_bounds(year, month)
+    period_id = from_date.isoformat()  # 'YYYY-MM-01'
+    job = await _start_job(
+        db, tenant_id, "kpis_monthly",
+        period_from=from_date, period_to=to_date,
+    )
+
+    client = ClinicorpClient()
+    try:
+        payloads, errors = await _fetch_kpi_payloads(
+            client, from_date.isoformat(), to_date.isoformat(),
+        )
+        if "financial_summary" in payloads:
+            payloads["financial_summary"] = _strip_summary_values(payloads["financial_summary"])
+
+        # raw_data: dict com os 10 payloads (e erros, se houver)
+        raw_data = {
+            "period_from": from_date.isoformat(),
+            "period_to": to_date.isoformat(),
+            "endpoints_ok": list(payloads.keys()),
+            "endpoints_failed": list(errors.keys()),
+            "errors": errors,
+            "data": payloads,
+        }
+
+        existing = await _existing_external_ids(
+            db, StgCcKpisMonthly, tenant_id, [period_id],
+        )
+        is_update = period_id in existing
+
+        stmt = mysql_insert(StgCcKpisMonthly).values([{
+            "tenant_id": tenant_id,
+            "external_id": period_id,
+            "external_updated_at": _now(),
+            "raw_data": raw_data,
+            "synced_at": _now(),
+            "sync_job_id": job.id,
+        }])
+        stmt = stmt.on_duplicate_key_update(
+            external_updated_at=stmt.inserted.external_updated_at,
+            raw_data=stmt.inserted.raw_data,
+            synced_at=stmt.inserted.synced_at,
+            sync_job_id=stmt.inserted.sync_job_id,
+        )
+        await db.execute(stmt)
+
+        await _finish_job(
+            db, job,
+            fetched=len(payloads) + len(errors),
+            inserted=0 if is_update else 1,
+            updated=1 if is_update else 0,
+            errors_count=len(errors),
+            error_message=None if not errors else f"{len(errors)} endpoints falharam: {', '.join(errors.keys())}",
+        )
+    except ClinicorpError as exc:
+        await _finish_job(db, job, 0, 0, 0, errors_count=1, error_message=str(exc))
+    except Exception as exc:
+        await _finish_job(db, job, 0, 0, 0, errors_count=1, error_message=f"{type(exc).__name__}: {exc}")
+
+    await _update_checkpoint(
+        db, tenant_id, "kpis_monthly", job,
+        period_from=from_date, period_to=to_date,
+    )
+    await db.commit()
+    await db.refresh(job)
+    return job

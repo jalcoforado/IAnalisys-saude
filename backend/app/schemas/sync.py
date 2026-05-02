@@ -56,6 +56,12 @@ class TransactionalSyncResponse(BaseModel):
     total_errors: int
 
 
+class KpisMonthlyRequest(BaseModel):
+    """Request para sync dos KPIs mensais agregados num mês."""
+    year: int = Field(..., ge=2019, le=2100)
+    month: int = Field(..., ge=1, le=12)
+
+
 class CheckpointResponse(BaseModel):
     tenant_id: str
     source: str
