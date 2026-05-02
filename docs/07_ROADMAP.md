@@ -100,31 +100,71 @@ arquitetura profissional.
 
 ---
 
-### FASE 3 — Pipeline de dados (Clinicorp) ✅ (parcial — staging completo)
+### FASE 3 — Pipeline de dados (Clinicorp) ✅ (staging completo, record-level)
 
 **Objetivo:** Dados da Clinicorp entram no banco, limpos e organizados.
 
-#### Integração ✅
+#### Decisões de arquitetura (atualizado em 2026-05-02)
 
-- [x] Client HTTP para Clinicorp API (`app/integrations/clinicorp/client.py`) — 17 endpoints
-- [x] Worker de sync (`app/integrations/clinicorp/sync_service.py`)
-- [x] Tabelas staging (migration 0003, todos com tenant_id):
-  - `stg_appointments` — agendamentos
-  - `stg_estimates` — orçamentos
-  - `stg_cash_flow` — fluxo de caixa
-  - `stg_payments` — pagamentos
-  - `stg_analytics` — analytics gerais
-  - `stg_financial_summary` — resumo financeiro
-  - `stg_estimates_conversion` — conversão de orçamentos
-- [x] `sync_jobs` — rastreamento de status (pending/running/success/error)
-- [x] `POST /sync/clinicorp` — dispara sync manual
-- [x] `GET /sync/status` — lista últimos jobs do tenant
+A migration 0003 (snapshot por intervalo) foi **descartada** e substituída pela 0005:
+- Schema antigo guardava 1 linha por requisição com JSON do intervalo inteiro — sem dedup, sem delta.
+- Schema novo guarda **1 linha por registro real**, com `UNIQUE(tenant_id, external_id)` → upsert idempotente via `INSERT ... ON DUPLICATE KEY UPDATE`.
+- Re-rodar o mesmo período nunca duplica; só atualiza `raw_data` e `synced_at`.
+- Auditabilidade preservada (raw_data JSON intacto) → futura IA pode citar a origem do dado.
+
+#### Integração — Client + 23 endpoints ✅
+
+- [x] `ClinicorpClient` (`app/integrations/clinicorp/client.py`):
+  - 9 cadastros estáticos (sem período): business, users, professionals, specialties, procedures, appointment_categories, appointment_statuses, chairs, crm_campaigns
+  - 6 transacionais (por período): appointments, estimates, payments, invoices, receipts, summary
+  - 8 agregados (para kpis_monthly futuro): cash_flow, payments_aggregated, average_installments, appointment_info, estimates_conversion, expertise_revenue, patient_estimates, misses_goals, sales_goals, analytics
+
+#### Staging redesenhado (migration 0005) ✅
+
+15 tabelas `stg_cc_*` com schema uniforme:
+
+| Estáticas (8) | Transacionais (6) | Agregada (1) |
+|---|---|---|
+| stg_cc_business | stg_cc_appointments | stg_cc_kpis_monthly *(reservada — PR-3)* |
+| stg_cc_users | stg_cc_estimates *(JSON inclui ProcedureList)* | |
+| stg_cc_professionals | stg_cc_payments | |
+| stg_cc_specialties | stg_cc_invoices | |
+| stg_cc_procedures | stg_cc_receipts | |
+| stg_cc_appointment_categories | stg_cc_summary_entries *(lançamentos contábeis)* | |
+| stg_cc_appointment_statuses | | |
+| stg_cc_crm_campaigns | | |
+
+Todas têm: `id BIGINT PK`, `tenant_id`, `external_id`, `external_updated_at`, `raw_data JSON`, `synced_at`, `sync_job_id`, `UNIQUE(tenant_id, external_id)`.
+
+#### Controle de execução ✅
+
+- [x] `sync_jobs` recriada com schema completo: `entity`, `period_from/to DATE`, `started_at/finished_at/duration_ms`, `records_fetched/inserted/updated`, `errors_count`, `error_message`
+- [x] `sync_checkpoints` (PK = tenant + source + entity): rastreia `last_period_from/to`, `last_synced_at`, `status`, `total_records` (contagem real em staging)
+
+#### Endpoints ✅
+
+- [x] `POST /api/v1/sync/clinicorp/static` — sincroniza as 8 entidades estáticas em sequência
+- [x] `POST /api/v1/sync/clinicorp/transactional` body `{entity, year, month}` — 1 entidade / 1 mês
+- [x] `POST /api/v1/sync/clinicorp/transactional/batch` body `{year, month, entities?}` — N entidades / 1 mês
+- [x] `GET /api/v1/sync/jobs` — últimos N jobs (filtro opcional por entidade)
+- [x] `GET /api/v1/sync/checkpoints` — estado atual por entidade
+
+#### Smoke-test (2026-05-02) ✅
+
+8.499 registros importados com dados reais da Parente Odontologia:
+- Cadastros estáticos: 745 registros (8 entidades)
+- Abril/2024 (parcial): 4.312 registros
+- Abril+Maio/2026: 4.162 registros
+- Idempotência confirmada: re-rodar = 0 inserts, todos os registros viram updates
 
 #### Pendente
 
-- [ ] Transformação staging → core (core_appointments, core_patients, etc.)
-- [ ] Sync incremental com delta por updated_at
-- [ ] APScheduler para sync automático
+- [ ] **PR-3** — sync `kpis_monthly` (10 endpoints agregados em paralelo via `asyncio.gather`)
+- [ ] **PR-4** — Tela `/admin/sync` no React (heatmap por mês × entidade, disparo manual, log de execução)
+- [ ] **PR-5** — Transformação staging → core (`core_appointments`, `core_estimates`, `core_payments`, `core_patients` extraído de eventos, etc.)
+- [ ] Sync incremental com delta por `external_updated_at` (campos disponíveis: `LastChange_Date`, `z_LastChange_Date`, `ModifiedDate`)
+- [ ] APScheduler para sync automático recorrente
+- [ ] Decisão sobre pacientes: **escolhido extrair de eventos** (não há `/patient/list` na Clinicorp) — implementação em PR-5
 
 ---
 
@@ -350,26 +390,29 @@ Fase 1 ✅ → Fase 2 ✅ → Fase 3 ✅ (staging) → Fase 4 ✅ (OAuth) → Fa
 
 ## Próxima ação imediata
 
-**Fase 5 — Camada Analytics** ou **Fase 6 — Frontend React**
+**Próximo: PR-3** — sync de KPIs mensais agregados.
 
-### Opção A — Fase 5 (Analytics)
-Transformar dados de staging em tabelas fato/dim para IA e dashboards:
-- `fato_financeiro`, `fato_agenda`, `fato_orcamentos`
-- `dim_tempo`, `dim_profissional`, `dim_paciente`
-- Workers de transformação por tenant
+### Backlog ordenado da Fase 3 (sync Clinicorp)
 
-### Opção B — Fase 6 (Frontend React)
-Replicar o dashboard PHP (SIG 2026) em React com TanStack Query:
-- Login + AuthContext
-- Dashboard Executivo (Visão Geral)
-- Módulo Financeiro
-- Módulo Agendamentos
-- Módulo Comercial (Orçamentos)
+| PR | Status | Entrega |
+|---|---|---|
+| PR-1 | ✅ commit `b4e4a5d` | Migration 0005, schema record-level, sync estático |
+| PR-2 | ✅ commit `b4e4a5d` | Sync transacional por mês (6 entidades) |
+| **PR-3** | 🔜 **próximo** | `stg_cc_kpis_monthly`: 10 endpoints agregados em paralelo (`asyncio.gather`) |
+| PR-4 | pendente | Tela `/admin/sync` no React: heatmap mês × entidade, disparo manual, log |
+| PR-5 | pendente | Migration 0006 + workers staging → CORE |
+
+### Após PR-5: caminho para a IA
+
+- **Fase 5 (Analytics)** — fato_*/dim_* a partir do CORE → IA consulta SQL controlado, sem queries livres
+- **Fase 6 (Dashboards)** — Dashboard Executivo + Financeiro + Agendamentos + Comercial em React
+- **Fase 7 (AI Gateway)** — Claude/DeepSeek com prompt caching, controle de tokens por tenant
 
 ### Estado atual do banco (migrations aplicadas)
 | ID | Descrição |
 |---|---|
 | 0001 | initial_schema (tenants, roles, users, user_tenants + seed 6 papéis) |
 | 0002 | add_is_saas_admin_to_users |
-| 0003 | add_staging_and_sync_jobs (7 stg_* + sync_jobs) |
+| 0003 | (drop em 0005) staging snapshot por intervalo — descartada |
 | 0004 | add_contaazul_tokens |
+| 0005 | redesign_staging — 15 stg_cc_* record-level + sync_checkpoints + sync_jobs v2 |
