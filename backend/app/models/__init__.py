@@ -5,20 +5,33 @@ from app.models.user import User
 from app.models.role import Role
 from app.models.user_tenant import UserTenant
 from app.models.staging import (
-    StgAppointment,
-    StgEstimate,
-    StgCashFlow,
-    StgPayment,
-    StgAnalytics,
-    StgFinancialSummary,
-    StgEstimatesConversion,
+    StgCcBusiness,
+    StgCcUsers,
+    StgCcProfessionals,
+    StgCcSpecialties,
+    StgCcProcedures,
+    StgCcAppointmentCategories,
+    StgCcAppointmentStatuses,
+    StgCcCrmCampaigns,
+    StgCcAppointments,
+    StgCcEstimates,
+    StgCcPayments,
+    StgCcInvoices,
+    StgCcReceipts,
+    StgCcSummaryEntries,
+    StgCcKpisMonthly,
 )
 from app.models.sync_job import SyncJob
+from app.models.sync_checkpoint import SyncCheckpoint
 from app.models.contaazul_token import ContaAzulToken
 
 __all__ = [
     "Tenant", "User", "Role", "UserTenant",
-    "StgAppointment", "StgEstimate", "StgCashFlow",
-    "StgPayment", "StgAnalytics", "StgFinancialSummary",
-    "StgEstimatesConversion", "SyncJob", "ContaAzulToken",
+    "StgCcBusiness", "StgCcUsers", "StgCcProfessionals",
+    "StgCcSpecialties", "StgCcProcedures",
+    "StgCcAppointmentCategories", "StgCcAppointmentStatuses",
+    "StgCcCrmCampaigns", "StgCcAppointments", "StgCcEstimates",
+    "StgCcPayments", "StgCcInvoices", "StgCcReceipts",
+    "StgCcSummaryEntries", "StgCcKpisMonthly",
+    "SyncJob", "SyncCheckpoint", "ContaAzulToken",
 ]

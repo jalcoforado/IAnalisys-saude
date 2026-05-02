@@ -1,62 +1,139 @@
 """
-Endpoints de sincronização de dados externos.
+Endpoints de sincronização Clinicorp.
 
-POST /sync/clinicorp  — dispara sync para o tenant autenticado
-GET  /sync/status     — lista os últimos jobs de sync do tenant
+POST /sync/clinicorp/static                   — 8 entidades estáticas
+POST /sync/clinicorp/transactional            — 1 entidade transacional / 1 mês
+POST /sync/clinicorp/transactional/batch      — N entidades transacionais / 1 mês
+GET  /sync/jobs                               — lista jobs de sync recentes
+GET  /sync/checkpoints                        — estado por entidade
 """
 from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select, desc
+from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.dependencies.auth import get_current_user
 from app.db.session import get_db
-from app.integrations.clinicorp.sync_service import run_clinicorp_sync
+from app.integrations.clinicorp.sync_service import (
+    get_entity_spec,
+    sync_all_static,
+    sync_transactional_batch,
+    sync_transactional_entity,
+    TRANSACTIONAL_ENTITIES,
+)
+from app.models.sync_checkpoint import SyncCheckpoint
 from app.models.sync_job import SyncJob
 from app.schemas.auth import UserMe
-from app.schemas.sync import SyncJobResponse, SyncRequest
+from app.schemas.sync import (
+    CheckpointResponse,
+    StaticSyncResponse,
+    SyncJobResponse,
+    TransactionalBatchRequest,
+    TransactionalSyncRequest,
+    TransactionalSyncResponse,
+)
 
 router = APIRouter(prefix="/sync", tags=["sync"])
 
 
-@router.post("/clinicorp", response_model=SyncJobResponse, status_code=202)
-async def sync_clinicorp(
-    payload: SyncRequest,
+def _require_tenant(user: UserMe) -> str:
+    if not user.tenant_id:
+        raise HTTPException(status_code=400, detail="Usuário sem tenant associado.")
+    return user.tenant_id
+
+
+@router.post("/clinicorp/static", response_model=StaticSyncResponse, status_code=200)
+async def sync_clinicorp_static(
+    current_user: UserMe = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> StaticSyncResponse:
+    """
+    Dispara sync das 8 entidades estáticas Clinicorp.
+    Cada entidade gera um SyncJob independente. Falhas isoladas
+    não interrompem as demais.
+    """
+    tenant_id = _require_tenant(current_user)
+    jobs = await sync_all_static(db, tenant_id)
+    return StaticSyncResponse(
+        jobs=[SyncJobResponse.model_validate(j) for j in jobs],
+        total_inserted=sum(j.records_inserted or 0 for j in jobs),
+        total_updated=sum(j.records_updated or 0 for j in jobs),
+        total_errors=sum(j.errors_count or 0 for j in jobs),
+    )
+
+
+@router.post("/clinicorp/transactional", response_model=SyncJobResponse, status_code=200)
+async def sync_clinicorp_transactional(
+    payload: TransactionalSyncRequest,
     current_user: UserMe = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> SyncJobResponse:
-    """
-    Busca dados da Clinicorp para o período informado e salva no staging.
-    Requer autenticação — usa o tenant_id do usuário logado.
-    """
-    if not current_user.tenant_id:
-        raise HTTPException(status_code=400, detail="Usuário sem tenant associado.")
+    """Sincroniza UMA entidade transacional cobrindo o mês indicado."""
+    tenant_id = _require_tenant(current_user)
+    try:
+        spec = get_entity_spec(payload.entity)
+        if spec not in TRANSACTIONAL_ENTITIES:
+            raise ValueError(f"Entidade '{payload.entity}' não é transacional.")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
-    job = await run_clinicorp_sync(
-        db=db,
-        tenant_id=current_user.tenant_id,
-        from_date=payload.from_date,
-        to_date=payload.to_date,
-    )
+    try:
+        job = await sync_transactional_entity(db, tenant_id, spec, payload.year, payload.month)
+    except ValueError as exc:  # ex: mês ainda não começou
+        raise HTTPException(status_code=400, detail=str(exc))
+
     return SyncJobResponse.model_validate(job)
 
 
-@router.get("/status", response_model=List[SyncJobResponse])
-async def sync_status(
-    limit: int = 20,
+@router.post("/clinicorp/transactional/batch", response_model=TransactionalSyncResponse, status_code=200)
+async def sync_clinicorp_transactional_batch(
+    payload: TransactionalBatchRequest,
+    current_user: UserMe = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> TransactionalSyncResponse:
+    """Sincroniza várias entidades transacionais num único mês."""
+    tenant_id = _require_tenant(current_user)
+    try:
+        jobs = await sync_transactional_batch(
+            db, tenant_id, payload.year, payload.month, payload.entities,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    return TransactionalSyncResponse(
+        jobs=[SyncJobResponse.model_validate(j) for j in jobs],
+        total_inserted=sum(j.records_inserted or 0 for j in jobs),
+        total_updated=sum(j.records_updated or 0 for j in jobs),
+        total_errors=sum(j.errors_count or 0 for j in jobs),
+    )
+
+
+@router.get("/jobs", response_model=List[SyncJobResponse])
+async def list_sync_jobs(
+    limit: int = 50,
+    entity: str | None = None,
     current_user: UserMe = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> List[SyncJobResponse]:
-    """Retorna os últimos N jobs de sync do tenant autenticado."""
-    if not current_user.tenant_id:
-        raise HTTPException(status_code=400, detail="Usuário sem tenant associado.")
+    """Lista os últimos N jobs de sync do tenant. Filtro opcional por entidade."""
+    tenant_id = _require_tenant(current_user)
+    stmt = select(SyncJob).where(SyncJob.tenant_id == tenant_id)
+    if entity:
+        stmt = stmt.where(SyncJob.entity == entity)
+    stmt = stmt.order_by(desc(SyncJob.created_at)).limit(limit)
+    result = await db.execute(stmt)
+    return [SyncJobResponse.model_validate(j) for j in result.scalars().all()]
 
+
+@router.get("/checkpoints", response_model=List[CheckpointResponse])
+async def list_checkpoints(
+    current_user: UserMe = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> List[CheckpointResponse]:
+    """Estado atual de sync por entidade do tenant."""
+    tenant_id = _require_tenant(current_user)
     result = await db.execute(
-        select(SyncJob)
-        .where(SyncJob.tenant_id == current_user.tenant_id)
-        .order_by(desc(SyncJob.created_at))
-        .limit(limit)
+        select(SyncCheckpoint).where(SyncCheckpoint.tenant_id == tenant_id)
     )
-    jobs = result.scalars().all()
-    return [SyncJobResponse.model_validate(j) for j in jobs]
+    return [CheckpointResponse.model_validate(c) for c in result.scalars().all()]
