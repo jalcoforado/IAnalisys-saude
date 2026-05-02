@@ -1,0 +1,226 @@
+/*
+ * IAnalisys Design System — Component Classes
+ * Classes utilitárias baseadas nos tokens da marca
+ * Use via @apply no Tailwind ou diretamente no HTML
+ */
+
+@layer components {
+
+  /* ===== Buttons ===== */
+
+  .btn {
+    @apply inline-flex items-center justify-center gap-2
+           font-medium rounded-sm
+           transition-all duration-200
+           focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2
+           disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+
+  .btn-sm {
+    @apply px-3 py-1.5 text-xs;
+  }
+
+  .btn-md {
+    @apply px-4 py-2 text-sm;
+  }
+
+  .btn-lg {
+    @apply px-6 py-3 text-base;
+  }
+
+  .btn-primary {
+    @apply btn bg-primary-600 text-white
+           hover:bg-primary-700
+           active:bg-primary-800;
+  }
+
+  .btn-secondary {
+    @apply btn bg-neutral-100 text-neutral-900 border border-neutral-300
+           hover:bg-neutral-200
+           active:bg-neutral-300;
+  }
+
+  .btn-ghost {
+    @apply btn bg-transparent text-neutral-700
+           hover:bg-neutral-100
+           active:bg-neutral-200;
+  }
+
+  .btn-danger {
+    @apply btn bg-error text-white
+           hover:bg-red-700
+           active:bg-red-800;
+  }
+
+  /* ===== Cards ===== */
+
+  .card {
+    @apply bg-white rounded border border-neutral-200 shadow-sm;
+  }
+
+  .card-body {
+    @apply p-4;
+  }
+
+  .card-header {
+    @apply px-4 py-3 border-b border-neutral-200;
+  }
+
+  .card-footer {
+    @apply px-4 py-3 border-t border-neutral-200;
+  }
+
+  /* ===== Inputs ===== */
+
+  .input {
+    @apply w-full px-3 py-2 text-sm
+           bg-white border border-neutral-300 rounded
+           placeholder:text-neutral-400
+           transition-colors duration-200
+           hover:border-neutral-400
+           focus:outline-none focus:border-primary-500 focus:ring-1 focus:ring-primary-500
+           disabled:bg-neutral-100 disabled:cursor-not-allowed;
+  }
+
+  .input-error {
+    @apply border-error focus:border-error focus:ring-error;
+  }
+
+  .label {
+    @apply block text-sm font-medium text-neutral-700 mb-1;
+  }
+
+  .helper-text {
+    @apply text-xs text-neutral-500 mt-1;
+  }
+
+  .error-text {
+    @apply text-xs text-error mt-1;
+  }
+
+  /* ===== Badges ===== */
+
+  .badge {
+    @apply inline-flex items-center px-2 py-0.5 text-xs font-medium rounded-full;
+  }
+
+  .badge-primary {
+    @apply badge bg-primary-100 text-primary-700;
+  }
+
+  .badge-success {
+    @apply badge bg-success-bg text-success-text;
+  }
+
+  .badge-warning {
+    @apply badge bg-warning-bg text-warning-text;
+  }
+
+  .badge-error {
+    @apply badge bg-error-bg text-error-text;
+  }
+
+  .badge-neutral {
+    @apply badge bg-neutral-100 text-neutral-600;
+  }
+
+  /* ===== Alerts ===== */
+
+  .alert {
+    @apply flex gap-3 p-4 rounded border text-sm;
+  }
+
+  .alert-success {
+    @apply alert bg-success-bg border-success-border text-success-text;
+  }
+
+  .alert-info {
+    @apply alert bg-info-bg border-info-border text-info-text;
+  }
+
+  .alert-warning {
+    @apply alert bg-warning-bg border-warning-border text-warning-text;
+  }
+
+  .alert-error {
+    @apply alert bg-error-bg border-error-border text-error-text;
+  }
+
+  /* ===== Table ===== */
+
+  .table {
+    @apply w-full text-sm text-left;
+  }
+
+  .table thead {
+    @apply bg-neutral-50 border-b border-neutral-200;
+  }
+
+  .table th {
+    @apply px-4 py-3 font-medium text-neutral-600 text-xs uppercase tracking-wider;
+  }
+
+  .table td {
+    @apply px-4 py-3 border-b border-neutral-100;
+  }
+
+  .table tbody tr:hover {
+    @apply bg-neutral-50;
+  }
+
+  /* ===== Avatar ===== */
+
+  .avatar {
+    @apply inline-flex items-center justify-center rounded-full bg-primary-100 text-primary-700 font-medium;
+  }
+
+  .avatar-sm {
+    @apply w-8 h-8 text-xs;
+  }
+
+  .avatar-md {
+    @apply w-10 h-10 text-sm;
+  }
+
+  .avatar-lg {
+    @apply w-12 h-12 text-base;
+  }
+
+  /* ===== Divider ===== */
+
+  .divider {
+    @apply border-t border-neutral-200 my-4;
+  }
+
+  /* ===== Container ===== */
+
+  .container-app {
+    @apply max-w-7xl mx-auto px-4 sm:px-6 lg:px-8;
+  }
+
+  /* ===== Navbar ===== */
+
+  .navbar {
+    @apply sticky top-0 z-navbar bg-white border-b border-neutral-200;
+  }
+
+  .navbar-inner {
+    @apply container-app flex items-center justify-between h-14;
+  }
+
+  /* ===== Sidebar ===== */
+
+  .sidebar {
+    @apply fixed left-0 top-14 bottom-0 w-60 bg-white border-r border-neutral-200 overflow-y-auto;
+  }
+
+  .sidebar-item {
+    @apply flex items-center gap-3 px-4 py-2.5 text-sm text-neutral-600 rounded
+           hover:bg-neutral-100 hover:text-neutral-900
+           transition-colors duration-150;
+  }
+
+  .sidebar-item-active {
+    @apply sidebar-item bg-primary-50 text-primary-700 font-medium;
+  }
+}

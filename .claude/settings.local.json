@@ -1,0 +1,32 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(read dir:*)",
+      "WebFetch(domain:fprime.analisys.info)",
+      "Bash(docker rm:*)",
+      "Bash(python -m venv .venv)",
+      "Bash(py --version)",
+      "Bash(where python:*)",
+      "Bash(py -m venv .venv)",
+      "Bash(.venv/Scripts/pip install:*)",
+      "Bash(curl -s http://localhost:8000/api/v1/health)",
+      "Bash(python3 -m json.tool)",
+      "Bash(curl -s -X POST http://localhost:8000/api/v1/auth/login -H 'Content-Type: application/json' -d '{\"email\":\"admin@parente.com\",\"password\":\"admin123\",\"tenant_id\":\"00000000-0000-0000-0000-000000000001\"}')",
+      "Bash(curl -s -X POST http://localhost:8000/api/v1/auth/login -H 'Content-Type: application/json' -d '{\"email\":\"admin@parente.com\",\"password\":\"errada\",\"tenant_id\":\"00000000-0000-0000-0000-000000000001\"}')",
+      "Bash(curl -s -X POST http://localhost:8000/api/v1/auth/login -H 'Content-Type: application/json' -d '{\"email\":\"admin@parente.com\",\"password\":\"admin123\",\"tenant_id\":\"00000000-0000-0000-0000-000000000099\"}')",
+      "Bash(curl -s http://localhost:8000/api/v1/auth/me -H 'Authorization: Bearer tokeninvalido')",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:3000)",
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\(d.get\\('access_token','ERROR: '+str\\(d\\)\\)[:80]\\)\")",
+      "Bash(curl -s -X POST http://localhost:8000/api/v1/auth/login -H \"Content-Type: application/json\" -d '{\"email\":\"admin@parente.com\",\"password\":\"admin123\",\"tenant_id\":\"00000000-0000-0000-0000-000000000001\"}')",
+      "Bash(git init:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git branch:*)",
+      "Bash(git remote:*)",
+      "Bash(git push:*)",
+      "WebFetch(domain:www.ianalisys.com.br)",
+      "Bash(docker-compose up:*)",
+      "Bash(docker-compose exec:*)"
+    ]
+  }
+}
