@@ -390,7 +390,7 @@ Fase 1 ✅ → Fase 2 ✅ → Fase 3 ✅ (staging) → Fase 4 ✅ (OAuth) → Fa
 
 ## Próxima ação imediata
 
-**Próximo: PR-3** — sync de KPIs mensais agregados.
+**Próximo: PR-5** — workers staging → CORE.
 
 ### Backlog ordenado da Fase 3 (sync Clinicorp)
 
@@ -398,15 +398,31 @@ Fase 1 ✅ → Fase 2 ✅ → Fase 3 ✅ (staging) → Fase 4 ✅ (OAuth) → Fa
 |---|---|---|
 | PR-1 | ✅ commit `b4e4a5d` | Migration 0005, schema record-level, sync estático |
 | PR-2 | ✅ commit `b4e4a5d` | Sync transacional por mês (6 entidades) |
-| **PR-3** | 🔜 **próximo** | `stg_cc_kpis_monthly`: 10 endpoints agregados em paralelo (`asyncio.gather`) |
-| PR-4 | pendente | Tela `/admin/sync` no React: heatmap mês × entidade, disparo manual, log |
-| PR-5 | pendente | Migration 0006 + workers staging → CORE |
+| PR-3 | ✅ commit `41fb4d0` | Sync KPIs mensais agregados (10 endpoints em paralelo) |
+| PR-4 | ✅ commit `aa99b36` | Tela `/admin/sync` em React (heatmap, status, log live) |
+| **PR-5** | 🔜 **próximo** | Migration 0006 + workers staging → CORE |
+
+### PR-5 — escopo e decisões pendentes
+
+**Escopo:**
+- Migration 0006 com ~16 tabelas `core_*` (8 cadastros + 6 transacionais + `core_estimate_procedures` para line items + `core_patients` virtual)
+- Worker `transform_clinicorp.py` com função por entidade: lê staging, normaliza, faz upsert em CORE com FK lógico via `external_id`
+- Endpoint `POST /api/v1/transform/clinicorp` (dispara tudo) e `POST /api/v1/transform/clinicorp/{entity}` (uma só)
+- Frontend: deixar pra PR-6 (adicionar seção "Transformações CORE" no `/admin/sync` com botão "Rebuild")
+
+**Decisões arquiteturais a confirmar antes de codar:**
+
+1. **FKs entre `core_*`?** Sugerido: **NÃO** — manter `external_id` como chave de integridade lógica. Evita travas em recargas e a IA pode resolver via JOIN sem precisar de constraint de banco.
+2. **`core_patients` extraído como?** Sugerido: UNION dos `PatientId`/`PatientName` em appointments + estimates + payments, agrupado por PatientId, pegando o nome mais recente.
+3. **Soft delete normalizado?** Sugerido: **SIM** — `Deleted == "X"` (string) → `is_deleted` (boolean) em todas as tabelas core.
+4. **Tela de transformação?** Sugerido: **só backend no PR-5**. Tela vira PR-6.
 
 ### Após PR-5: caminho para a IA
 
-- **Fase 5 (Analytics)** — fato_*/dim_* a partir do CORE → IA consulta SQL controlado, sem queries livres
-- **Fase 6 (Dashboards)** — Dashboard Executivo + Financeiro + Agendamentos + Comercial em React
-- **Fase 7 (AI Gateway)** — Claude/DeepSeek com prompt caching, controle de tokens por tenant
+- **PR-6** — Tela `/admin/sync` ganha seção "Rebuild CORE" + endpoints relacionados
+- **Fase 5 (Analytics)** — `fato_*`/`dim_*` a partir do CORE → IA consulta SQL controlado em camada otimizada
+- **Fase 6 (Dashboards)** — Dashboard Executivo + Financeiro + Agendamentos + Comercial em React, consumindo `fato_*`
+- **Fase 7 (AI Gateway)** — Claude/DeepSeek com prompt caching, controle de tokens por tenant, log de uso
 
 ### Estado atual do banco (migrations aplicadas)
 | ID | Descrição |
@@ -416,3 +432,13 @@ Fase 1 ✅ → Fase 2 ✅ → Fase 3 ✅ (staging) → Fase 4 ✅ (OAuth) → Fa
 | 0003 | (drop em 0005) staging snapshot por intervalo — descartada |
 | 0004 | add_contaazul_tokens |
 | 0005 | redesign_staging — 15 stg_cc_* record-level + sync_checkpoints + sync_jobs v2 |
+
+### Volumetria atual (smoke-test 2026-05-02 com Parente Odontologia)
+
+8.499 registros importados em staging:
+- **Cadastros estáticos** (8 entidades): 745 registros — business 1, users 31, professionals 13, specialties 14, procedures 386, appointment_categories 85, appointment_statuses 8, crm_campaigns 207
+- **Mensal — abril/2024 (parcial)**: 4.312 registros (appointments 1.296 + payments 839 + summary 2.177)
+- **Mensal — abril+maio/2026**: 4.162 registros (appointments 968 + estimates 407 + payments 858 + invoices 1 + receipts 0 + summary 1.928)
+- **KPIs mensais**: 1 linha (abril/2026, 10/10 endpoints ok)
+
+Idempotência confirmada em todos os PRs (re-execução = 0 inserts, todos updates).
