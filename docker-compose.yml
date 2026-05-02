@@ -1,0 +1,102 @@
+version: "3.9"
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: ianalisys_backend
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - DB_HOST=mysql
+      - DB_PORT=3306
+      - DB_USER=${DB_USER}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - DB_NAME=${DB_NAME}
+      - REDIS_URL=redis://redis:6379/0
+      - SECRET_KEY=${SECRET_KEY}
+      - ENV=development
+      - CONTAAZUL_CLIENT_ID=${CONTAAZUL_CLIENT_ID}
+      - CONTAAZUL_CLIENT_SECRET=${CONTAAZUL_CLIENT_SECRET}
+      - CONTAAZUL_REDIRECT_URI=${CONTAAZUL_REDIRECT_URI}
+      - CLINICORP_API_URL=${CLINICORP_API_URL}
+      - CLINICORP_API_USER=${CLINICORP_API_USER}
+      - CLINICORP_API_TOKEN=${CLINICORP_API_TOKEN}
+      - CLINICORP_SUBSCRIBER_ID=${CLINICORP_SUBSCRIBER_ID}
+      - CLINICORP_BUSINESS_ID=${CLINICORP_BUSINESS_ID}
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - ianalisys_network
+    volumes:
+      - ./backend:/app
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: ianalisys_frontend
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - VITE_API_URL=http://backend:8000
+    depends_on:
+      backend:
+        condition: service_started
+    networks:
+      - ianalisys_network
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+
+  mysql:
+    image: mysql:8.0
+    container_name: ianalisys_mysql
+    restart: unless-stopped
+    ports:
+      - "3306:3306"
+    environment:
+      - MYSQL_ROOT_PASSWORD=${DB_PASSWORD}
+      - MYSQL_DATABASE=${DB_NAME}
+      - MYSQL_USER=${DB_USER}
+      - MYSQL_PASSWORD=${DB_PASSWORD}
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./infra/mysql/init:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${DB_PASSWORD}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - ianalisys_network
+
+  redis:
+    image: redis:7-alpine
+    container_name: ianalisys_redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - ianalisys_network
+
+volumes:
+  mysql_data:
+  redis_data:
+
+networks:
+  ianalisys_network:
+    driver: bridge
