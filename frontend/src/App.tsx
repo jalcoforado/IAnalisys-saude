@@ -4,6 +4,7 @@ import PrivateRoute from '@/components/common/PrivateRoute'
 import LoginPage from '@/modules/auth/LoginPage'
 import HomePage from '@/pages/HomePage'
 import DesignSystem from '@/pages/DesignSystem'
+import SyncPage from '@/modules/admin/SyncPage'
 
 function App() {
   return (
@@ -14,6 +15,14 @@ function App() {
           {import.meta.env.DEV && (
             <Route path="/design-system" element={<DesignSystem />} />
           )}
+          <Route
+            path="/admin/sync"
+            element={
+              <PrivateRoute>
+                <SyncPage />
+              </PrivateRoute>
+            }
+          />
           <Route
             path="/"
             element={
