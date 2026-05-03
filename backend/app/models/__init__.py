@@ -39,6 +39,7 @@ from app.models.core import (
     CoreReceipts,
     CoreSummaryEntries,
 )
+from app.models.analytics import DimTempo
 from app.models.sync_job import SyncJob
 from app.models.sync_checkpoint import SyncCheckpoint
 from app.models.contaazul_token import ContaAzulToken
@@ -60,6 +61,8 @@ __all__ = [
     # Core — eventos
     "CoreAppointments", "CoreEstimates", "CoreEstimateProcedures",
     "CorePayments", "CoreInvoices", "CoreReceipts", "CoreSummaryEntries",
+    # Analytics — dimensões
+    "DimTempo",
     # Sync control
     "SyncJob", "SyncCheckpoint", "ContaAzulToken",
 ]
