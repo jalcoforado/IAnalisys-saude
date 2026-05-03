@@ -3,7 +3,8 @@ Endpoints de transformação STAGING → CORE.
 
 POST /transform/clinicorp/static            — todas as 8 entidades estáticas
 POST /transform/clinicorp/events            — 6 eventos (estimates emite 2 outputs)
-POST /transform/clinicorp/all               — cadastros + eventos
+POST /transform/clinicorp/patients          — extrai pacientes únicos dos eventos
+POST /transform/clinicorp/all               — cadastros + eventos + patients
 POST /transform/clinicorp/{entity}          — uma entidade específica
 GET  /transform/status                      — counts staging vs core
 """
@@ -15,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.dependencies.auth import get_current_user
 from app.db.session import get_db
-from app.models.core import CoreEstimateProcedures, CoreEstimates
+from app.models.core import CoreEstimateProcedures, CoreEstimates, CorePatients
 from app.models.staging import StgCcEstimates
 from app.schemas.auth import UserMe
 from app.schemas.transform import TransformResponse, TransformResultItem
@@ -26,6 +27,7 @@ from app.transformations.clinicorp_to_core import (
     transform_all_events,
     transform_all_static,
     transform_estimates,
+    transform_patients,
     transform_static_entity,
 )
 
@@ -76,12 +78,30 @@ async def transform_clinicorp_events(
     return _aggregate([_to_item(r) for r in results])
 
 
+@router.post("/clinicorp/patients", response_model=TransformResultItem, status_code=200)
+async def transform_clinicorp_patients(
+    current_user: UserMe = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> TransformResultItem:
+    """
+    Extrai pacientes únicos por UNION dos PatientId em core_appointments
+    + core_estimates + core_payments. Para cada paciente: name e phone do
+    evento mais recente, first/last_seen_at, e totais por origem.
+
+    Pré-requisito: rodar transform/clinicorp/events antes (precisa dos
+    eventos populados em CORE).
+    """
+    tenant_id = _require_tenant(current_user)
+    result = await transform_patients(db, tenant_id)
+    return _to_item(result)
+
+
 @router.post("/clinicorp/all", response_model=TransformResponse, status_code=200)
 async def transform_clinicorp_all(
     current_user: UserMe = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> TransformResponse:
-    """Transforma cadastros + eventos. Não inclui core_patients (PR-5c)."""
+    """Transforma cadastros + eventos + patients (derivado)."""
     tenant_id = _require_tenant(current_user)
     results = await transform_all(db, tenant_id)
     return _aggregate([_to_item(r) for r in results])
@@ -99,6 +119,8 @@ async def transform_clinicorp_entity(
         if entity == "estimates":
             header_r, proc_r = await transform_estimates(db, tenant_id)
             items = [_to_item(header_r), _to_item(proc_r)]
+        elif entity == "patients":
+            items = [_to_item(await transform_patients(db, tenant_id))]
         else:
             result = await transform_static_entity(db, tenant_id, entity)
             items = [_to_item(result)]
@@ -158,6 +180,17 @@ async def transform_status(
         entity="estimate_procedures",
         fetched=0,  # não tem staging próprio (vem nested)
         inserted=int(core_proc_q.scalar_one() or 0),
+        updated=0, errors=0,
+    ))
+
+    # Patients (derivado, sem staging direto)
+    core_pat_q = await db.execute(
+        select(func.count()).select_from(CorePatients).where(CorePatients.tenant_id == tenant_id)
+    )
+    items.append(TransformResultItem(
+        entity="patients",
+        fetched=0,
+        inserted=int(core_pat_q.scalar_one() or 0),
         updated=0, errors=0,
     ))
 

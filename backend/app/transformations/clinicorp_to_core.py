@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from typing import Any, Callable, Iterable
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.dialects.mysql import insert as mysql_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -28,6 +28,7 @@ from app.models.core import (
     CoreEstimateProcedures,
     CoreEstimates,
     CoreInvoices,
+    CorePatients,
     CorePayments,
     CoreProcedures,
     CoreProfessionals,
@@ -641,10 +642,99 @@ async def transform_all_events(
     return results
 
 
+async def transform_patients(
+    db: AsyncSession, tenant_id: str,
+) -> TransformResult:
+    """
+    Extrai pacientes únicos por UNION dos eventos (appointments + estimates + payments).
+
+    Para cada PatientId distinto:
+    - name e mobile_phone: do evento mais recente (via SUBSTRING_INDEX/GROUP_CONCAT)
+    - first_seen_at / last_seen_at: MIN/MAX das datas dos eventos
+    - total_appointments / total_estimates / total_payments: COUNT por origem
+    - external_updated_at = last_seen_at (último evento conhecido)
+    - is_deleted = sempre false (paciente é "inativo", não deletado)
+    """
+    sql = text("""
+        SELECT
+            CAST(pid AS CHAR(64)) AS external_id,
+            SUBSTRING_INDEX(GROUP_CONCAT(name ORDER BY dt DESC SEPARATOR '|||'), '|||', 1) AS name,
+            SUBSTRING_INDEX(GROUP_CONCAT(phone ORDER BY dt DESC SEPARATOR '|||'), '|||', 1) AS mobile_phone,
+            MIN(dt) AS first_seen_at,
+            MAX(dt) AS last_seen_at,
+            SUM(CASE WHEN src='appt' THEN 1 ELSE 0 END) AS total_appointments,
+            SUM(CASE WHEN src='est'  THEN 1 ELSE 0 END) AS total_estimates,
+            SUM(CASE WHEN src='pay'  THEN 1 ELSE 0 END) AS total_payments
+        FROM (
+            SELECT patient_external_id AS pid, patient_name AS name,
+                   patient_mobile_phone AS phone, appointment_date AS dt,
+                   'appt' AS src
+              FROM core_appointments
+             WHERE tenant_id = :tenant_id AND patient_external_id IS NOT NULL
+            UNION ALL
+            SELECT patient_external_id, patient_name, NULL, estimate_date, 'est'
+              FROM core_estimates
+             WHERE tenant_id = :tenant_id AND patient_external_id IS NOT NULL
+            UNION ALL
+            SELECT patient_external_id, patient_name, NULL, payment_date, 'pay'
+              FROM core_payments
+             WHERE tenant_id = :tenant_id AND patient_external_id IS NOT NULL
+        ) events
+        GROUP BY pid
+    """)
+    result = await db.execute(sql, {"tenant_id": tenant_id})
+    aggregates = result.all()
+
+    if not aggregates:
+        return TransformResult("patients", 0, 0, 0, 0)
+
+    core_rows: list[dict] = []
+    for r in aggregates:
+        core_rows.append({
+            "tenant_id": tenant_id,
+            "external_id": str(r.external_id),
+            "is_deleted": False,
+            "external_updated_at": r.last_seen_at,
+            "name": r.name,
+            "mobile_phone": r.mobile_phone,
+            "email": None,         # Clinicorp não expõe email do paciente em eventos
+            "birth_date": None,    # idem birth_date — viria de /patient/get sob demanda
+            "first_seen_at": r.first_seen_at,
+            "last_seen_at": r.last_seen_at,
+            "total_appointments": int(r.total_appointments or 0),
+            "total_estimates": int(r.total_estimates or 0),
+            "total_payments": int(r.total_payments or 0),
+        })
+
+    existing = await _existing_external_ids(
+        db, CorePatients, tenant_id, (r["external_id"] for r in core_rows),
+    )
+
+    skip = {"tenant_id", "external_id", "created_at"}
+    updatable = [k for k in core_rows[0].keys() if k not in skip]
+
+    batch_size = 1000
+    for i in range(0, len(core_rows), batch_size):
+        batch = core_rows[i:i + batch_size]
+        stmt = mysql_insert(CorePatients).values(batch)
+        stmt = stmt.on_duplicate_key_update(
+            **{k: getattr(stmt.inserted, k) for k in updatable}
+        )
+        await db.execute(stmt)
+
+    await db.commit()
+
+    inserted = sum(1 for r in core_rows if r["external_id"] not in existing)
+    updated = len(core_rows) - inserted
+    return TransformResult("patients", len(core_rows), inserted, updated, 0)
+
+
 async def transform_all(
     db: AsyncSession, tenant_id: str,
 ) -> list[TransformResult]:
-    """Transforma cadastros + eventos. Não inclui core_patients (PR-5c)."""
+    """Transforma cadastros + eventos + patients (derivado dos eventos)."""
     results = await transform_all_static(db, tenant_id)
     results.extend(await transform_all_events(db, tenant_id))
+    # patients vem POR ÚLTIMO porque depende de core_appointments/estimates/payments
+    results.append(await transform_patients(db, tenant_id))
     return results
