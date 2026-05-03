@@ -1,8 +1,11 @@
 """
 Endpoints da camada ANALYTICS.
 
-POST /analytics/rebuild/dim_tempo  — popula calendário (default 2019..2030)
-GET  /analytics/status             — counts das tabelas analytics
+POST /analytics/rebuild/dim_tempo        — popula calendário (default 2019..2030)
+POST /analytics/rebuild/dim_paciente     — materializa dim_paciente de core_patients
+POST /analytics/rebuild/dim_profissional — espelha dim_profissional de core_professionals
+POST /analytics/rebuild/dimensions       — todas as dimensões em sequência
+GET  /analytics/status                   — counts das tabelas analytics
 """
 from typing import List
 
@@ -13,9 +16,14 @@ from pydantic import BaseModel, Field
 
 from app.api.v1.dependencies.auth import get_current_user
 from app.db.session import get_db
-from app.models.analytics import DimTempo
+from app.models.analytics import DimPaciente, DimProfissional, DimTempo
 from app.schemas.auth import UserMe
-from app.transformations.core_to_analytics import build_dim_tempo
+from app.transformations.core_to_analytics import (
+    build_all_dimensions,
+    build_dim_paciente,
+    build_dim_profissional,
+    build_dim_tempo,
+)
 
 router = APIRouter(prefix="/analytics", tags=["analytics"])
 
@@ -43,6 +51,21 @@ class AnalyticsStatusItem(BaseModel):
     rows: int
 
 
+def _to_response(r) -> "BuilderResultResponse":
+    return BuilderResultResponse(
+        entity=r.entity,
+        rows_built=r.rows_built,
+        inserted=r.inserted,
+        updated=r.updated,
+    )
+
+
+class DimensionsResponse(BaseModel):
+    results: list[BuilderResultResponse]
+    total_inserted: int
+    total_updated: int
+
+
 @router.post("/rebuild/dim_tempo", response_model=BuilderResultResponse, status_code=200)
 async def rebuild_dim_tempo(
     payload: DimTempoRebuildRequest = DimTempoRebuildRequest(),
@@ -54,11 +77,44 @@ async def rebuild_dim_tempo(
     if payload.end_year < payload.start_year:
         raise HTTPException(status_code=400, detail="end_year < start_year")
     result = await build_dim_tempo(db, payload.start_year, payload.end_year)
-    return BuilderResultResponse(
-        entity=result.entity,
-        rows_built=result.rows_built,
-        inserted=result.inserted,
-        updated=result.updated,
+    return _to_response(result)
+
+
+@router.post("/rebuild/dim_paciente", response_model=BuilderResultResponse, status_code=200)
+async def rebuild_dim_paciente(
+    current_user: UserMe = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> BuilderResultResponse:
+    """Materializa dim_paciente a partir de core_patients."""
+    tenant_id = _require_tenant(current_user)
+    result = await build_dim_paciente(db, tenant_id)
+    return _to_response(result)
+
+
+@router.post("/rebuild/dim_profissional", response_model=BuilderResultResponse, status_code=200)
+async def rebuild_dim_profissional(
+    current_user: UserMe = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> BuilderResultResponse:
+    """Espelha dim_profissional a partir de core_professionals."""
+    tenant_id = _require_tenant(current_user)
+    result = await build_dim_profissional(db, tenant_id)
+    return _to_response(result)
+
+
+@router.post("/rebuild/dimensions", response_model=DimensionsResponse, status_code=200)
+async def rebuild_all_dimensions(
+    current_user: UserMe = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> DimensionsResponse:
+    """Reconstrói todas as dimensões: tempo + paciente + profissional."""
+    tenant_id = _require_tenant(current_user)
+    results = await build_all_dimensions(db, tenant_id)
+    items = [_to_response(r) for r in results]
+    return DimensionsResponse(
+        results=items,
+        total_inserted=sum(i.inserted for i in items),
+        total_updated=sum(i.updated for i in items),
     )
 
 
@@ -68,11 +124,23 @@ async def analytics_status(
     db: AsyncSession = Depends(get_db),
 ) -> List[AnalyticsStatusItem]:
     """Counts de cada tabela analytics. Útil para verificar o pipeline."""
-    _require_tenant(current_user)
+    tenant_id = _require_tenant(current_user)
     items: list[AnalyticsStatusItem] = []
 
     # dim_tempo (universal — sem tenant)
     q = await db.execute(select(func.count()).select_from(DimTempo))
     items.append(AnalyticsStatusItem(table="dim_tempo", rows=int(q.scalar_one() or 0)))
+
+    # dim_paciente (por tenant)
+    q = await db.execute(
+        select(func.count()).select_from(DimPaciente).where(DimPaciente.tenant_id == tenant_id)
+    )
+    items.append(AnalyticsStatusItem(table="dim_paciente", rows=int(q.scalar_one() or 0)))
+
+    # dim_profissional (por tenant)
+    q = await db.execute(
+        select(func.count()).select_from(DimProfissional).where(DimProfissional.tenant_id == tenant_id)
+    )
+    items.append(AnalyticsStatusItem(table="dim_profissional", rows=int(q.scalar_one() or 0)))
 
     return items
