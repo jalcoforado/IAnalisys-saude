@@ -157,14 +157,20 @@ Todas têm: `id BIGINT PK`, `tenant_id`, `external_id`, `external_updated_at`, `
 - Abril+Maio/2026: 4.162 registros
 - Idempotência confirmada: re-rodar = 0 inserts, todos os registros viram updates
 
+#### Concluído (PR-3 a PR-5c)
+
+- [x] **PR-3** — `stg_cc_kpis_monthly` com 10 endpoints agregados em `asyncio.gather` (commit `41fb4d0`)
+- [x] **PR-4** — Tela `/admin/sync` em React com heatmap mês × entidade (commit `aa99b36`)
+- [x] **Fix** — filtro `year` em `/sync/jobs` para o heatmap não perder histórico (commit `c408ba5`)
+- [x] **PR-5a** — CORE cadastros: 8 tabelas + `core_patients` reservada, mappers genéricos (commit `3fb20e8`)
+- [x] **PR-5b** — CORE eventos: 7 tabelas (incl. `core_estimate_procedures` nested), 30.663 records transformados (commit `e5c1089`)
+- [x] **PR-5c** — `core_patients` extraído via UNION SQL dos eventos, 2.341 pacientes únicos (commit `85d4b28`)
+
 #### Pendente
 
-- [ ] **PR-3** — sync `kpis_monthly` (10 endpoints agregados em paralelo via `asyncio.gather`)
-- [ ] **PR-4** — Tela `/admin/sync` no React (heatmap por mês × entidade, disparo manual, log de execução)
-- [ ] **PR-5** — Transformação staging → core (`core_appointments`, `core_estimates`, `core_payments`, `core_patients` extraído de eventos, etc.)
-- [ ] Sync incremental com delta por `external_updated_at` (campos disponíveis: `LastChange_Date`, `z_LastChange_Date`, `ModifiedDate`)
+- [ ] Sync incremental com delta por `external_updated_at` (campos: `LastChange_Date`, `z_LastChange_Date`, `ModifiedDate`)
 - [ ] APScheduler para sync automático recorrente
-- [ ] Decisão sobre pacientes: **escolhido extrair de eventos** (não há `/patient/list` na Clinicorp) — implementação em PR-5
+- [ ] Seção "Rebuild CORE/Analytics" na tela `/admin/sync` (PR-9)
 
 ---
 
@@ -192,31 +198,54 @@ Todas têm: `id BIGINT PK`, `tenant_id`, `external_id`, `external_updated_at`, `
 
 ---
 
-### FASE 5 — Camada Analytics
+### FASE 5 — Camada Analytics ✅ (concluída)
 
 **Objetivo:** Dados prontos para dashboards e IA, sem SQL livre.
 
-#### Tabelas fato
+#### Star schema completo (3 dim + 3 fato) ✅
 
-- [ ] `fato_financeiro` — aggregados por período/tenant
-- [ ] `fato_agenda` — aggregados de agendamentos
-- [ ] `fato_orcamentos` — aggregados de orçamentos
-
-#### Dimensões
-
-- [ ] `dim_tempo` — calendário com granularidade dia/semana/mês
-- [ ] `dim_profissional` — profissionais ativos por tenant
-- [ ] `dim_paciente` — pacientes ativos por tenant
-
-#### Métricas oficiais (fonte: docs/04_DATABASE_MODEL.md)
-
-| Métrica | Fórmula | Tabela |
+| PR | Entrega | Commit |
 |---|---|---|
-| Faturamento | sum(recebimentos) | fato_financeiro |
-| Inadimplência | vencidos / total | fato_financeiro |
-| Conversão | aprovados / criados | fato_orcamentos |
-| Absenteísmo | faltas / agendamentos | fato_agenda |
-| Ticket Médio | faturamento / consultas | fato_financeiro + fato_agenda |
+| **PR-6** | `dim_tempo` (calendário 2019-2030, 4.383 dias) — universal sem tenant_id | `1caa927` |
+| **PR-7** | `dim_paciente` (com `is_active`/`days_since_last_seen`) + `dim_profissional` | `f604fd1` |
+| **PR-8** | `fato_agenda` + `fato_orcamentos` (status → flags) + `fato_financeiro` | `36aea39` |
+
+#### Builders (SQL puro INSERT...SELECT...ON DUPLICATE KEY UPDATE) ✅
+
+- [x] `build_dim_tempo` — proceduralmente, sem CORE como fonte
+- [x] `build_dim_paciente` — DATEDIFF p/ days_since_last_seen, threshold 180 dias p/ is_active
+- [x] `build_dim_profissional` — espelho de `core_professionals`
+- [x] `build_fato_agenda`, `build_fato_orcamentos`, `build_fato_financeiro`
+- [x] `build_all_dimensions`, `build_all_facts`, `build_all_analytics`
+
+#### Endpoints ✅
+
+- [x] `POST /api/v1/analytics/rebuild/dim_tempo` body `{start_year, end_year}`
+- [x] `POST /api/v1/analytics/rebuild/dim_paciente`, `/dim_profissional`, `/dimensions`
+- [x] `POST /api/v1/analytics/rebuild/fato_agenda`, `/fato_orcamentos`, `/fato_financeiro`, `/facts`
+- [x] `POST /api/v1/analytics/rebuild/all` — dim + fatos em sequência (1.13s)
+- [x] `GET /api/v1/analytics/status` — counts das 6 tabelas
+
+#### Métricas validadas (smoke-test 2026-05-03)
+
+| Métrica | Fórmula real | Resultado em produção |
+|---|---|---|
+| Faturamento abr/2026 | `SUM(amount) WHERE is_received=1 AND year_month_key='2026-04'` em `fato_financeiro` | **R$ 369.204,66** (480 pagamentos) |
+| Conversão orçamentos | `SUM(is_approved)/COUNT(*)` em `fato_orcamentos` | **45,0%** — R$ 1.808.770,60 aprovados |
+| Absenteísmo mensal | `SUM(is_canceled)/COUNT(*)` em `fato_agenda` GROUP BY year_month_key | **9-14% por mês** (consistente) |
+| Top profissional | JOIN `fato_agenda` + `dim_profissional` GROUP BY name | **ERICO PARENTE** — 1.785 atendimentos |
+
+#### Volumetria final do star schema
+
+| Tabela | Registros |
+|---|---:|
+| dim_tempo | 4.383 |
+| dim_paciente | 2.341 (1.660 ativos) |
+| dim_profissional | 13 |
+| fato_agenda | 5.191 |
+| fato_orcamentos | 2.332 |
+| fato_financeiro | 4.828 |
+| **Total** | **19.088** |
 
 ---
 
@@ -390,39 +419,40 @@ Fase 1 ✅ → Fase 2 ✅ → Fase 3 ✅ (staging) → Fase 4 ✅ (OAuth) → Fa
 
 ## Próxima ação imediata
 
-**Próximo: PR-5** — workers staging → CORE.
+**Próximo: Fase 6.1** — Dashboard Executivo em React consumindo os fatos.
 
-### Backlog ordenado da Fase 3 (sync Clinicorp)
+### Backlog consolidado (cronologia 2026-05-02 → 2026-05-03)
 
-| PR | Status | Entrega |
-|---|---|---|
-| PR-1 | ✅ commit `b4e4a5d` | Migration 0005, schema record-level, sync estático |
-| PR-2 | ✅ commit `b4e4a5d` | Sync transacional por mês (6 entidades) |
-| PR-3 | ✅ commit `41fb4d0` | Sync KPIs mensais agregados (10 endpoints em paralelo) |
-| PR-4 | ✅ commit `aa99b36` | Tela `/admin/sync` em React (heatmap, status, log live) |
-| **PR-5** | 🔜 **próximo** | Migration 0006 + workers staging → CORE |
+| PR | Status | Entrega | Commit |
+|---|---|---|---|
+| PR-1 | ✅ | Migration 0005, schema record-level, sync estático | `b4e4a5d` |
+| PR-2 | ✅ | Sync transacional por mês (6 entidades) | `b4e4a5d` |
+| PR-3 | ✅ | Sync KPIs mensais agregados (10 endpoints em paralelo) | `41fb4d0` |
+| PR-4 | ✅ | Tela `/admin/sync` em React (heatmap, status, log live) | `aa99b36` |
+| Fix  | ✅ | Filtro `year` no `/sync/jobs` (heatmap não perdia mais histórico) | `c408ba5` |
+| PR-5a | ✅ | Migration 0006 + CORE cadastros (8 tabelas + patients reservada) | `3fb20e8` |
+| PR-5b | ✅ | Migration 0007 + CORE eventos (7 tabelas, 30.663 records) | `e5c1089` |
+| PR-5c | ✅ | `core_patients` extraído via UNION (2.341 únicos, 0,39s) | `85d4b28` |
+| PR-6 | ✅ | Migration 0008 + `dim_tempo` (calendário 2019-2030) | `1caa927` |
+| PR-7 | ✅ | Migration 0009 + `dim_paciente` + `dim_profissional` | `f604fd1` |
+| PR-8 | ✅ | Migration 0010 + 3 fatos + endpoint orquestrador `rebuild/all` | `36aea39` |
+| **PR-9** | 🔜 **próximo** | Fase 6.1 — Dashboard Executivo em React |
 
-### PR-5 — escopo e decisões pendentes
+### PR-9 (Fase 6.1) — Dashboard Executivo
 
-**Escopo:**
-- Migration 0006 com ~16 tabelas `core_*` (8 cadastros + 6 transacionais + `core_estimate_procedures` para line items + `core_patients` virtual)
-- Worker `transform_clinicorp.py` com função por entidade: lê staging, normaliza, faz upsert em CORE com FK lógico via `external_id`
-- Endpoint `POST /api/v1/transform/clinicorp` (dispara tudo) e `POST /api/v1/transform/clinicorp/{entity}` (uma só)
-- Frontend: deixar pra PR-6 (adicionar seção "Transformações CORE" no `/admin/sync` com botão "Rebuild")
+**Escopo proposto:**
+- Página `/dashboard` em React (substitui ou complementa a HomePage)
+- 6 cards de KPI lendo dos fatos: Faturamento mês, Consultas mês, Absenteísmo, Conversão, Ticket Médio, Pacientes ativos
+- 1 gráfico de evolução mensal (faturamento + consultas)
+- Filtro de período (mês/trimestre/ano)
+- Backend: criar `/api/v1/dashboard/executivo?period=...` que devolve um JSON pronto pra renderizar (não SQL livre)
 
-**Decisões arquiteturais a confirmar antes de codar:**
+### Caminho até a IA
 
-1. **FKs entre `core_*`?** Sugerido: **NÃO** — manter `external_id` como chave de integridade lógica. Evita travas em recargas e a IA pode resolver via JOIN sem precisar de constraint de banco.
-2. **`core_patients` extraído como?** Sugerido: UNION dos `PatientId`/`PatientName` em appointments + estimates + payments, agrupado por PatientId, pegando o nome mais recente.
-3. **Soft delete normalizado?** Sugerido: **SIM** — `Deleted == "X"` (string) → `is_deleted` (boolean) em todas as tabelas core.
-4. **Tela de transformação?** Sugerido: **só backend no PR-5**. Tela vira PR-6.
-
-### Após PR-5: caminho para a IA
-
-- **PR-6** — Tela `/admin/sync` ganha seção "Rebuild CORE" + endpoints relacionados
-- **Fase 5 (Analytics)** — `fato_*`/`dim_*` a partir do CORE → IA consulta SQL controlado em camada otimizada
-- **Fase 6 (Dashboards)** — Dashboard Executivo + Financeiro + Agendamentos + Comercial em React, consumindo `fato_*`
-- **Fase 7 (AI Gateway)** — Claude/DeepSeek com prompt caching, controle de tokens por tenant, log de uso
+- **PR-9** — Dashboard Executivo (Fase 6.1) ← próximo
+- **PR-10..13** — Módulo Financeiro, Agendamentos, Comercial, Pacientes (Fase 6.2-6.5)
+- **Fase 7** — AI Gateway (Claude + DeepSeek com prompt caching, controle de tokens por tenant, log de uso)
+  IA consultará as tabelas `fato_*` via SQL controlado, sem queries livres.
 
 ### Estado atual do banco (migrations aplicadas)
 | ID | Descrição |
@@ -432,6 +462,11 @@ Fase 1 ✅ → Fase 2 ✅ → Fase 3 ✅ (staging) → Fase 4 ✅ (OAuth) → Fa
 | 0003 | (drop em 0005) staging snapshot por intervalo — descartada |
 | 0004 | add_contaazul_tokens |
 | 0005 | redesign_staging — 15 stg_cc_* record-level + sync_checkpoints + sync_jobs v2 |
+| 0006 | core layer cadastros — 8 tabelas + core_patients reservada |
+| 0007 | core layer eventos — 7 tabelas (incl. core_estimate_procedures nested) |
+| 0008 | analytics layer — dim_tempo (calendário universal sem tenant_id) |
+| 0009 | analytics layer — dim_paciente + dim_profissional |
+| 0010 | analytics layer — fato_agenda + fato_orcamentos + fato_financeiro |
 
 ### Volumetria atual (smoke-test 2026-05-02 com Parente Odontologia)
 
