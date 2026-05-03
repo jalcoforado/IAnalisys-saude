@@ -4,6 +4,7 @@ import { ChevronRight } from 'lucide-react'
 
 import { MAIN_MENU, type MenuItem } from '@/config/menus'
 import { useSettings, type TopbarColor } from '@/contexts/SettingsContext'
+import { usePermissions } from '@/hooks/usePermissions'
 
 /**
  * Menu bar de navegação principal. Fica sticky logo abaixo da BrandBar.
@@ -35,13 +36,31 @@ const colorClasses: Record<TopbarColor, { bar: string; text: string; itemHover: 
 
 export default function MenuBar() {
   const { settings } = useSettings()
+  const { has, hasAny } = usePermissions()
   const c = colorClasses[settings.topbarColor]
   const containerClass = settings.layoutMode === 'boxed' ? 'max-w-7xl mx-auto' : ''
+
+  const isAllowed = (item: MenuItem): boolean => {
+    if (item.permission && !has(item.permission)) return false
+    if (item.permissionAny && !hasAny(...item.permissionAny)) return false
+    return true
+  }
+
+  const visibleItems = MAIN_MENU
+    .filter(isAllowed)
+    .map((item) => {
+      if (!item.children) return item
+      const visibleChildren = item.children.filter(isAllowed)
+      // Se for só agrupador (sem path) e nenhum child sobrou, oculta
+      if (visibleChildren.length === 0 && !item.path) return null
+      return { ...item, children: visibleChildren }
+    })
+    .filter(Boolean) as MenuItem[]
 
   return (
     <nav className={`${c.bar} sticky top-14 z-30 backdrop-blur-sm`}>
       <div className={`${containerClass} px-6 h-11 flex items-center gap-1`}>
-        {MAIN_MENU.map((item) => (
+        {visibleItems.map((item) => (
           <NavbarItem key={item.label} item={item} colors={c} />
         ))}
       </div>

@@ -91,12 +91,21 @@ arquitetura profissional.
 
 - [x] `is_saas_admin` adicionado ao model User (migration 0002)
 
-#### Pendente (frontend auth)
+#### Frontend auth ✅ (concluído)
 
-- [ ] Página de login (React)
-- [ ] Context de autenticação (AuthContext)
-- [ ] Hook `useAuth`
-- [ ] Proteção de rotas (PrivateRoute)
+- [x] Página de login (React) — `modules/auth/LoginPage.tsx`
+- [x] Context de autenticação — `modules/auth/AuthContext.tsx`
+- [x] Hook `useAuth`
+- [x] Proteção de rotas — `components/common/PrivateRoute.tsx`
+
+#### Pendente — Recuperação de senha (PR-12 — próximo)
+
+- [ ] Migration `password_reset_tokens` (user_id, token_hash, expires_at, used_at)
+- [ ] Endpoints `POST /auth/password-reset/{request,confirm}`
+- [ ] Service de email via SMTP Gmail (app password no `.env`)
+- [ ] Páginas `/auth/recuperar-senha` e `/auth/redefinir-senha?token=...`
+- [ ] Link "Esqueci minha senha" no `LoginPage`
+- [ ] Migrar para Sendgrid/Resend/Mailgun em produção (Gmail tem limite 500/dia)
 
 ---
 
@@ -166,11 +175,14 @@ Todas têm: `id BIGINT PK`, `tenant_id`, `external_id`, `external_updated_at`, `
 - [x] **PR-5b** — CORE eventos: 7 tabelas (incl. `core_estimate_procedures` nested), 30.663 records transformados (commit `e5c1089`)
 - [x] **PR-5c** — `core_patients` extraído via UNION SQL dos eventos, 2.341 pacientes únicos (commit `85d4b28`)
 
+#### Concluído (continuação)
+
+- [x] **PR-9c** — Botão "Reconstruir CORE+ANALYTICS" na tela `/admin/sync` (orquestra `transform/all` + `analytics/rebuild/all`, ~25s, idempotente)
+
 #### Pendente
 
 - [ ] Sync incremental com delta por `external_updated_at` (campos: `LastChange_Date`, `z_LastChange_Date`, `ModifiedDate`)
 - [ ] APScheduler para sync automático recorrente
-- [ ] Seção "Rebuild CORE/Analytics" na tela `/admin/sync` (PR-9)
 
 ---
 
@@ -249,26 +261,25 @@ Todas têm: `id BIGINT PK`, `tenant_id`, `external_id`, `external_updated_at`, `
 
 ---
 
-### FASE 6 — Dashboards
+### FASE 6 — Dashboards (6.1 ✅ · 6.6 parcial · demais ⏳)
 
 **Objetivo:** Replicar e superar o sistema atual com dados reais.
 
 Cada módulo abaixo equivale a uma aba do sistema atual, reimplementada em React.
 
-#### 6.1 — Dashboard Executivo (Visão Geral)
+#### 6.1 — Dashboard Executivo ✅ (concluído — PR-9 + PR-9b + PR-9c)
 
-KPIs:
-- Entradas Realizadas vs Previsão
-- Saídas Realizadas vs Previsão
-- Saldo do Período
-- Total de Consultas
-- Taxa de Absenteísmo
-- Ticket Médio
-
-Gráficos:
-- Evolução financeira diária (barras)
-- Realizado vs Previsão (comparativo)
-- Consultas por dia (linha)
+Entregue com escopo expandido vs original:
+- 6 KPIs Hero (faturamento, consultas, absenteísmo, conversão, ticket, pacientes ativos) com MoM **e** YoY explícitos
+- Funil comercial (orçados → aprovados/followup/abertos/recusados) com pipeline em R$
+- Inadimplência (recebido vs a receber)
+- Mix de pagamento (donut por forma)
+- Top 5 profissionais com medalhas (🏆🥈🥉) + barras normalizadas
+- Top 5 categorias de consulta com cor por absenteísmo
+- Comparação YoY destacada
+- Pacientes: **Curva ABC** (Pareto), **buckets de churn** (ativo/em risco/inativo/perdido), Top 10 LTV, novos × recorrentes
+- Evolução 12 meses (barras + linha eixo duplo)
+- Padrão visual documentado em `docs/10_DESIGN_DASHBOARDS.md`
 
 #### 6.2 — Módulo Financeiro
 
@@ -335,17 +346,18 @@ White-label: cada tenant personaliza identidade visual e dados operacionais.
 Tela única `/empresa/configuracoes` com seções abaixo. Apenas usuários com
 `role == 'admin'` podem editar.
 
-**6.6.1 — Identidade Visual** (Fase 1, PR-11)
-- Logo principal (PNG/SVG, max 1MB)
-- Favicon (.ico ou PNG, max 200KB)
-- Cor primária da marca (hex via color picker)
-- Cor secundária (opcional)
-- Imagem de fundo da tela de login (opcional)
+**6.6.1 — Identidade Visual** ✅ (PR-11)
+- [x] Logo principal (PNG/SVG/JPEG/WebP, max 1MB) — aplicado dinâmico na BrandBar
+- [x] Favicon (.ico ou PNG, max 200KB) — aplicado em `<link rel="icon">` em runtime
+- [x] Cor primária da marca (hex via color picker)
+- [x] Cor secundária (opcional)
+- [x] Imagem de fundo da tela de login (opcional)
+- [x] Storage: volume Docker `./uploads:/app/uploads` servido via FastAPI StaticFiles
 
-**6.6.2 — Dados da Empresa** (Fase 1, PR-11)
-- Nome fantasia, Razão social, CNPJ
-- Endereço completo (CEP, logradouro, cidade, UF)
-- Telefone, WhatsApp, E-mail, Site
+**6.6.2 — Dados da Empresa** ✅ (PR-11)
+- [x] Nome fantasia, Razão social, CNPJ
+- [x] Endereço completo (CEP, logradouro, cidade, UF)
+- [x] Telefone, WhatsApp, E-mail, Site
 
 **6.6.3 — Regional** (Fase 2, PR futuro)
 - Fuso horário (default America/Sao_Paulo)
@@ -486,7 +498,103 @@ Fase 1 ✅ → Fase 2 ✅ → Fase 3 ✅ (staging) → Fase 4 ✅ (OAuth) → Fa
 
 ## Próxima ação imediata
 
-**Próximo: Fase 6.1** — Dashboard Executivo em React consumindo os fatos.
+**PR-12 — Recuperação de senha (Gmail SMTP)** — implementado, em smoke-test pelo Pedro (commit pendente após validação).
+
+**PR-13 — RBAC granular + CRUD de usuários (DECIDIDO em 2026-05-03)**
+
+Decisão estratégica: fazer ANTES dos demais módulos (Pacientes, Agenda, Clínico, Financeiro, IA), pra que cada módulo novo já nasça protegido. Custo estimado ~2-3 dias; retrofit depois custaria ~1 semana de trabalho mecânico em ~50 endpoints + ~30 telas.
+
+Granularidade do PR-13: **simples** (`modulo.read` + `modulo.write` por módulo). Refinamento (`export`, sub-permissions) vira PR futuro conforme cada módulo amadurece.
+
+Pós-PR-13, decidir entre:
+- Fase 4 Conta Azul completo — staging + transform + unificação financeira
+- Fase 6.2 Módulo Financeiro — só com Clinicorp (sem despesas)
+- Fase 3 sync incremental + APScheduler — automação operacional
+
+### PR-13 — Plano detalhado
+
+**Tabelas (migration 0013):**
+- `permissions` (id, code, label, module, description) — catálogo de permissões granulares
+- `role_permissions` (role_id, permission_id) — many-to-many editável
+
+**Catálogo inicial (~22 codes em 8 módulos):**
+- `dashboard.read`
+- `pacientes.read/write/export`
+- `agenda.read/write`
+- `clinico.read/write`
+- `financeiro.read/write/export`
+- `sync.run`, `analytics.rebuild`
+- `usuarios.read/invite/edit/deactivate`
+- `empresa.settings.read/write`, `empresa.permissions.manage`
+- `ia.use/config`
+
+**Matriz default:**
+- `tenant_admin` = todas
+- `manager` = quase tudo, exceto `sync.run`, `analytics.rebuild`, `empresa.permissions.manage`, `usuarios.invite/edit/deactivate`, `ia.config`
+- `financial` = `dashboard.read` + `financeiro.*` + `pacientes.read/export` + `empresa.settings.read` + `ia.use`
+- `commercial` = `dashboard.read` + `pacientes.read/write/export` + `agenda.*` + `empresa.settings.read` + `ia.use`
+- `operations` = `pacientes.read/write` + `agenda.*` + `clinico.*`
+- `saas_admin` = bypass total (não passa por permission_check)
+
+**Endpoints novos:**
+- `GET /api/v1/permissions` — catálogo
+- `GET /api/v1/roles` — roles + permissions atuais
+- `PUT /api/v1/roles/{role_id}/permissions` — atualiza matriz da role (escopo do tenant)
+- `GET /api/v1/users` — lista usuários do tenant
+- `POST /api/v1/users/invite` — cria usuário + envia email "defina sua senha"
+- `PATCH /api/v1/users/{id}` — edita nome, role, is_active
+- `DELETE /api/v1/users/{id}` — soft-delete (is_active = false)
+
+**Convite reaproveita PR-12:** adicionar coluna `purpose VARCHAR(20) DEFAULT 'reset'` em `password_reset_tokens` — `purpose='invite'` muda só o template do email; consumo do token usa o mesmo `ResetPasswordPage`.
+
+**Backend — dependency `requires()`** (`app/api/v1/dependencies/permissions.py`):
+```python
+def requires(*codes: str):
+    async def _dep(user: UserMe = Depends(get_current_user)) -> UserMe:
+        if user.is_saas_admin:
+            return user
+        if not set(codes).issubset(user.permissions):
+            raise HTTPException(403, f"Faltam permissões: {set(codes) - set(user.permissions)}")
+        return user
+    return _dep
+```
+
+**Frontend — primitivos:**
+- Hook `usePermissions()` com `has`, `hasAny`, `hasAll`
+- Componente `<Can permission="...">…</Can>` esconde botões/seções
+- Wrapper `<RequirePermission permission="...">` no `App.tsx` redireciona pra `/forbidden`
+- `permission` em cada item de `menus.ts` filtra menu
+
+**Telas novas em `/empresa/`:**
+- `/empresa/usuarios` — lista (nome, email, role, status) + botão "Convidar" + edit/desativar inline
+- `/empresa/permissoes` — matriz role × permission editável (checkbox grid agrupado por módulo) + botão "Restaurar padrão"
+
+**Sub-commits (5):**
+1. Migration 0013 + seed catálogo + matriz default + coluna `purpose` em `password_reset_tokens`
+2. `requires()` dependency + integração nas rotas existentes (tenant, sync, analytics, dashboard) + `/auth/me` devolvendo `permissions: string[]`
+3. Frontend primitives: `usePermissions` + `<Can>` + `<RequirePermission>` + filtro no `menus.ts`
+4. Endpoints `/permissions` e `/roles` + tela `/empresa/permissoes`
+5. Endpoints `/users` + tela `/empresa/usuarios` + fluxo de convite via email
+
+### PR-13 — Decisões já tomadas
+
+- **Permissions são por tenant** (cada tenant tem suas linhas em `role_permissions`), não globais — uma clínica pode permitir export e outra não, sem afetar
+- **Roles são fixas** no PR-13 (as 6 atuais). Roles customizáveis por tenant viram PR futuro se houver demanda
+- **Convite por email apenas** (sem opção "criar usuário com senha temporária visível na UI"). Reaproveita Gmail SMTP do PR-12
+- **Granularidade simples primeiro** (`read`/`write`). `export` só onde foi pedido (financeiro, pacientes). Granularidade fina (sub-módulos) vira PR depois
+- **Dashboard executivo atual = `dashboard.read`** (visão geral da diretoria, não-segregada). Quando vierem dashboards específicos, ficam em `dashboard.financeiro.read` / `dashboard.comercial.read`. O dropdown "Dashboards" mostrará só os que o usuário tem permissão
+
+### PR-13 — Checklist obrigatório de novo módulo
+
+A partir do PR-14, **todo módulo novo segue esses 5 passos**:
+
+1. **Declarar permissions no seed** (`app/db/seeds/permissions.py`) — `modulo.read` + `modulo.write` mínimo, mais quaisquer ações específicas (`export`, etc.). Roda migration leve só de seed
+2. **Proteger endpoints** com `Depends(requires("modulo.action"))` — sem isso o endpoint fica aberto pra qualquer usuário logado
+3. **Adicionar item de menu** em `menus.ts` com campo `permission: 'modulo.read'`
+4. **Wrapper `<RequirePermission>`** na rota do `App.tsx` — defesa em profundidade contra digitar URL direto
+5. **`<Can>` em botões e seções** dentro da página — esconde ações que o usuário logado não pode disparar
+
+Sem todos os 5, considera o módulo "incompleto". Só faz sentido pular se for tela 100% pública (login, reset).
 
 ### Backlog consolidado (cronologia 2026-05-02 → 2026-05-03)
 
@@ -503,7 +611,14 @@ Fase 1 ✅ → Fase 2 ✅ → Fase 3 ✅ (staging) → Fase 4 ✅ (OAuth) → Fa
 | PR-6 | ✅ | Migration 0008 + `dim_tempo` (calendário 2019-2030) | `1caa927` |
 | PR-7 | ✅ | Migration 0009 + `dim_paciente` + `dim_profissional` | `f604fd1` |
 | PR-8 | ✅ | Migration 0010 + 3 fatos + endpoint orquestrador `rebuild/all` | `36aea39` |
-| **PR-9** | 🔜 **próximo** | Fase 6.1 — Dashboard Executivo em React |
+| PR-9a | ✅ | Endpoint `/dashboard/executivo` (KPIs + evolução 12 meses) | `ebb391a` |
+| PR-9b | ✅ | Backend expandido (funil + inadimplência + mix + top + YoY + pacientes ABC/churn/LTV) | `504bd55` |
+| PR-9 (frontend) | ✅ | Página `/dashboard` com 4 seções, gráficos recharts, ranking com medalhas, ilustrações SVG | `0c7072c` |
+| PR-9c | ✅ | Botão "Reconstruir CORE+ANALYTICS" na SyncPage (orquestra pipeline) | `0c7072c` |
+| PR-10 | ✅ | AppShell de 2 barras (BrandBar branca + MenuBar configurável) + SettingsContext + PageTitleContext + página `/configuracoes` | `918b60d` |
+| PR-11 | ✅ | Configurações da empresa em `/empresa/configuracoes` — logo/favicon/login_bg + dados + endereço + cores. TenantContext aplica dinamicamente | `f810b8b` |
+| **PR-12** | ✅ | Recuperação de senha via email (Gmail SMTP) + login só com email |
+| **PR-13** | ✅ | RBAC granular: `permissions` + `role_permissions` + matriz UI + CRUD usuários + convite |
 
 ### PR-9 (Fase 6.1) — Dashboard Executivo
 
@@ -516,8 +631,12 @@ Fase 1 ✅ → Fase 2 ✅ → Fase 3 ✅ (staging) → Fase 4 ✅ (OAuth) → Fa
 
 ### Caminho até a IA
 
-- **PR-9** — Dashboard Executivo (Fase 6.1) ← próximo
-- **PR-10..13** — Módulo Financeiro, Agendamentos, Comercial, Pacientes (Fase 6.2-6.5)
+- **PR-9** ✅ — Dashboard Executivo (Fase 6.1)
+- **PR-10** ✅ — AppShell + 2 barras (foundation visual)
+- **PR-11** ✅ — Configurações da empresa (Fase 6.6 — Identidade + Dados)
+- **PR-12** ✅ — Reset de senha via email + login só com email
+- **PR-13** ✅ — RBAC granular + CRUD de usuários + convite
+- **PR-14** ← próximo — Módulos Financeiro / Agendamentos / Comercial / Pacientes (Fase 6.2-6.5) e Conta Azul (Fase 4) — todos já nascem protegidos pelas permissions do PR-13
 - **Fase 7** — AI Gateway (Claude + DeepSeek com prompt caching, controle de tokens por tenant, log de uso)
   IA consultará as tabelas `fato_*` via SQL controlado, sem queries livres.
 
@@ -534,6 +653,7 @@ Fase 1 ✅ → Fase 2 ✅ → Fase 3 ✅ (staging) → Fase 4 ✅ (OAuth) → Fa
 | 0008 | analytics layer — dim_tempo (calendário universal sem tenant_id) |
 | 0009 | analytics layer — dim_paciente + dim_profissional |
 | 0010 | analytics layer — fato_agenda + fato_orcamentos + fato_financeiro |
+| 0011 | tenant settings — branding (favicon, login_bg, primary/secondary color) + dados empresa (CNPJ, contato, endereço) |
 
 ### Volumetria atual (smoke-test 2026-05-02 com Parente Odontologia)
 

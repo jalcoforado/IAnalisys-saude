@@ -14,7 +14,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel, Field
 
-from app.api.v1.dependencies.auth import get_current_user
+from app.api.v1.dependencies.permissions import requires
 from app.db.session import get_db
 from app.models.analytics import (
     DimPaciente, DimProfissional, DimTempo,
@@ -77,7 +77,7 @@ class DimensionsResponse(BaseModel):
 @router.post("/rebuild/dim_tempo", response_model=BuilderResultResponse, status_code=200)
 async def rebuild_dim_tempo(
     payload: DimTempoRebuildRequest = DimTempoRebuildRequest(),
-    current_user: UserMe = Depends(get_current_user),
+    current_user: UserMe = Depends(requires("analytics.rebuild")),
     db: AsyncSession = Depends(get_db),
 ) -> BuilderResultResponse:
     """Popula dim_tempo cobrindo o intervalo de anos. Idempotente."""
@@ -90,7 +90,7 @@ async def rebuild_dim_tempo(
 
 @router.post("/rebuild/dim_paciente", response_model=BuilderResultResponse, status_code=200)
 async def rebuild_dim_paciente(
-    current_user: UserMe = Depends(get_current_user),
+    current_user: UserMe = Depends(requires("analytics.rebuild")),
     db: AsyncSession = Depends(get_db),
 ) -> BuilderResultResponse:
     """Materializa dim_paciente a partir de core_patients."""
@@ -101,7 +101,7 @@ async def rebuild_dim_paciente(
 
 @router.post("/rebuild/dim_profissional", response_model=BuilderResultResponse, status_code=200)
 async def rebuild_dim_profissional(
-    current_user: UserMe = Depends(get_current_user),
+    current_user: UserMe = Depends(requires("analytics.rebuild")),
     db: AsyncSession = Depends(get_db),
 ) -> BuilderResultResponse:
     """Espelha dim_profissional a partir de core_professionals."""
@@ -112,7 +112,7 @@ async def rebuild_dim_profissional(
 
 @router.post("/rebuild/dimensions", response_model=DimensionsResponse, status_code=200)
 async def rebuild_all_dimensions(
-    current_user: UserMe = Depends(get_current_user),
+    current_user: UserMe = Depends(requires("analytics.rebuild")),
     db: AsyncSession = Depends(get_db),
 ) -> DimensionsResponse:
     """Reconstrói todas as dimensões: tempo + paciente + profissional."""
@@ -128,7 +128,7 @@ async def rebuild_all_dimensions(
 
 @router.post("/rebuild/fato_agenda", response_model=BuilderResultResponse, status_code=200)
 async def rebuild_fato_agenda(
-    current_user: UserMe = Depends(get_current_user),
+    current_user: UserMe = Depends(requires("analytics.rebuild")),
     db: AsyncSession = Depends(get_db),
 ) -> BuilderResultResponse:
     """Constrói fato_agenda a partir de core_appointments."""
@@ -138,7 +138,7 @@ async def rebuild_fato_agenda(
 
 @router.post("/rebuild/fato_orcamentos", response_model=BuilderResultResponse, status_code=200)
 async def rebuild_fato_orcamentos(
-    current_user: UserMe = Depends(get_current_user),
+    current_user: UserMe = Depends(requires("analytics.rebuild")),
     db: AsyncSession = Depends(get_db),
 ) -> BuilderResultResponse:
     """Constrói fato_orcamentos a partir de core_estimates."""
@@ -148,7 +148,7 @@ async def rebuild_fato_orcamentos(
 
 @router.post("/rebuild/fato_financeiro", response_model=BuilderResultResponse, status_code=200)
 async def rebuild_fato_financeiro(
-    current_user: UserMe = Depends(get_current_user),
+    current_user: UserMe = Depends(requires("analytics.rebuild")),
     db: AsyncSession = Depends(get_db),
 ) -> BuilderResultResponse:
     """Constrói fato_financeiro a partir de core_payments."""
@@ -158,7 +158,7 @@ async def rebuild_fato_financeiro(
 
 @router.post("/rebuild/facts", response_model=DimensionsResponse, status_code=200)
 async def rebuild_all_facts(
-    current_user: UserMe = Depends(get_current_user),
+    current_user: UserMe = Depends(requires("analytics.rebuild")),
     db: AsyncSession = Depends(get_db),
 ) -> DimensionsResponse:
     """Reconstrói todos os 3 fatos: agenda + orcamentos + financeiro."""
@@ -174,7 +174,7 @@ async def rebuild_all_facts(
 
 @router.post("/rebuild/all", response_model=DimensionsResponse, status_code=200)
 async def rebuild_all_analytics_endpoint(
-    current_user: UserMe = Depends(get_current_user),
+    current_user: UserMe = Depends(requires("analytics.rebuild")),
     db: AsyncSession = Depends(get_db),
 ) -> DimensionsResponse:
     """Reconstrói toda a camada analytics: dimensões + fatos."""
@@ -190,7 +190,7 @@ async def rebuild_all_analytics_endpoint(
 
 @router.get("/status", response_model=List[AnalyticsStatusItem])
 async def analytics_status(
-    current_user: UserMe = Depends(get_current_user),
+    current_user: UserMe = Depends(requires("analytics.rebuild")),
     db: AsyncSession = Depends(get_db),
 ) -> List[AnalyticsStatusItem]:
     """Counts de cada tabela analytics. Útil para verificar o pipeline."""

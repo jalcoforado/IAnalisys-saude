@@ -14,7 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.v1.dependencies.auth import get_current_user
+from app.api.v1.dependencies.permissions import requires
 from app.db.session import get_db
 from app.integrations.clinicorp.sync_service import (
     get_entity_spec,
@@ -48,7 +48,7 @@ def _require_tenant(user: UserMe) -> str:
 
 @router.post("/clinicorp/static", response_model=StaticSyncResponse, status_code=200)
 async def sync_clinicorp_static(
-    current_user: UserMe = Depends(get_current_user),
+    current_user: UserMe = Depends(requires("sync.run")),
     db: AsyncSession = Depends(get_db),
 ) -> StaticSyncResponse:
     """
@@ -69,7 +69,7 @@ async def sync_clinicorp_static(
 @router.post("/clinicorp/transactional", response_model=SyncJobResponse, status_code=200)
 async def sync_clinicorp_transactional(
     payload: TransactionalSyncRequest,
-    current_user: UserMe = Depends(get_current_user),
+    current_user: UserMe = Depends(requires("sync.run")),
     db: AsyncSession = Depends(get_db),
 ) -> SyncJobResponse:
     """Sincroniza UMA entidade transacional cobrindo o mês indicado."""
@@ -92,7 +92,7 @@ async def sync_clinicorp_transactional(
 @router.post("/clinicorp/transactional/batch", response_model=TransactionalSyncResponse, status_code=200)
 async def sync_clinicorp_transactional_batch(
     payload: TransactionalBatchRequest,
-    current_user: UserMe = Depends(get_current_user),
+    current_user: UserMe = Depends(requires("sync.run")),
     db: AsyncSession = Depends(get_db),
 ) -> TransactionalSyncResponse:
     """Sincroniza várias entidades transacionais num único mês."""
@@ -115,7 +115,7 @@ async def sync_clinicorp_transactional_batch(
 @router.post("/clinicorp/kpis_monthly", response_model=SyncJobResponse, status_code=200)
 async def sync_clinicorp_kpis_monthly(
     payload: KpisMonthlyRequest,
-    current_user: UserMe = Depends(get_current_user),
+    current_user: UserMe = Depends(requires("sync.run")),
     db: AsyncSession = Depends(get_db),
 ) -> SyncJobResponse:
     """
@@ -135,7 +135,7 @@ async def list_sync_jobs(
     limit: int = 50,
     entity: str | None = None,
     year: int | None = None,
-    current_user: UserMe = Depends(get_current_user),
+    current_user: UserMe = Depends(requires("sync.run")),
     db: AsyncSession = Depends(get_db),
 ) -> List[SyncJobResponse]:
     """
@@ -161,7 +161,7 @@ async def list_sync_jobs(
 
 @router.get("/checkpoints", response_model=List[CheckpointResponse])
 async def list_checkpoints(
-    current_user: UserMe = Depends(get_current_user),
+    current_user: UserMe = Depends(requires("sync.run")),
     db: AsyncSession = Depends(get_db),
 ) -> List[CheckpointResponse]:
     """Estado atual de sync por entidade do tenant."""

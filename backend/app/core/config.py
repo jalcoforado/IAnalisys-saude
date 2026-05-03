@@ -51,6 +51,17 @@ class Settings(BaseSettings):
     CLINICORP_SUBSCRIBER_ID: str = ""
     CLINICORP_BUSINESS_ID: str = ""
 
+    # SMTP — para reset de senha e notificações via email
+    SMTP_HOST: str = "smtp.gmail.com"
+    SMTP_PORT: int = 587
+    SMTP_USER: str = ""
+    SMTP_PASSWORD: str = ""
+    SMTP_FROM_NAME: str = "IAnalisys Saúde"
+    SMTP_FROM_EMAIL: str = ""
+
+    # URL pública do app — usada em links enviados por email
+    APP_URL: str = "http://localhost:3000"
+
     class Config:
         env_file = ".env"
         case_sensitive = True

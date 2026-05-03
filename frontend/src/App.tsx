@@ -4,14 +4,19 @@ import { SettingsProvider } from '@/contexts/SettingsContext'
 import { PageTitleProvider } from '@/contexts/PageTitleContext'
 import { TenantProvider } from '@/contexts/TenantContext'
 import PrivateRoute from '@/components/common/PrivateRoute'
+import RequirePermission from '@/components/common/RequirePermission'
 import AppShell from '@/components/layout/AppShell'
 import LoginPage from '@/modules/auth/LoginPage'
+import ForgotPasswordPage from '@/modules/auth/ForgotPasswordPage'
+import ResetPasswordPage from '@/modules/auth/ResetPasswordPage'
 import HomePage from '@/pages/HomePage'
 import DesignSystem from '@/pages/DesignSystem'
 import SyncPage from '@/modules/admin/SyncPage'
 import DashboardPage from '@/modules/dashboard/DashboardPage'
 import SettingsPage from '@/modules/settings/SettingsPage'
 import CompanySettingsPage from '@/modules/empresa/CompanySettingsPage'
+import PermissionsPage from '@/modules/empresa/PermissionsPage'
+import UsersPage from '@/modules/empresa/UsersPage'
 
 function App() {
   return (
@@ -22,6 +27,8 @@ function App() {
           <PageTitleProvider>
           <Routes>
             <Route path="/login" element={<LoginPage />} />
+            <Route path="/auth/recuperar-senha" element={<ForgotPasswordPage />} />
+            <Route path="/auth/redefinir-senha" element={<ResetPasswordPage />} />
             {import.meta.env.DEV && (
               <Route path="/design-system" element={<DesignSystem />} />
             )}
@@ -37,7 +44,11 @@ function App() {
               path="/admin/sync"
               element={
                 <PrivateRoute>
-                  <AppShell><SyncPage /></AppShell>
+                  <AppShell>
+                    <RequirePermission permission="sync.run">
+                      <SyncPage />
+                    </RequirePermission>
+                  </AppShell>
                 </PrivateRoute>
               }
             />
@@ -45,7 +56,11 @@ function App() {
               path="/dashboard"
               element={
                 <PrivateRoute>
-                  <AppShell><DashboardPage /></AppShell>
+                  <AppShell>
+                    <RequirePermission permission="dashboard.read">
+                      <DashboardPage />
+                    </RequirePermission>
+                  </AppShell>
                 </PrivateRoute>
               }
             />
@@ -61,7 +76,35 @@ function App() {
               path="/empresa/configuracoes"
               element={
                 <PrivateRoute>
-                  <AppShell><CompanySettingsPage /></AppShell>
+                  <AppShell>
+                    <RequirePermission permission="empresa.settings.read">
+                      <CompanySettingsPage />
+                    </RequirePermission>
+                  </AppShell>
+                </PrivateRoute>
+              }
+            />
+            <Route
+              path="/empresa/permissoes"
+              element={
+                <PrivateRoute>
+                  <AppShell>
+                    <RequirePermission permission="empresa.permissions.manage">
+                      <PermissionsPage />
+                    </RequirePermission>
+                  </AppShell>
+                </PrivateRoute>
+              }
+            />
+            <Route
+              path="/empresa/usuarios"
+              element={
+                <PrivateRoute>
+                  <AppShell>
+                    <RequirePermission permission="usuarios.read">
+                      <UsersPage />
+                    </RequirePermission>
+                  </AppShell>
                 </PrivateRoute>
               }
             />

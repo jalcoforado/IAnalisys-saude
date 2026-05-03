@@ -7,6 +7,7 @@ import {
   Home,
   RefreshCw,
   Settings,
+  ShieldCheck,
   Sparkles,
   Stethoscope,
   Users,
@@ -23,6 +24,10 @@ export interface MenuItem {
   children?: MenuItem[]
   /** Visual cinza, sem clique — usar para sinalizar features futuras. */
   comingSoon?: boolean
+  /** Permission necessária — se ausente do usuário, item some do menu. saas_admin é bypass. */
+  permission?: string
+  /** Permite quando tem QUALQUER uma. */
+  permissionAny?: string[]
 }
 
 /**
@@ -38,8 +43,9 @@ export const MAIN_MENU: MenuItem[] = [
   {
     label: 'Análise',
     icon: BarChart3,
+    permission: 'dashboard.read',
     children: [
-      { label: 'Dashboard Executivo', icon: BarChart3, path: '/dashboard' },
+      { label: 'Dashboard Executivo', icon: BarChart3, path: '/dashboard', permission: 'dashboard.read' },
       { label: 'Operacional', icon: Calendar, comingSoon: true },
       { label: 'Comercial', icon: DollarSign, comingSoon: true },
     ],
@@ -48,28 +54,35 @@ export const MAIN_MENU: MenuItem[] = [
     label: 'Pacientes',
     icon: Users,
     comingSoon: true,
+    permission: 'pacientes.read',
   },
   {
     label: 'Agenda',
     icon: Calendar,
     comingSoon: true,
+    permission: 'agenda.read',
   },
   {
     label: 'Clínico',
     icon: Stethoscope,
     comingSoon: true,
+    permission: 'clinico.read',
   },
   {
     label: 'IA Assistente',
     icon: Sparkles,
     comingSoon: true,
+    permission: 'ia.use',
   },
   {
     label: 'Admin',
     icon: Settings,
+    permissionAny: ['empresa.settings.read', 'sync.run', 'usuarios.read', 'empresa.permissions.manage'],
     children: [
-      { label: 'Empresa', icon: Building2, path: '/empresa/configuracoes' },
-      { label: 'Sincronização', icon: RefreshCw, path: '/admin/sync' },
+      { label: 'Empresa', icon: Building2, path: '/empresa/configuracoes', permission: 'empresa.settings.read' },
+      { label: 'Usuários', icon: Users, path: '/empresa/usuarios', permission: 'usuarios.read' },
+      { label: 'Permissões', icon: ShieldCheck, path: '/empresa/permissoes', permission: 'empresa.permissions.manage' },
+      { label: 'Sincronização', icon: RefreshCw, path: '/admin/sync', permission: 'sync.run' },
       { label: 'Preferências', icon: Settings, path: '/configuracoes' },
     ],
   },

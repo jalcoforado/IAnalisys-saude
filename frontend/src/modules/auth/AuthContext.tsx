@@ -7,7 +7,7 @@ interface AuthContextValue {
   user: UserMe | null
   isLoading: boolean
   isAuthenticated: boolean
-  login: (email: string, password: string, tenantId: string) => Promise<void>
+  login: (email: string, password: string) => Promise<void>
   logout: () => void
 }
 
@@ -23,8 +23,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const login = useCallback(
-    async (email: string, password: string, tenantId: string) => {
-      const { access_token } = await authService.login({ email, password, tenant_id: tenantId })
+    async (email: string, password: string) => {
+      const { access_token } = await authService.login({ email, password })
       localStorage.setItem('access_token', access_token)
       const me = await authService.me()
       setUser(me)

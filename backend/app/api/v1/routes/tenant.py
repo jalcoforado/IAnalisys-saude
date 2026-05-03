@@ -12,11 +12,11 @@ Leitura é permitida a qualquer usuário autenticado do tenant.
 from pathlib import Path
 from typing import Literal
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.v1.dependencies.auth import get_current_user
+from app.api.v1.dependencies.permissions import requires
 from app.db.session import get_db
 from app.models.tenant import Tenant
 from app.schemas.auth import UserMe
@@ -53,20 +53,6 @@ def _require_tenant(user: UserMe) -> str:
     return user.tenant_id
 
 
-_ADMIN_ROLES = {"tenant_admin", "saas_admin"}
-
-
-def _require_admin(user: UserMe) -> None:
-    """Apenas tenant_admin (ou saas_admin) pode editar."""
-    if user.is_saas_admin:
-        return
-    if (user.role or "").lower() not in _ADMIN_ROLES:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Apenas administradores podem editar configurações da empresa.",
-        )
-
-
 async def _get_tenant(db: AsyncSession, tenant_id: str) -> Tenant:
     q = await db.execute(select(Tenant).where(Tenant.id == tenant_id))
     t = q.scalar_one_or_none()
@@ -77,7 +63,7 @@ async def _get_tenant(db: AsyncSession, tenant_id: str) -> Tenant:
 
 @router.get("/settings", response_model=TenantSettingsResponse)
 async def get_settings(
-    current_user: UserMe = Depends(get_current_user),
+    current_user: UserMe = Depends(requires("empresa.settings.read")),
     db: AsyncSession = Depends(get_db),
 ) -> TenantSettingsResponse:
     tenant_id = _require_tenant(current_user)
@@ -88,10 +74,9 @@ async def get_settings(
 @router.put("/settings", response_model=TenantSettingsResponse)
 async def update_settings(
     payload: TenantSettingsUpdate,
-    current_user: UserMe = Depends(get_current_user),
+    current_user: UserMe = Depends(requires("empresa.settings.write")),
     db: AsyncSession = Depends(get_db),
 ) -> TenantSettingsResponse:
-    _require_admin(current_user)
     tenant_id = _require_tenant(current_user)
     tenant = await _get_tenant(db, tenant_id)
 
@@ -107,10 +92,9 @@ async def update_settings(
 async def upload_asset(
     kind: Literal["logo", "favicon", "login_background"],
     file: UploadFile = File(...),
-    current_user: UserMe = Depends(get_current_user),
+    current_user: UserMe = Depends(requires("empresa.settings.write")),
     db: AsyncSession = Depends(get_db),
 ) -> UploadResponse:
-    _require_admin(current_user)
     tenant_id = _require_tenant(current_user)
     tenant = await _get_tenant(db, tenant_id)
 
@@ -167,10 +151,9 @@ async def upload_asset(
 @router.delete("/uploads/{kind}", status_code=204)
 async def delete_asset(
     kind: Literal["logo", "favicon", "login_background"],
-    current_user: UserMe = Depends(get_current_user),
+    current_user: UserMe = Depends(requires("empresa.settings.write")),
     db: AsyncSession = Depends(get_db),
 ) -> None:
-    _require_admin(current_user)
     tenant_id = _require_tenant(current_user)
     tenant = await _get_tenant(db, tenant_id)
 

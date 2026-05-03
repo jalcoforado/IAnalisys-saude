@@ -46,6 +46,8 @@ from app.models.analytics import (
 from app.models.sync_job import SyncJob
 from app.models.sync_checkpoint import SyncCheckpoint
 from app.models.contaazul_token import ContaAzulToken
+from app.models.permission import Permission, RolePermission
+from app.models.password_reset_token import PasswordResetToken
 
 __all__ = [
     "Tenant", "User", "Role", "UserTenant",
@@ -70,4 +72,6 @@ __all__ = [
     "FatoAgenda", "FatoOrcamentos", "FatoFinanceiro",
     # Sync control
     "SyncJob", "SyncCheckpoint", "ContaAzulToken",
+    # Auth/RBAC
+    "Permission", "RolePermission", "PasswordResetToken",
 ]

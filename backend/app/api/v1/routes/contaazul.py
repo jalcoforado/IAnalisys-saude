@@ -15,7 +15,7 @@ from fastapi.responses import RedirectResponse
 from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.v1.dependencies.auth import get_current_user
+from app.api.v1.dependencies.permissions import requires
 from app.db.session import get_db
 from app.integrations.contaazul.oauth import (
     ContaAzulOAuthError,
@@ -43,7 +43,7 @@ async def _get_token(db: AsyncSession, tenant_id: str) -> ContaAzulToken | None:
 
 @router.get("/status", response_model=ContaAzulStatusResponse)
 async def contaazul_status(
-    current_user: UserMe = Depends(get_current_user),
+    current_user: UserMe = Depends(requires("empresa.settings.read")),
     db: AsyncSession = Depends(get_db),
 ) -> ContaAzulStatusResponse:
     """Retorna o status da conexão Conta Azul do tenant."""
@@ -62,7 +62,7 @@ async def contaazul_status(
 
 @router.get("/auth", response_model=ContaAzulAuthUrlResponse)
 async def contaazul_auth_url(
-    current_user: UserMe = Depends(get_current_user),
+    current_user: UserMe = Depends(requires("empresa.settings.write")),
 ) -> ContaAzulAuthUrlResponse:
     """Retorna a URL de autorização OAuth para o frontend redirecionar o usuário."""
     state = secrets.token_hex(16)
@@ -119,7 +119,7 @@ async def contaazul_callback(
 
 @router.post("/refresh", response_model=ContaAzulStatusResponse)
 async def contaazul_refresh(
-    current_user: UserMe = Depends(get_current_user),
+    current_user: UserMe = Depends(requires("empresa.settings.write")),
     db: AsyncSession = Depends(get_db),
 ) -> ContaAzulStatusResponse:
     """Renova o access_token usando o refresh_token salvo."""
@@ -149,7 +149,7 @@ async def contaazul_refresh(
 
 @router.delete("/disconnect", status_code=204)
 async def contaazul_disconnect(
-    current_user: UserMe = Depends(get_current_user),
+    current_user: UserMe = Depends(requires("empresa.settings.write")),
     db: AsyncSession = Depends(get_db),
 ) -> None:
     """Remove o token Conta Azul do tenant (desconecta)."""

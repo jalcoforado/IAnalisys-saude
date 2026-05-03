@@ -6,6 +6,7 @@ export interface UserMe {
   is_saas_admin: boolean
   tenant_id: string
   role: string
+  permissions: string[]
 }
 
 export interface TokenResponse {
@@ -16,5 +17,5 @@ export interface TokenResponse {
 export interface LoginRequest {
   email: string
   password: string
-  tenant_id: string
+  tenant_id?: string
 }

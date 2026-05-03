@@ -9,7 +9,7 @@ from datetime import date
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.v1.dependencies.auth import get_current_user
+from app.api.v1.dependencies.permissions import requires
 from app.db.session import get_db
 from app.schemas.auth import UserMe
 from app.schemas.dashboard import DashboardExecutivoResponse
@@ -28,7 +28,7 @@ def _require_tenant(user: UserMe) -> str:
 async def dashboard_executivo(
     year: int = Query(..., ge=2019, le=2100, description="Ano do período."),
     month: int = Query(..., ge=1, le=12, description="Mês do período (1-12)."),
-    current_user: UserMe = Depends(get_current_user),
+    current_user: UserMe = Depends(requires("dashboard.read")),
     db: AsyncSession = Depends(get_db),
 ) -> DashboardExecutivoResponse:
     tenant_id = _require_tenant(current_user)

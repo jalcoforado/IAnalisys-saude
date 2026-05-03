@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from './AuthContext'
 
 export default function LoginPage() {
@@ -8,7 +8,6 @@ export default function LoginPage() {
 
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
-  const [tenantId, setTenantId] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const [showPassword, setShowPassword] = useState(false)
@@ -18,7 +17,7 @@ export default function LoginPage() {
     setError('')
     setLoading(true)
     try {
-      await login(email, password, tenantId)
+      await login(email, password)
       navigate('/')
     } catch {
       setError('Credenciais inválidas ou acesso não autorizado.')
@@ -40,20 +39,6 @@ export default function LoginPage() {
           <h2 className="text-lg font-semibold text-gray-800 mb-6">Acesso ao sistema</h2>
 
           <form onSubmit={handleSubmit} className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Clínica (Tenant ID)
-              </label>
-              <input
-                type="text"
-                value={tenantId}
-                onChange={(e) => setTenantId(e.target.value)}
-                required
-                placeholder="ID da clínica"
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
-              />
-            </div>
-
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 Usuário
@@ -104,6 +89,15 @@ export default function LoginPage() {
             >
               {loading ? 'Entrando...' : 'Acessar plataforma'}
             </button>
+
+            <div className="text-center">
+              <Link
+                to="/auth/recuperar-senha"
+                className="text-xs text-neutral-500 hover:text-primary-700 transition"
+              >
+                Esqueci minha senha
+              </Link>
+            </div>
           </form>
 
           <p className="text-center text-xs text-gray-400 mt-8">

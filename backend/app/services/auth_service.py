@@ -14,7 +14,7 @@ async def login(
     db: AsyncSession,
     email: str,
     password: str,
-    tenant_id: str,
+    tenant_id: str | None,
 ) -> TokenResponse:
     user = await user_repository.get_by_email(db, email)
 
@@ -26,11 +26,25 @@ async def login(
 
     # saas_admin pode acessar qualquer tenant sem precisar de membership
     if not user.is_saas_admin:
-        membership = await user_repository.get_active_tenant_membership(
-            db, user.id, tenant_id
-        )
-        if not membership:
-            raise AuthError("Acesso não autorizado para este tenant.")
+        if tenant_id:
+            membership = await user_repository.get_active_tenant_membership(
+                db, user.id, tenant_id
+            )
+            if not membership:
+                raise AuthError("Acesso não autorizado para este tenant.")
+        else:
+            memberships = await user_repository.list_active_memberships(db, user.id)
+            if not memberships:
+                raise AuthError("Usuário sem clínica ativa.")
+            if len(memberships) > 1:
+                raise AuthError("Usuário pertence a múltiplas clínicas. Informe o tenant_id.")
+            tenant_id = memberships[0].tenant_id
+    elif not tenant_id:
+        # saas_admin sem tenant_id: pega a primeira associação ativa, se houver
+        memberships = await user_repository.list_active_memberships(db, user.id)
+        if not memberships:
+            raise AuthError("saas_admin precisa informar tenant_id.")
+        tenant_id = memberships[0].tenant_id
 
     token = create_access_token(
         data={
@@ -52,13 +66,21 @@ async def get_current_user_data(
         raise AuthError("Usuário não encontrado.")
 
     role = "saas_admin"
-    if not user.is_saas_admin:
+    permissions: list[str] = []
+
+    if user.is_saas_admin:
+        # bypass de fato é no requires(), mas devolve catálogo pra UI saber tudo
+        permissions = await user_repository.list_all_permission_codes(db)
+    else:
         membership = await user_repository.get_active_tenant_membership(
             db, user_id, tenant_id
         )
         if not membership:
             raise AuthError("Acesso não autorizado para este tenant.")
         role = membership.role.name
+        permissions = await user_repository.list_permission_codes(
+            db, tenant_id, membership.role_id
+        )
 
     return UserMe(
         id=user.id,
@@ -68,4 +90,5 @@ async def get_current_user_data(
         is_saas_admin=user.is_saas_admin,
         tenant_id=tenant_id,
         role=role,
+        permissions=permissions,
     )
