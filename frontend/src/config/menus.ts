@@ -1,6 +1,7 @@
 import type { LucideIcon } from 'lucide-react'
 import {
   BarChart3,
+  Building2,
   Calendar,
   DollarSign,
   Home,
@@ -67,8 +68,9 @@ export const MAIN_MENU: MenuItem[] = [
     label: 'Admin',
     icon: Settings,
     children: [
+      { label: 'Empresa', icon: Building2, path: '/empresa/configuracoes' },
       { label: 'Sincronização', icon: RefreshCw, path: '/admin/sync' },
-      { label: 'Configurações', icon: Settings, path: '/configuracoes' },
+      { label: 'Preferências', icon: Settings, path: '/configuracoes' },
     ],
   },
 ]

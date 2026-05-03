@@ -35,6 +35,7 @@ services:
       - ianalisys_network
     volumes:
       - ./backend:/app
+      - ./uploads:/app/uploads
 
   frontend:
     build:

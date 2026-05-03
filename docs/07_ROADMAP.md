@@ -329,13 +329,80 @@ KPIs:
 Tabela:
 - Pacientes com último agendamento, status, contato
 
-#### 6.6 — Módulo Administração
+#### 6.6 — Módulo Administração / Configurações da Empresa
 
-- CRUD de usuários do tenant
-- Configurações do tenant (logo, timezone, moeda)
-- Configuração de integrações (Clinicorp, Conta Azul)
-- Limites de IA
-- Logs de sync
+White-label: cada tenant personaliza identidade visual e dados operacionais.
+Tela única `/empresa/configuracoes` com seções abaixo. Apenas usuários com
+`role == 'admin'` podem editar.
+
+**6.6.1 — Identidade Visual** (Fase 1, PR-11)
+- Logo principal (PNG/SVG, max 1MB)
+- Favicon (.ico ou PNG, max 200KB)
+- Cor primária da marca (hex via color picker)
+- Cor secundária (opcional)
+- Imagem de fundo da tela de login (opcional)
+
+**6.6.2 — Dados da Empresa** (Fase 1, PR-11)
+- Nome fantasia, Razão social, CNPJ
+- Endereço completo (CEP, logradouro, cidade, UF)
+- Telefone, WhatsApp, E-mail, Site
+
+**6.6.3 — Regional** (Fase 2, PR futuro)
+- Fuso horário (default America/Sao_Paulo)
+- Locale (pt-BR / en-US / es-ES)
+- Moeda exibida (BRL / USD)
+- Formato de data e número
+
+**6.6.4 — Notificações** (Fase 2)
+- E-mail "remetente" + display name
+- SMTP customizado (opcional, default = gateway)
+- Número WhatsApp Business + token Evolution API
+- Templates editáveis (confirmação, lembrete, aniversário)
+
+**6.6.5 — Operacional** (Fase 2)
+- Horário de funcionamento por dia da semana
+- Feriados nacionais + customizados do tenant
+- Categorias de procedimento personalizadas
+- Alíquota fiscal padrão
+
+**6.6.6 — Integrações** (Fase 3)
+- API key Clinicorp (já existe — só consolidar UI)
+- Conta Azul (futuro)
+- Stripe / gateway de pagamento (futuro)
+- Webhook URL para eventos do sistema
+
+**6.6.7 — Segurança** (Fase 3)
+- Política de senha (min length, complexidade)
+- 2FA habilitado por usuário ou obrigatório no tenant
+- Timeout de sessão
+- IPs/domínios permitidos para login (allowlist)
+
+**6.6.8 — Usuários e Permissões** (Fase 3)
+- Lista de usuários do tenant
+- Convidar novo (envia link por e-mail)
+- Roles: admin, gestor, dentista, recepcionista
+- Histórico de últimos acessos
+
+**6.6.9 — Plano SaaS** (futuro, só `is_saas_admin`)
+- Plano atual e próximo vencimento
+- Histórico de uso (consultas IA, storage, syncs)
+- Upgrade/downgrade
+- Faturas e forma de pagamento
+
+**6.6.10 — Auditoria & LGPD** (futuro)
+- Log de ações sensíveis (mudança de role, exclusão de paciente)
+- Exportar todos os dados do tenant (GDPR/LGPD compliance)
+- Solicitação de exclusão de paciente (anonimização)
+
+**Decisões já tomadas:**
+- Storage de imagens: volume Docker em `/uploads/{tenant_id}/{kind}.ext`
+  servido como estático pelo backend. Migra pra S3/R2 em PR-13+ sem mudar API.
+- Distinção firme: `/configuracoes` = preferências PESSOAIS do usuário
+  (tema, layout, idioma); `/empresa/configuracoes` = identidade e operação
+  do TENANT.
+- Logo e favicon aplicados dinamicamente: BrandBar troca SVG placeholder
+  por `<img>` se tenant tem logo customizado; favicon via `<link rel="icon">`
+  manipulado em runtime no `index.html`.
 
 ---
 

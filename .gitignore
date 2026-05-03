@@ -24,6 +24,11 @@ dist/
 mysql_data/
 redis_data/
 
+# Uploads de tenants (logo, favicon, login_background) — gerados em runtime
+/uploads/*
+!/uploads/.gitkeep
+/backend/uploads/
+
 # Logs
 *.log
 logs/

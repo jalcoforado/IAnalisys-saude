@@ -5,6 +5,7 @@ import Logo from './Logo'
 import UserMenu from './UserMenu'
 import { usePageTitleValue } from '@/contexts/PageTitleContext'
 import { useSettings } from '@/contexts/SettingsContext'
+import { useTenant } from '@/contexts/TenantContext'
 
 /**
  * Top bar de identidade + utilitários do usuário.
@@ -14,6 +15,7 @@ import { useSettings } from '@/contexts/SettingsContext'
 export default function BrandBar() {
   const page = usePageTitleValue()
   const { settings } = useSettings()
+  const { tenant } = useTenant()
   const containerClass = settings.layoutMode === 'boxed' ? 'max-w-7xl mx-auto' : ''
 
   const handleFullscreen = () => {
@@ -27,9 +29,13 @@ export default function BrandBar() {
   return (
     <header className="bg-white border-b border-neutral-200 sticky top-0 z-40">
       <div className={`${containerClass} px-6 h-14 flex items-center gap-4`}>
-        {/* Esquerda: Logo */}
-        <Link to="/" className="shrink-0">
-          <Logo variant="dark" />
+        {/* Esquerda: Logo do tenant (com fallback pro SVG default) */}
+        <Link to="/" className="shrink-0 flex items-center">
+          {tenant?.logo_url ? (
+            <img src={tenant.logo_url} alt={tenant.name} className="h-8 max-w-[180px] object-contain" />
+          ) : (
+            <Logo variant="dark" />
+          )}
         </Link>
 
         {/* Centro: título da página */}
