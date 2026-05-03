@@ -21,22 +21,35 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.core import (
     CoreAppointmentCategories,
+    CoreAppointments,
     CoreAppointmentStatuses,
     CoreBusiness,
     CoreCrmCampaigns,
+    CoreEstimateProcedures,
+    CoreEstimates,
+    CoreInvoices,
+    CorePayments,
     CoreProcedures,
     CoreProfessionals,
+    CoreReceipts,
     CoreSpecialties,
+    CoreSummaryEntries,
     CoreUsersClinicorp,
 )
 from app.models.staging import (
     StgCcAppointmentCategories,
+    StgCcAppointments,
     StgCcAppointmentStatuses,
     StgCcBusiness,
     StgCcCrmCampaigns,
+    StgCcEstimates,
+    StgCcInvoices,
+    StgCcPayments,
     StgCcProcedures,
     StgCcProfessionals,
+    StgCcReceipts,
     StgCcSpecialties,
+    StgCcSummaryEntries,
     StgCcUsers,
 )
 
@@ -86,6 +99,20 @@ def _int(value: Any) -> int | None:
 def _bool_xflag(value: Any) -> bool:
     """Convenção Clinicorp: 'X' = true, qualquer outra coisa = false."""
     return value == "X"
+
+
+def _decimal(value: Any) -> Any:
+    """Coerção branda pra DECIMAL — passa float/int direto, vazio vira None."""
+    if value is None or value == "":
+        return None
+    if isinstance(value, (int, float)):
+        return value
+    if isinstance(value, str):
+        try:
+            return float(value)
+        except (ValueError, TypeError):
+            return None
+    return None
 
 
 # ── Helper genérico de transformação ────────────────────────────
@@ -267,6 +294,190 @@ def map_crm_campaigns(raw: dict) -> dict:
     }
 
 
+# ── Mappers de eventos ──────────────────────────────────────────
+
+def map_appointments(raw: dict) -> dict:
+    return {
+        "patient_external_id": _int(raw.get("Patient_PersonId")),
+        "patient_name": _str(raw.get("PatientName"), 255),
+        "patient_email": _str(raw.get("Email"), 255),
+        "patient_mobile_phone": _str(raw.get("MobilePhone"), 50),
+        "professional_external_id": _int(raw.get("Dentist_PersonId")),
+        "business_external_id": _int(raw.get("Clinic_BusinessId")),
+        "appointment_date": _parse_dt(raw.get("date")),
+        "from_time": _str(raw.get("fromTime"), 5),
+        "to_time": _str(raw.get("toTime"), 5),
+        "duration_minutes": _int(raw.get("ProceduresDuration")),
+        "category_id": _int(raw.get("CategoryId")),
+        "category_description": _str(raw.get("CategoryDescription"), 255),
+        "category_color": _str(raw.get("CategoryColor"), 20),
+        "procedures_text": _str(raw.get("Procedures")),
+        "notes": _str(raw.get("Notes")),
+        "alert_info": _str(raw.get("AlertInfo")),
+        "schedule_to_id": _int(raw.get("ScheduleToId")),
+        "was_edited": bool(raw.get("wasEdited")),
+        "is_deleted": _bool_xflag(raw.get("Deleted")),
+        "created_external_at": _parse_dt(raw.get("CreateDate")),
+        "created_external_user_id": _int(raw.get("CreateUserId")),
+        "created_external_user_name": _str(raw.get("CreateUserName"), 255),
+    }
+
+
+def map_estimate_header(raw: dict) -> dict:
+    """Mapper do header do orçamento. Procedure list é processado separado."""
+    procs = raw.get("ProcedureList") or []
+    return {
+        "patient_external_id": _int(raw.get("PatientId")),
+        "patient_name": _str(raw.get("PatientName"), 255),
+        "patient_mobile_phone": _str(raw.get("PatientMobilePhone"), 50),
+        "professional_external_id": _int(raw.get("ProfessionalId")),
+        "professional_name": _str(raw.get("ProfessionalName"), 255),
+        "business_external_id": _int(raw.get("BusinessId")),
+        "amount": _decimal(raw.get("Amount")),
+        "status": _str(raw.get("Status"), 50),
+        "estimate_date": _parse_dt(raw.get("Date")),
+        "search_date": _parse_dt(raw.get("SearchDate")),
+        "created_external_at": _parse_dt(raw.get("CreateDate")),
+        "procedures_count": len(procs) if isinstance(procs, list) else 0,
+        "is_deleted": False,
+    }
+
+
+def map_estimate_procedure(proc: dict) -> dict:
+    """Mapper de cada item de ProcedureList[]."""
+    return {
+        "treatment_external_id": _int(proc.get("TreatmentId")),
+        "patient_external_id": _int(proc.get("Patient_PersonId")),
+        "dentist_external_id": _int(proc.get("Dentist_PersonId")),
+        "dentist_name": _str(proc.get("DentistName"), 255),
+        "operation_description": _str(proc.get("OperationDescription")),
+        "specialty_id": _int(proc.get("SpecialtyId")),
+        "procedure_characteristic_id": _int(proc.get("Procedure_CharacteristicId")),
+        "related_characteristic_id": _int(proc.get("Related_CharacteristicId")),
+        "amount": _decimal(proc.get("Amount")),
+        "final_amount": _decimal(proc.get("FinalAmount")),
+        "original_amount": _decimal(proc.get("OriginalAmount")),
+        "minimum_procedure_amount": _decimal(proc.get("MinimumProcedureAmount")),
+        "bill_type": _str(proc.get("BillType"), 50),
+        "sequence": _int(proc.get("Sequence")),
+        "tooth": _str(proc.get("Tooth"), 50),
+        "surface": _str(proc.get("Surface"), 50),
+        "executed": bool(proc.get("Executed")),
+        "payment_accounted": bool(proc.get("PaymentAccounted")),
+        "payment_plan_id": _int(proc.get("PaymentPlanId")),
+        "price_id": _int(proc.get("PriceId")),
+        "price_list_id": _int(proc.get("PriceListId")),
+        "status_id": _int(proc.get("StatusId")),
+        "status_description": _str(proc.get("StatusDescription"), 255),
+        "created_external_at": _parse_dt(proc.get("CreateDate")),
+        "is_deleted": False,
+    }
+
+
+def map_payments(raw: dict) -> dict:
+    return {
+        "payment_header_external_id": _int(raw.get("PaymentHeaderId")),
+        "treatment_external_id": _int(raw.get("TreatmentId")),
+        "patient_external_id": _int(raw.get("PatientId")),
+        "patient_name": _str(raw.get("PatientName"), 255),
+        "payer_name": _str(raw.get("PayerName"), 255),
+        "payer_email": _str(raw.get("PayerEmail"), 255),
+        "payer_phone": _str(raw.get("PayerPhone"), 50),
+        "payer_document": _str(raw.get("PayerDocumentNumber"), 20),
+        "amount": _decimal(raw.get("Amount")),
+        "service_amount": _decimal(raw.get("ServiceAmount")),
+        "total_amount": _decimal(raw.get("TotalAmount")),
+        "fee": _decimal(raw.get("Fee")),
+        "interest_fee": _decimal(raw.get("InterestFee")),
+        "penalty_fee": _decimal(raw.get("PenaltyFee")),
+        "type": _str(raw.get("Type"), 50),
+        "payment_form": _str(raw.get("PaymentForm"), 50),
+        "payment_form_characteristic_id": _int(raw.get("PaymentForm_CharacteristicId")),
+        "installment_number": _int(raw.get("InstallmentNumber")),
+        "installments_count": _int(raw.get("InstallmentsCount")),
+        "person_type": _str(raw.get("PersonType"), 50),
+        "payment_description": _str(raw.get("PaymentDescription")),
+        "receiver_business_external_id": _int(raw.get("ReceiverBusinessId")),
+        "is_received": _bool_xflag(raw.get("PaymentReceived")),
+        "is_confirmed": _bool_xflag(raw.get("PaymentConfirmed")),
+        "is_canceled": bool(raw.get("Canceled")),
+        "payment_date": _parse_dt(raw.get("PaymentDate")),
+        "received_date": _parse_dt(raw.get("ReceivedDate")),
+        "confirmed_date": _parse_dt(raw.get("ConfirmedDate")),
+        "check_out_date": _parse_dt(raw.get("CheckOutDate")),
+        "post_date": _parse_dt(raw.get("PostDate")),
+        "due_date": _parse_dt(raw.get("DueDate")),
+        "transaction_external_id": _str(raw.get("ExternalTxId") or raw.get("ExternalUuid"), 128),
+        "is_deleted": False,
+    }
+
+
+def map_invoices(raw: dict) -> dict:
+    return {
+        "reference_id": _int(raw.get("ReferenceId")),
+        "amount": _decimal(raw.get("Amount")),
+        "description": _str(raw.get("Description")),
+        "patient_external_id": _int(raw.get("PatientId")),
+        "patient_name": _str(raw.get("PatientName"), 255),
+        "invoice_date": _parse_dt(raw.get("Date")),
+        "type": _str(raw.get("Type"), 50),
+        "status": _str(raw.get("Status"), 50),
+        "is_received": _bool_xflag(raw.get("PaymentReceived")),
+        "is_confirmed": _bool_xflag(raw.get("PaymentConfirmed")),
+        "installment_number": _int(raw.get("InstallmentNumber")),
+        "receiver_business_external_id": _int(raw.get("ReceiverBusinessId")),
+        "url": _str(raw.get("url"), 500),
+        "is_deleted": False,
+    }
+
+
+def map_receipts(raw: dict) -> dict:
+    return {
+        "reference_id": _int(raw.get("ReferenceId")),
+        "amount": _decimal(raw.get("Amount")),
+        "description": _str(raw.get("Description")),
+        "patient_external_id": _int(raw.get("PatientId")),
+        "patient_name": _str(raw.get("PatientName"), 255),
+        "receipt_date": _parse_dt(raw.get("ReceiptDate")),
+        "receiver_business_external_id": _int(raw.get("ReceiverBusinessId")),
+        "is_deleted": False,
+    }
+
+
+def map_summary_entries(raw: dict) -> dict:
+    ref_id = raw.get("ReferenceId")
+    if isinstance(ref_id, (list, dict)):
+        import json as _json
+        ref_id = _json.dumps(ref_id, ensure_ascii=False)
+    return {
+        "year": _int(raw.get("Year")),
+        "month": _int(raw.get("Month")),
+        "entry_date": _parse_dt(raw.get("Date")),
+        "post_date": _parse_dt(raw.get("PostDate")),
+        "account_id": _int(raw.get("AccountId")),
+        "type": _str(raw.get("Type"), 20),
+        "post_type": _str(raw.get("PostType"), 50),
+        "entry_type": _str(raw.get("EntryType"), 50),
+        "related_book_entry_id": _int(raw.get("RelatedBookEntryId")),
+        "related_person_id": _int(raw.get("RelatedPersonId")),
+        "related_business_id": _int(raw.get("RelatedBusinessId")),
+        "business_external_id": _int(raw.get("BusinessId")),
+        "business_name": _str(raw.get("BusinessName"), 255),
+        "description": _str(raw.get("Description")),
+        "reference_entity": _str(raw.get("ReferenceEntity"), 50),
+        "reference_id_text": _str(ref_id, 255),
+        "additional_info": _str(raw.get("AdditionalInfo")),
+        "is_open": bool(raw.get("Open")),
+        "is_automated": bool(raw.get("Automated")),
+        "is_manual": bool(raw.get("Manual")),
+        "person_id": _int(raw.get("PersonId")),
+        "amount": _decimal(raw.get("Amount")),
+        "amount_before_discounts": _decimal(raw.get("AmountBeforeDiscounts")),
+        "payment_form_characteristic_id": _int(raw.get("PaymentForm_CharacteristicId")),
+        "is_deleted": False,
+    }
+
+
 # ── Catálogo: lookup name → spec ────────────────────────────────
 
 STATIC_TRANSFORMS: tuple[TransformSpec, ...] = (
@@ -280,14 +491,117 @@ STATIC_TRANSFORMS: tuple[TransformSpec, ...] = (
     TransformSpec("crm_campaigns",          StgCcCrmCampaigns,          CoreCrmCampaigns,          map_crm_campaigns),
 )
 
-_TRANSFORMS_BY_NAME: dict[str, TransformSpec] = {s.name: s for s in STATIC_TRANSFORMS}
+
+# Eventos transacionais. estimates é especial (emite 2 outputs) — fica fora desta tupla.
+EVENT_TRANSFORMS: tuple[TransformSpec, ...] = (
+    TransformSpec("appointments",    StgCcAppointments,    CoreAppointments,    map_appointments),
+    TransformSpec("payments",        StgCcPayments,        CorePayments,        map_payments),
+    TransformSpec("invoices",        StgCcInvoices,        CoreInvoices,        map_invoices),
+    TransformSpec("receipts",        StgCcReceipts,        CoreReceipts,        map_receipts),
+    TransformSpec("summary_entries", StgCcSummaryEntries,  CoreSummaryEntries,  map_summary_entries),
+)
+
+
+_TRANSFORMS_BY_NAME: dict[str, TransformSpec] = {
+    s.name: s for s in (*STATIC_TRANSFORMS, *EVENT_TRANSFORMS)
+}
 
 
 def get_transform_spec(name: str) -> TransformSpec:
-    if name not in _TRANSFORMS_BY_NAME:
-        valid = ", ".join(_TRANSFORMS_BY_NAME.keys())
+    if name not in _TRANSFORMS_BY_NAME and name != "estimates":
+        valid = ", ".join(list(_TRANSFORMS_BY_NAME.keys()) + ["estimates"])
         raise ValueError(f"Transformação desconhecida '{name}'. Válidas: {valid}")
-    return _TRANSFORMS_BY_NAME[name]
+    return _TRANSFORMS_BY_NAME.get(name)  # type: ignore[return-value]
+
+
+# ── Especial: estimates (header + ProcedureList nested) ─────────
+
+async def transform_estimates(
+    db: AsyncSession, tenant_id: str,
+) -> tuple[TransformResult, TransformResult]:
+    """
+    Transforma estimates emitindo 2 outputs:
+      - 1 row em core_estimates (header) por staging row
+      - N rows em core_estimate_procedures (ProcedureList[i]) por staging row
+    """
+    rows_staging = await _read_staging(db, StgCcEstimates, tenant_id)
+
+    header_rows: list[dict] = []
+    proc_rows: list[dict] = []
+    header_errors = 0
+    proc_errors = 0
+
+    for external_id, raw, ext_updated in rows_staging:
+        try:
+            header = map_estimate_header(raw)
+            header["tenant_id"] = tenant_id
+            header["external_id"] = external_id
+            header["external_updated_at"] = ext_updated
+            header_rows.append(header)
+        except Exception:
+            header_errors += 1
+            continue
+
+        for proc in (raw.get("ProcedureList") or []):
+            if not isinstance(proc, dict):
+                proc_errors += 1
+                continue
+            proc_id = proc.get("id")
+            if proc_id is None:
+                proc_errors += 1
+                continue
+            try:
+                mapped = map_estimate_procedure(proc)
+                mapped["tenant_id"] = tenant_id
+                mapped["external_id"] = str(proc_id)
+                mapped["external_updated_at"] = _parse_dt(proc.get("z_LastChange_Date"))
+                proc_rows.append(mapped)
+            except Exception:
+                proc_errors += 1
+
+    # Header upsert
+    header_inserted = 0
+    header_updated = 0
+    if header_rows:
+        existing_h = await _existing_external_ids(
+            db, CoreEstimates, tenant_id, (r["external_id"] for r in header_rows),
+        )
+        skip = {"tenant_id", "external_id", "created_at"}
+        updatable = [k for k in header_rows[0].keys() if k not in skip]
+        stmt = mysql_insert(CoreEstimates).values(header_rows)
+        stmt = stmt.on_duplicate_key_update(
+            **{k: getattr(stmt.inserted, k) for k in updatable}
+        )
+        await db.execute(stmt)
+        header_inserted = sum(1 for r in header_rows if r["external_id"] not in existing_h)
+        header_updated = len(header_rows) - header_inserted
+
+    # Procedures upsert
+    proc_inserted = 0
+    proc_updated = 0
+    if proc_rows:
+        existing_p = await _existing_external_ids(
+            db, CoreEstimateProcedures, tenant_id, (r["external_id"] for r in proc_rows),
+        )
+        skip = {"tenant_id", "external_id", "created_at"}
+        updatable = [k for k in proc_rows[0].keys() if k not in skip]
+        # Batches de 1000 para não estourar limites do MySQL
+        batch_size = 1000
+        for i in range(0, len(proc_rows), batch_size):
+            batch = proc_rows[i:i + batch_size]
+            stmt = mysql_insert(CoreEstimateProcedures).values(batch)
+            stmt = stmt.on_duplicate_key_update(
+                **{k: getattr(stmt.inserted, k) for k in updatable}
+            )
+            await db.execute(stmt)
+        proc_inserted = sum(1 for r in proc_rows if r["external_id"] not in existing_p)
+        proc_updated = len(proc_rows) - proc_inserted
+
+    await db.commit()
+    return (
+        TransformResult("estimates", len(rows_staging), header_inserted, header_updated, header_errors),
+        TransformResult("estimate_procedures", len(proc_rows), proc_inserted, proc_updated, proc_errors),
+    )
 
 
 # ── API pública ─────────────────────────────────────────────────
@@ -295,7 +609,9 @@ def get_transform_spec(name: str) -> TransformSpec:
 async def transform_static_entity(
     db: AsyncSession, tenant_id: str, name: str,
 ) -> TransformResult:
-    """Transforma UMA entidade estática staging → core."""
+    """Transforma UMA entidade staging → core (estática ou evento simples)."""
+    if name == "estimates":
+        raise ValueError("Use transform_estimates para 'estimates' (emite 2 outputs).")
     spec = get_transform_spec(name)
     return await transform_entity(db, tenant_id, spec)
 
@@ -307,4 +623,28 @@ async def transform_all_static(
     results: list[TransformResult] = []
     for spec in STATIC_TRANSFORMS:
         results.append(await transform_entity(db, tenant_id, spec))
+    return results
+
+
+async def transform_all_events(
+    db: AsyncSession, tenant_id: str,
+) -> list[TransformResult]:
+    """Transforma todos os 6 eventos transacionais (5 simples + estimates especial)."""
+    results: list[TransformResult] = []
+    # 5 eventos simples
+    for spec in EVENT_TRANSFORMS:
+        results.append(await transform_entity(db, tenant_id, spec))
+    # estimates (header + procedures)
+    header_r, procs_r = await transform_estimates(db, tenant_id)
+    results.append(header_r)
+    results.append(procs_r)
+    return results
+
+
+async def transform_all(
+    db: AsyncSession, tenant_id: str,
+) -> list[TransformResult]:
+    """Transforma cadastros + eventos. Não inclui core_patients (PR-5c)."""
+    results = await transform_all_static(db, tenant_id)
+    results.extend(await transform_all_events(db, tenant_id))
     return results

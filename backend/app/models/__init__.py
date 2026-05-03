@@ -31,6 +31,13 @@ from app.models.core import (
     CoreAppointmentStatuses,
     CoreCrmCampaigns,
     CorePatients,
+    CoreAppointments,
+    CoreEstimates,
+    CoreEstimateProcedures,
+    CorePayments,
+    CoreInvoices,
+    CoreReceipts,
+    CoreSummaryEntries,
 )
 from app.models.sync_job import SyncJob
 from app.models.sync_checkpoint import SyncCheckpoint
@@ -45,11 +52,14 @@ __all__ = [
     "StgCcCrmCampaigns", "StgCcAppointments", "StgCcEstimates",
     "StgCcPayments", "StgCcInvoices", "StgCcReceipts",
     "StgCcSummaryEntries", "StgCcKpisMonthly",
-    # Core
+    # Core — cadastros
     "CoreBusiness", "CoreUsersClinicorp", "CoreProfessionals",
     "CoreSpecialties", "CoreProcedures",
     "CoreAppointmentCategories", "CoreAppointmentStatuses",
     "CoreCrmCampaigns", "CorePatients",
+    # Core — eventos
+    "CoreAppointments", "CoreEstimates", "CoreEstimateProcedures",
+    "CorePayments", "CoreInvoices", "CoreReceipts", "CoreSummaryEntries",
     # Sync control
     "SyncJob", "SyncCheckpoint", "ContaAzulToken",
 ]
