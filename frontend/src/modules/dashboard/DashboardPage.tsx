@@ -1,5 +1,4 @@
 import { useMemo, useState } from 'react'
-import { Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import {
   Bar,
@@ -37,6 +36,7 @@ import {
 } from 'lucide-react'
 
 import { dashboardService } from '@/services/dashboard.service'
+import { usePageTitle } from '@/contexts/PageTitleContext'
 import type {
   ChurnBucket,
   CurvaAbcItem,
@@ -98,9 +98,10 @@ export default function DashboardPage() {
   })
 
   const periodLabel = `${MONTHS_PT[month - 1]} de ${year}`
+  usePageTitle('Painel Executivo', `Indicadores estratégicos de ${periodLabel}`, 'ANÁLISE')
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50/50 via-neutral-50 to-white relative">
+    <main className="relative">
       {/* Pattern decorativo sutil de fundo */}
       <div
         aria-hidden
@@ -110,15 +111,8 @@ export default function DashboardPage() {
           backgroundSize: '32px 32px',
         }}
       />
-      <header className="bg-white/80 backdrop-blur-sm border-b border-neutral-200 sticky top-0 z-10 relative">
-        <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
-          <div>
-            <Link to="/" className="text-xs text-neutral-500 hover:text-primary-700 inline-block mb-1">← voltar</Link>
-            <h1 className="text-xl font-bold text-neutral-900 flex items-center gap-2">
-              <span>Painel Executivo</span>
-            </h1>
-            <p className="text-xs text-neutral-500">Indicadores estratégicos de {periodLabel}</p>
-          </div>
+      <div className="px-6 py-6 max-w-7xl mx-auto space-y-6 relative">
+        <div className="flex items-center justify-end flex-wrap gap-3">
           <div className="flex items-center gap-2">
             <select
               value={month}
@@ -138,9 +132,6 @@ export default function DashboardPage() {
             </select>
           </div>
         </div>
-      </header>
-
-      <main className="px-6 py-6 max-w-7xl mx-auto space-y-6 relative">
         {dashQ.isLoading && (
           <div className="bg-white border rounded-xl p-12 text-center text-neutral-500 text-sm shadow-sm">
             Carregando…
@@ -154,8 +145,8 @@ export default function DashboardPage() {
         )}
 
         {dashQ.data && <DashboardContent data={dashQ.data} />}
-      </main>
-    </div>
+      </div>
+    </main>
   )
 }
 

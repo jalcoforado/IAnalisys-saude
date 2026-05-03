@@ -1,9 +1,9 @@
 import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Link } from 'react-router-dom'
 
 import { syncService } from '@/services/sync.service'
 import { pipelineService, type RebuildPipelineResult } from '@/services/pipeline.service'
+import { usePageTitle } from '@/contexts/PageTitleContext'
 import {
   ENTITY_LABELS,
   STATIC_ENTITIES,
@@ -27,6 +27,7 @@ const fmtNum = (n: number | null | undefined): string =>
   n == null ? '—' : new Intl.NumberFormat('pt-BR').format(n)
 
 export default function SyncPage() {
+  usePageTitle('Sincronização Clinicorp', 'Importação · status por entidade · histórico de jobs', 'ADMIN')
   const qc = useQueryClient()
   const today = new Date()
   const [year, setYear] = useState<number>(today.getFullYear())
@@ -126,18 +127,12 @@ export default function SyncPage() {
     .pop() as string | undefined
 
   return (
-    <div className="min-h-screen bg-neutral-50">
-      <header className="border-b bg-white px-6 py-4 flex items-center justify-between sticky top-0 z-10">
-        <div>
-          <Link to="/" className="text-xs text-neutral-500 hover:text-primary-700">← voltar</Link>
-          <h1 className="text-lg font-semibold text-neutral-900">Sincronização Clinicorp</h1>
-        </div>
+    <main className="px-6 py-6 max-w-7xl mx-auto space-y-6">
+      <div className="flex items-center justify-end">
         <div className="text-xs text-neutral-500">
-          {checkpointsQ.isFetching ? 'atualizando…' : `Atualiza a cada 5s`}
+          {checkpointsQ.isFetching ? 'atualizando…' : `atualiza a cada 5s`}
         </div>
-      </header>
-
-      <main className="px-6 py-6 max-w-7xl mx-auto space-y-6">
+      </div>
         {/* Status overview */}
         <section className="grid grid-cols-2 md:grid-cols-4 gap-3">
           <KpiCard label="Cadastros estáticos" value={fmtNum(totalStatic)} sub={`${STATIC_ENTITIES.length} entidades`} />
@@ -331,8 +326,7 @@ export default function SyncPage() {
             </table>
           </div>
         </section>
-      </main>
-    </div>
+    </main>
   )
 }
 
