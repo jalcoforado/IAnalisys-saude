@@ -40,9 +40,16 @@ export default function SyncPage() {
     queryFn: syncService.checkpoints,
     refetchInterval: 5_000,
   })
+  // Log: 50 mais recentes (qualquer ano/entidade)
   const jobsQ = useQuery({
-    queryKey: ['sync', 'jobs'],
+    queryKey: ['sync', 'jobs', 'log'],
     queryFn: () => syncService.jobs(50),
+    refetchInterval: 5_000,
+  })
+  // Heatmap: até 500 jobs do ano selecionado (cobre 7 entidades × 12 meses × ~5 re-runs)
+  const yearJobsQ = useQuery({
+    queryKey: ['sync', 'jobs', 'year', year],
+    queryFn: () => syncService.jobs(500, undefined, year),
     refetchInterval: 5_000,
   })
 
@@ -53,9 +60,10 @@ export default function SyncPage() {
   }, [checkpointsQ.data])
 
   // Map (entity, year, month) → último job, pra colorir o heatmap
+  // Usa yearJobsQ (filtrada server-side) — log table continua em jobsQ
   const jobsByCell = useMemo(() => {
     const map = new Map<string, SyncJob>()
-    for (const j of jobsQ.data || []) {
+    for (const j of yearJobsQ.data || []) {
       if (!j.period_from) continue
       const d = new Date(j.period_from + 'T00:00:00')
       const key = `${j.entity}-${d.getFullYear()}-${d.getMonth() + 1}`
@@ -63,7 +71,7 @@ export default function SyncPage() {
       if (!map.has(key)) map.set(key, j)
     }
     return map
-  }, [jobsQ.data])
+  }, [yearJobsQ.data])
 
   // Mutations -----
   const invalidateAll = () => {

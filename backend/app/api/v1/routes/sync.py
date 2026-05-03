@@ -134,14 +134,26 @@ async def sync_clinicorp_kpis_monthly(
 async def list_sync_jobs(
     limit: int = 50,
     entity: str | None = None,
+    year: int | None = None,
     current_user: UserMe = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> List[SyncJobResponse]:
-    """Lista os últimos N jobs de sync do tenant. Filtro opcional por entidade."""
+    """
+    Lista jobs de sync do tenant.
+    - `limit` (default 50): número máximo de jobs.
+    - `entity` (opcional): filtra por nome da entidade.
+    - `year` (opcional): filtra jobs cujo period_from caia no ano (heatmap).
+    """
+    from datetime import date as _date
     tenant_id = _require_tenant(current_user)
     stmt = select(SyncJob).where(SyncJob.tenant_id == tenant_id)
     if entity:
         stmt = stmt.where(SyncJob.entity == entity)
+    if year is not None:
+        stmt = stmt.where(
+            SyncJob.period_from >= _date(year, 1, 1),
+            SyncJob.period_from <= _date(year, 12, 31),
+        )
     stmt = stmt.order_by(desc(SyncJob.created_at)).limit(limit)
     result = await db.execute(stmt)
     return [SyncJobResponse.model_validate(j) for j in result.scalars().all()]

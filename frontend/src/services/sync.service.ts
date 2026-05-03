@@ -24,9 +24,9 @@ export const syncService = {
       .post<SyncJob>('/sync/clinicorp/kpis_monthly', { year, month })
       .then((r) => r.data),
 
-  jobs: (limit = 30, entity?: SyncEntity) =>
+  jobs: (limit = 30, entity?: SyncEntity, year?: number) =>
     api
-      .get<SyncJob[]>('/sync/jobs', { params: { limit, entity } })
+      .get<SyncJob[]>('/sync/jobs', { params: { limit, entity, year } })
       .then((r) => r.data),
 
   checkpoints: () =>
