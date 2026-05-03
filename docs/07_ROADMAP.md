@@ -584,17 +584,42 @@ def requires(*codes: str):
 - **Granularidade simples primeiro** (`read`/`write`). `export` só onde foi pedido (financeiro, pacientes). Granularidade fina (sub-módulos) vira PR depois
 - **Dashboard executivo atual = `dashboard.read`** (visão geral da diretoria, não-segregada). Quando vierem dashboards específicos, ficam em `dashboard.financeiro.read` / `dashboard.comercial.read`. O dropdown "Dashboards" mostrará só os que o usuário tem permissão
 
-### PR-13 — Checklist obrigatório de novo módulo
+### ⚠️ REGRA OBRIGATÓRIA — Toda página/módulo novo passa pelo checklist de permissões
 
-A partir do PR-14, **todo módulo novo segue esses 5 passos**:
+**Sem exceção. Sem deploy se algum dos 5 passos foi pulado.** Decidido em 2026-05-03 e gravado aqui pra que ninguém esqueça.
 
-1. **Declarar permissions no seed** (`app/db/seeds/permissions.py`) — `modulo.read` + `modulo.write` mínimo, mais quaisquer ações específicas (`export`, etc.). Roda migration leve só de seed
-2. **Proteger endpoints** com `Depends(requires("modulo.action"))` — sem isso o endpoint fica aberto pra qualquer usuário logado
-3. **Adicionar item de menu** em `menus.ts` com campo `permission: 'modulo.read'`
-4. **Wrapper `<RequirePermission>`** na rota do `App.tsx` — defesa em profundidade contra digitar URL direto
-5. **`<Can>` em botões e seções** dentro da página — esconde ações que o usuário logado não pode disparar
+**Decisão arquitetural casada (2026-05-03):** o sistema é **estritamente read-only sobre dados clínicos**. Pacientes, agenda, clínico e financeiro entram via APIs (Clinicorp + Conta Azul) e nunca são editados aqui. Logo, o catálogo NÃO contém `modulo.write` para esses 4 módulos. Escrita só existe nos módulos administrativos: usuários, empresa, sync, IA. A migration 0014 removeu os writes legados.
 
-Sem todos os 5, considera o módulo "incompleto". Só faz sentido pular se for tela 100% pública (login, reset).
+Catálogo final (19 codes em 8 módulos):
+- `dashboard.read`
+- `pacientes.read`, `pacientes.export`
+- `agenda.read`, `agenda.export`
+- `clinico.read`
+- `financeiro.read`, `financeiro.export`
+- `sync.run`, `analytics.rebuild`
+- `usuarios.read`, `usuarios.invite`, `usuarios.edit`, `usuarios.deactivate`
+- `empresa.settings.read`, `empresa.settings.write`, `empresa.permissions.manage`
+- `ia.use`, `ia.config`
+
+#### Checklist obrigatório (5 passos) — toda página nova ou módulo novo
+
+1. **Declarar permission no catálogo** — migration nova com `INSERT INTO permissions ...`. Use `modulo.read` (+`.export` se houver botão de baixar) e ações administrativas específicas se aplicável (ex: `modulo.config`). NÃO crie `.write` para módulos que só consomem dados sincronizados.
+
+2. **Proteger endpoint** com `Depends(requires("modulo.action"))` — sem isso o endpoint fica aberto a qualquer usuário logado. PR review deve barrar endpoint sem `requires()`.
+
+3. **Adicionar item de menu** em `menus.ts` com campo `permission: 'modulo.read'`. Sem isso, o item aparece pra todo mundo independente da role.
+
+4. **Wrapper `<RequirePermission>`** na rota do `App.tsx`. Defesa em profundidade — usuário pode digitar URL direto e burlar o filtro de menu.
+
+5. **`<Can>` em botões e seções** dentro da página. Esconde ações que o usuário logado não pode disparar. Faz a UX consistente com o backend.
+
+#### Como o `tenant_admin` cuida da matriz
+
+Após os 5 passos, `tenant_admin` da clínica abre `/empresa/permissoes` e marca/desmarca a nova permission por role conforme a operação dele. Sem deploy, sem TI.
+
+#### Como o seed inicial decide a matriz pra novos tenants
+
+Quando um novo tenant é criado (futuro endpoint de Admin SaaS), uma matriz default é replicada por role — assim a clínica nova já vem com configuração razoável e edita só o que destoar.
 
 ### Backlog consolidado (cronologia 2026-05-02 → 2026-05-03)
 
@@ -619,6 +644,7 @@ Sem todos os 5, considera o módulo "incompleto". Só faz sentido pular se for t
 | PR-11 | ✅ | Configurações da empresa em `/empresa/configuracoes` — logo/favicon/login_bg + dados + endereço + cores. TenantContext aplica dinamicamente | `f810b8b` |
 | **PR-12** | ✅ | Recuperação de senha via email (Gmail SMTP) + login só com email |
 | **PR-13** | ✅ | RBAC granular: `permissions` + `role_permissions` + matriz UI + CRUD usuários + convite |
+| **0014** | ✅ | Catálogo revisado: remove 4 writes (sistema read-only), adiciona `agenda.export` (19 codes) |
 
 ### PR-9 (Fase 6.1) — Dashboard Executivo
 
