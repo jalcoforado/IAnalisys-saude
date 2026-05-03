@@ -16,13 +16,21 @@ from pydantic import BaseModel, Field
 
 from app.api.v1.dependencies.auth import get_current_user
 from app.db.session import get_db
-from app.models.analytics import DimPaciente, DimProfissional, DimTempo
+from app.models.analytics import (
+    DimPaciente, DimProfissional, DimTempo,
+    FatoAgenda, FatoFinanceiro, FatoOrcamentos,
+)
 from app.schemas.auth import UserMe
 from app.transformations.core_to_analytics import (
+    build_all_analytics,
     build_all_dimensions,
+    build_all_facts,
     build_dim_paciente,
     build_dim_profissional,
     build_dim_tempo,
+    build_fato_agenda,
+    build_fato_financeiro,
+    build_fato_orcamentos,
 )
 
 router = APIRouter(prefix="/analytics", tags=["analytics"])
@@ -118,6 +126,68 @@ async def rebuild_all_dimensions(
     )
 
 
+@router.post("/rebuild/fato_agenda", response_model=BuilderResultResponse, status_code=200)
+async def rebuild_fato_agenda(
+    current_user: UserMe = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> BuilderResultResponse:
+    """Constrói fato_agenda a partir de core_appointments."""
+    tenant_id = _require_tenant(current_user)
+    return _to_response(await build_fato_agenda(db, tenant_id))
+
+
+@router.post("/rebuild/fato_orcamentos", response_model=BuilderResultResponse, status_code=200)
+async def rebuild_fato_orcamentos(
+    current_user: UserMe = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> BuilderResultResponse:
+    """Constrói fato_orcamentos a partir de core_estimates."""
+    tenant_id = _require_tenant(current_user)
+    return _to_response(await build_fato_orcamentos(db, tenant_id))
+
+
+@router.post("/rebuild/fato_financeiro", response_model=BuilderResultResponse, status_code=200)
+async def rebuild_fato_financeiro(
+    current_user: UserMe = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> BuilderResultResponse:
+    """Constrói fato_financeiro a partir de core_payments."""
+    tenant_id = _require_tenant(current_user)
+    return _to_response(await build_fato_financeiro(db, tenant_id))
+
+
+@router.post("/rebuild/facts", response_model=DimensionsResponse, status_code=200)
+async def rebuild_all_facts(
+    current_user: UserMe = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> DimensionsResponse:
+    """Reconstrói todos os 3 fatos: agenda + orcamentos + financeiro."""
+    tenant_id = _require_tenant(current_user)
+    results = await build_all_facts(db, tenant_id)
+    items = [_to_response(r) for r in results]
+    return DimensionsResponse(
+        results=items,
+        total_inserted=sum(i.inserted for i in items),
+        total_updated=sum(i.updated for i in items),
+    )
+
+
+@router.post("/rebuild/all", response_model=DimensionsResponse, status_code=200)
+async def rebuild_all_analytics_endpoint(
+    current_user: UserMe = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> DimensionsResponse:
+    """Reconstrói toda a camada analytics: dimensões + fatos."""
+    tenant_id = _require_tenant(current_user)
+    results = await build_all_analytics(db, tenant_id)
+    items = [_to_response(r) for r in results]
+    return DimensionsResponse(
+        results=items,
+        total_inserted=sum(i.inserted for i in items),
+        total_updated=sum(i.updated for i in items),
+    )
+
+
 @router.get("/status", response_model=List[AnalyticsStatusItem])
 async def analytics_status(
     current_user: UserMe = Depends(get_current_user),
@@ -142,5 +212,16 @@ async def analytics_status(
         select(func.count()).select_from(DimProfissional).where(DimProfissional.tenant_id == tenant_id)
     )
     items.append(AnalyticsStatusItem(table="dim_profissional", rows=int(q.scalar_one() or 0)))
+
+    # Fatos
+    for tbl_name, model in (
+        ("fato_agenda", FatoAgenda),
+        ("fato_orcamentos", FatoOrcamentos),
+        ("fato_financeiro", FatoFinanceiro),
+    ):
+        q = await db.execute(
+            select(func.count()).select_from(model).where(model.tenant_id == tenant_id)
+        )
+        items.append(AnalyticsStatusItem(table=tbl_name, rows=int(q.scalar_one() or 0)))
 
     return items

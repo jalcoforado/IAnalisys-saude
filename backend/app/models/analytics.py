@@ -6,7 +6,7 @@ fato_* → eventos quantitativos com FK lógica para dimensões
 """
 from sqlalchemy import (
     BigInteger, Boolean, Column, Date, DateTime, ForeignKey, Index, Integer,
-    String, UniqueConstraint, func
+    Numeric, String, UniqueConstraint, func
 )
 from sqlalchemy.dialects.mysql import CHAR
 from app.db.base import Base
@@ -76,3 +76,88 @@ class DimProfissional(Base):
     name = Column(String(255), nullable=True)
     cpf = Column(String(20), nullable=True)
     rebuilt_at = Column(DateTime, nullable=False, server_default=func.current_timestamp())
+
+
+# ── Fatos ───────────────────────────────────────────────────────
+
+class FatoAgenda(Base):
+    """1 linha por agendamento. Métricas: absenteísmo, consultas/período."""
+    __tablename__ = "fato_agenda"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "external_id", name="uk_fato_agenda_external"),
+        Index("ix_fato_agenda_date", "tenant_id", "date_key"),
+        Index("ix_fato_agenda_year_month", "tenant_id", "year_month_key"),
+        Index("ix_fato_agenda_patient", "tenant_id", "patient_external_id"),
+        Index("ix_fato_agenda_professional", "tenant_id", "professional_external_id"),
+    )
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    tenant_id = Column(CHAR(36), ForeignKey("tenants.id"), nullable=False)
+    external_id = Column(String(64), nullable=False)
+    date_key = Column(Date, nullable=True)
+    year = Column(Integer, nullable=True)
+    month = Column(Integer, nullable=True)
+    year_month_key = Column(String(7), nullable=True)
+    rebuilt_at = Column(DateTime, nullable=False, server_default=func.current_timestamp())
+    patient_external_id = Column(BigInteger, nullable=True)
+    professional_external_id = Column(BigInteger, nullable=True)
+    appointment_datetime = Column(DateTime, nullable=True)
+    duration_minutes = Column(Integer, nullable=True)
+    is_canceled = Column(Boolean, nullable=False, default=False, server_default="0")
+    category_description = Column(String(255), nullable=True)
+    category_color = Column(String(20), nullable=True)
+
+
+class FatoOrcamentos(Base):
+    """1 linha por orçamento (header). Métricas: conversão, ticket médio."""
+    __tablename__ = "fato_orcamentos"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "external_id", name="uk_fato_orcamentos_external"),
+        Index("ix_fato_orcamentos_date", "tenant_id", "date_key"),
+        Index("ix_fato_orcamentos_year_month", "tenant_id", "year_month_key"),
+        Index("ix_fato_orcamentos_status", "tenant_id", "status"),
+    )
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    tenant_id = Column(CHAR(36), ForeignKey("tenants.id"), nullable=False)
+    external_id = Column(String(64), nullable=False)
+    date_key = Column(Date, nullable=True)
+    year = Column(Integer, nullable=True)
+    month = Column(Integer, nullable=True)
+    year_month_key = Column(String(7), nullable=True)
+    rebuilt_at = Column(DateTime, nullable=False, server_default=func.current_timestamp())
+    patient_external_id = Column(BigInteger, nullable=True)
+    professional_external_id = Column(BigInteger, nullable=True)
+    amount = Column(Numeric(12, 2), nullable=True)
+    status = Column(String(50), nullable=True)
+    is_approved = Column(Boolean, nullable=False, default=False, server_default="0")
+    is_rejected = Column(Boolean, nullable=False, default=False, server_default="0")
+    is_open = Column(Boolean, nullable=False, default=False, server_default="0")
+    is_followup = Column(Boolean, nullable=False, default=False, server_default="0")
+    procedures_count = Column(Integer, nullable=False, default=0, server_default="0")
+
+
+class FatoFinanceiro(Base):
+    """1 linha por pagamento. Métricas: faturamento, inadimplência."""
+    __tablename__ = "fato_financeiro"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "external_id", name="uk_fato_financeiro_external"),
+        Index("ix_fato_financeiro_date", "tenant_id", "date_key"),
+        Index("ix_fato_financeiro_year_month", "tenant_id", "year_month_key"),
+        Index("ix_fato_financeiro_received", "tenant_id", "is_received"),
+        Index("ix_fato_financeiro_payment_form", "tenant_id", "payment_form"),
+    )
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    tenant_id = Column(CHAR(36), ForeignKey("tenants.id"), nullable=False)
+    external_id = Column(String(64), nullable=False)
+    date_key = Column(Date, nullable=True)
+    year = Column(Integer, nullable=True)
+    month = Column(Integer, nullable=True)
+    year_month_key = Column(String(7), nullable=True)
+    rebuilt_at = Column(DateTime, nullable=False, server_default=func.current_timestamp())
+    patient_external_id = Column(BigInteger, nullable=True)
+    amount = Column(Numeric(12, 2), nullable=True)
+    service_amount = Column(Numeric(12, 2), nullable=True)
+    type = Column(String(50), nullable=True)
+    payment_form = Column(String(50), nullable=True)
+    is_received = Column(Boolean, nullable=False, default=False, server_default="0")
+    is_confirmed = Column(Boolean, nullable=False, default=False, server_default="0")
+    is_canceled = Column(Boolean, nullable=False, default=False, server_default="0")
