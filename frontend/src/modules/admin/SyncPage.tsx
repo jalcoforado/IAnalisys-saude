@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 
 import { syncService } from '@/services/sync.service'
+import { pipelineService, type RebuildPipelineResult } from '@/services/pipeline.service'
 import {
   ENTITY_LABELS,
   STATIC_ENTITIES,
@@ -98,7 +99,16 @@ export default function SyncPage() {
     onSuccess: invalidateAll,
   })
 
-  const isAnyRunning = staticAllMut.isPending || txEntityMut.isPending || txMonthMut.isPending || kpisMut.isPending
+  const [lastRebuild, setLastRebuild] = useState<RebuildPipelineResult | null>(null)
+  const rebuildMut = useMutation({
+    mutationFn: () => pipelineService.rebuildAll(),
+    onSuccess: (data) => {
+      setLastRebuild(data)
+      invalidateAll()
+    },
+  })
+
+  const isAnyRunning = staticAllMut.isPending || txEntityMut.isPending || txMonthMut.isPending || kpisMut.isPending || rebuildMut.isPending
 
   // Totais top
   const totalStatic = STATIC_ENTITIES.reduce(
@@ -134,6 +144,37 @@ export default function SyncPage() {
           <KpiCard label="Mensal · registros" value={fmtNum(totalTransactional)} sub={`${TRANSACTIONAL_ENTITIES.length} entidades`} />
           <KpiCard label="Último sync" value={fmtDate(lastSyncAt || null)} sub="qualquer entidade" />
           <KpiCard label="Em execução" value={isAnyRunning ? 'Sim' : 'Não'} sub={isAnyRunning ? 'aguarde…' : 'pronto'} accent={isAnyRunning ? 'warning' : 'success'} />
+        </section>
+
+        {/* Pipeline CORE + ANALYTICS */}
+        <section className="bg-gradient-to-r from-primary-50 to-white border border-primary-100 rounded-lg p-4">
+          <div className="flex items-start justify-between gap-4 flex-wrap">
+            <div className="flex-1 min-w-[260px]">
+              <h2 className="text-sm font-semibold text-neutral-900">Pipeline CORE + ANALYTICS</h2>
+              <p className="text-xs text-neutral-600 mt-0.5">
+                Após sincronizar dados novos no STAGING, rode esse passo para atualizar as tabelas
+                relacionais (CORE) e o star schema (ANALYTICS) que alimentam o dashboard.
+                Idempotente — pode rodar quantas vezes quiser.
+              </p>
+              {lastRebuild && (
+                <div className="mt-2 text-[11px] text-neutral-700 flex flex-wrap gap-3">
+                  <span><strong className="text-success-text">✓ Último rebuild:</strong> {(lastRebuild.duration_ms / 1000).toFixed(2)}s</span>
+                  <span>Transform: <strong>{fmtNum(lastRebuild.transform.total_inserted)}</strong> inseridos · <strong>{fmtNum(lastRebuild.transform.total_updated)}</strong> atualizados</span>
+                  <span>Analytics: <strong>{fmtNum(lastRebuild.analytics.total_inserted)}</strong> inseridos · <strong>{fmtNum(lastRebuild.analytics.total_updated)}</strong> atualizados</span>
+                </div>
+              )}
+              {rebuildMut.isError && (
+                <div className="mt-2 text-xs text-error-text">Erro ao reconstruir. Verifique os logs do backend.</div>
+              )}
+            </div>
+            <button
+              onClick={() => rebuildMut.mutate()}
+              disabled={isAnyRunning}
+              className="text-xs px-4 py-2 rounded bg-primary-700 text-white hover:bg-primary-800 disabled:opacity-50 disabled:cursor-not-allowed font-medium shadow-sm shrink-0"
+            >
+              {rebuildMut.isPending ? 'Reconstruindo…' : 'Reconstruir CORE + ANALYTICS'}
+            </button>
+          </div>
         </section>
 
         {/* Cadastros estáticos */}

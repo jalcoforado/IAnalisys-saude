@@ -13,6 +13,13 @@ function HomePage() {
 
         <div className="mt-8 grid gap-3">
           <Link
+            to="/dashboard"
+            className="block bg-primary-700 text-white rounded-lg px-4 py-3 text-left hover:bg-primary-800 transition"
+          >
+            <div className="text-sm font-semibold">Dashboard Executivo</div>
+            <div className="text-xs text-primary-100 mt-0.5">KPIs, funil comercial, performance e análise de pacientes (ABC, churn, LTV)</div>
+          </Link>
+          <Link
             to="/admin/sync"
             className="block bg-white border rounded-lg px-4 py-3 text-left hover:border-primary-300 transition"
           >

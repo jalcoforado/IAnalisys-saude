@@ -5,6 +5,7 @@ import LoginPage from '@/modules/auth/LoginPage'
 import HomePage from '@/pages/HomePage'
 import DesignSystem from '@/pages/DesignSystem'
 import SyncPage from '@/modules/admin/SyncPage'
+import DashboardPage from '@/modules/dashboard/DashboardPage'
 
 function App() {
   return (
@@ -20,6 +21,14 @@ function App() {
             element={
               <PrivateRoute>
                 <SyncPage />
+              </PrivateRoute>
+            }
+          />
+          <Route
+            path="/dashboard"
+            element={
+              <PrivateRoute>
+                <DashboardPage />
               </PrivateRoute>
             }
           />
