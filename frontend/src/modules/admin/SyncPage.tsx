@@ -1,407 +1,79 @@
-import { useMemo, useState } from 'react'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useState } from 'react'
 
 import { syncService } from '@/services/sync.service'
-import { pipelineService, type RebuildPipelineResult } from '@/services/pipeline.service'
 import { usePageTitle } from '@/contexts/PageTitleContext'
 import {
-  ENTITY_LABELS,
   STATIC_ENTITIES,
   TRANSACTIONAL_ENTITIES,
-  type Checkpoint,
+  CA_STATIC_ENTITIES,
+  CA_TRANSACTIONAL_ENTITIES,
   type SyncEntity,
-  type SyncJob,
+  type SyncSource,
 } from '@/types/sync'
+import { SyncProviderPanel, type SyncProviderConfig } from './SyncProviderPanel'
 
-const MONTHS_SHORT = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez']
-
-const HEATMAP_ROWS: SyncEntity[] = [...TRANSACTIONAL_ENTITIES, 'kpis_monthly']
-
-const fmtDate = (iso: string | null): string => {
-  if (!iso) return '—'
-  const d = new Date(iso)
-  return d.toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+const CLINICORP_CONFIG: SyncProviderConfig = {
+  source: 'clinicorp',
+  staticEntities: STATIC_ENTITIES,
+  heatmapRows: [...TRANSACTIONAL_ENTITIES, 'kpis_monthly' as SyncEntity],
+  syncAllStatic: () => syncService.static(),
+  syncMonth: (year, month) => syncService.transactionalBatch(year, month),
+  syncEntityMonth: (entity, year, month) =>
+    syncService.transactional(entity, year, month),
+  syncKpisMonth: (year, month) => syncService.kpisMonthly(year, month),
+  showRebuildPipeline: true,
 }
 
-const fmtNum = (n: number | null | undefined): string =>
-  n == null ? '—' : new Intl.NumberFormat('pt-BR').format(n)
+const CONTAAZUL_CONFIG: SyncProviderConfig = {
+  source: 'contaazul',
+  staticEntities: CA_STATIC_ENTITIES,
+  heatmapRows: CA_TRANSACTIONAL_ENTITIES,
+  syncAllStatic: () => syncService.contaazulStatic(),
+  syncMonth: (year, month) => syncService.contaazulFinancial(year, month),
+  // Sem entityMonth nem kpisMonth — Conta Azul só roda batch do mês inteiro
+  showRebuildPipeline: false,
+}
+
+const TABS: { key: SyncSource; label: string; subtitle: string; config: SyncProviderConfig }[] = [
+  { key: 'clinicorp', label: 'Clinicorp', subtitle: 'agenda · pacientes · receitas · profissionais', config: CLINICORP_CONFIG },
+  { key: 'contaazul', label: 'Conta Azul', subtitle: 'pessoas · financeiro · produtos · serviços', config: CONTAAZUL_CONFIG },
+]
+
 
 export default function SyncPage() {
-  usePageTitle('Sincronização Clinicorp', 'Importação · status por entidade · histórico de jobs', 'ADMIN')
-  const qc = useQueryClient()
-  const today = new Date()
-  const [year, setYear] = useState<number>(today.getFullYear())
-  const yearOptions = useMemo(() => {
-    const start = 2019
-    const end = today.getFullYear()
-    return Array.from({ length: end - start + 1 }, (_, i) => end - i)
-  }, [today])
-
-  const checkpointsQ = useQuery({
-    queryKey: ['sync', 'checkpoints'],
-    queryFn: syncService.checkpoints,
-    refetchInterval: 5_000,
-  })
-  // Log: 50 mais recentes (qualquer ano/entidade)
-  const jobsQ = useQuery({
-    queryKey: ['sync', 'jobs', 'log'],
-    queryFn: () => syncService.jobs(50),
-    refetchInterval: 5_000,
-  })
-  // Heatmap: até 500 jobs do ano selecionado (cobre 7 entidades × 12 meses × ~5 re-runs)
-  const yearJobsQ = useQuery({
-    queryKey: ['sync', 'jobs', 'year', year],
-    queryFn: () => syncService.jobs(500, undefined, year),
-    refetchInterval: 5_000,
-  })
-
-  const checkpointsByEntity = useMemo(() => {
-    const map: Partial<Record<SyncEntity, Checkpoint>> = {}
-    for (const c of checkpointsQ.data || []) map[c.entity] = c
-    return map
-  }, [checkpointsQ.data])
-
-  // Map (entity, year, month) → último job, pra colorir o heatmap
-  // Usa yearJobsQ (filtrada server-side) — log table continua em jobsQ
-  const jobsByCell = useMemo(() => {
-    const map = new Map<string, SyncJob>()
-    for (const j of yearJobsQ.data || []) {
-      if (!j.period_from) continue
-      const d = new Date(j.period_from + 'T00:00:00')
-      const key = `${j.entity}-${d.getFullYear()}-${d.getMonth() + 1}`
-      // só guarda o mais recente (jobs já vem ordenado desc por created_at)
-      if (!map.has(key)) map.set(key, j)
-    }
-    return map
-  }, [yearJobsQ.data])
-
-  // Mutations -----
-  const invalidateAll = () => {
-    qc.invalidateQueries({ queryKey: ['sync'] })
-  }
-
-  const staticAllMut = useMutation({
-    mutationFn: () => syncService.static(),
-    onSuccess: invalidateAll,
-  })
-  const txEntityMut = useMutation({
-    mutationFn: (vars: { entity: SyncEntity; year: number; month: number }) =>
-      syncService.transactional(vars.entity, vars.year, vars.month),
-    onSuccess: invalidateAll,
-  })
-  const txMonthMut = useMutation({
-    mutationFn: (vars: { year: number; month: number }) =>
-      syncService.transactionalBatch(vars.year, vars.month),
-    onSuccess: invalidateAll,
-  })
-  const kpisMut = useMutation({
-    mutationFn: (vars: { year: number; month: number }) =>
-      syncService.kpisMonthly(vars.year, vars.month),
-    onSuccess: invalidateAll,
-  })
-
-  const [lastRebuild, setLastRebuild] = useState<RebuildPipelineResult | null>(null)
-  const rebuildMut = useMutation({
-    mutationFn: () => pipelineService.rebuildAll(),
-    onSuccess: (data) => {
-      setLastRebuild(data)
-      invalidateAll()
-    },
-  })
-
-  const isAnyRunning = staticAllMut.isPending || txEntityMut.isPending || txMonthMut.isPending || kpisMut.isPending || rebuildMut.isPending
-
-  // Totais top
-  const totalStatic = STATIC_ENTITIES.reduce(
-    (acc, e) => acc + (checkpointsByEntity[e]?.total_records || 0),
-    0,
-  )
-  const totalTransactional = TRANSACTIONAL_ENTITIES.reduce(
-    (acc, e) => acc + (checkpointsByEntity[e]?.total_records || 0),
-    0,
-  )
-  const lastSyncAt = (checkpointsQ.data || [])
-    .map((c) => c.last_synced_at)
-    .filter(Boolean)
-    .sort()
-    .pop() as string | undefined
+  usePageTitle('Sincronização', 'Importação · status por entidade · histórico de jobs', 'ADMIN')
+  const [activeKey, setActiveKey] = useState<SyncSource>('clinicorp')
+  const active = TABS.find((t) => t.key === activeKey) ?? TABS[0]
 
   return (
-    <main className="px-6 py-6 max-w-7xl mx-auto space-y-6">
-      <div className="flex items-center justify-end">
-        <div className="text-xs text-neutral-500">
-          {checkpointsQ.isFetching ? 'atualizando…' : `atualiza a cada 5s`}
-        </div>
-      </div>
-        {/* Status overview */}
-        <section className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          <KpiCard label="Cadastros estáticos" value={fmtNum(totalStatic)} sub={`${STATIC_ENTITIES.length} entidades`} />
-          <KpiCard label="Mensal · registros" value={fmtNum(totalTransactional)} sub={`${TRANSACTIONAL_ENTITIES.length} entidades`} />
-          <KpiCard label="Último sync" value={fmtDate(lastSyncAt || null)} sub="qualquer entidade" />
-          <KpiCard label="Em execução" value={isAnyRunning ? 'Sim' : 'Não'} sub={isAnyRunning ? 'aguarde…' : 'pronto'} accent={isAnyRunning ? 'warning' : 'success'} />
-        </section>
-
-        {/* Pipeline CORE + ANALYTICS */}
-        <section className="bg-gradient-to-r from-primary-50 to-white border border-primary-100 rounded-lg p-4">
-          <div className="flex items-start justify-between gap-4 flex-wrap">
-            <div className="flex-1 min-w-[260px]">
-              <h2 className="text-sm font-semibold text-neutral-900">Pipeline CORE + ANALYTICS</h2>
-              <p className="text-xs text-neutral-600 mt-0.5">
-                Após sincronizar dados novos no STAGING, rode esse passo para atualizar as tabelas
-                relacionais (CORE) e o star schema (ANALYTICS) que alimentam o dashboard.
-                Idempotente — pode rodar quantas vezes quiser.
-              </p>
-              {lastRebuild && (
-                <div className="mt-2 text-[11px] text-neutral-700 flex flex-wrap gap-3">
-                  <span><strong className="text-success-text">✓ Último rebuild:</strong> {(lastRebuild.duration_ms / 1000).toFixed(2)}s</span>
-                  <span>Transform: <strong>{fmtNum(lastRebuild.transform.total_inserted)}</strong> inseridos · <strong>{fmtNum(lastRebuild.transform.total_updated)}</strong> atualizados</span>
-                  <span>Analytics: <strong>{fmtNum(lastRebuild.analytics.total_inserted)}</strong> inseridos · <strong>{fmtNum(lastRebuild.analytics.total_updated)}</strong> atualizados</span>
-                </div>
-              )}
-              {rebuildMut.isError && (
-                <div className="mt-2 text-xs text-error-text">Erro ao reconstruir. Verifique os logs do backend.</div>
-              )}
-            </div>
-            <button
-              onClick={() => rebuildMut.mutate()}
-              disabled={isAnyRunning}
-              className="text-xs px-4 py-2 rounded bg-primary-700 text-white hover:bg-primary-800 disabled:opacity-50 disabled:cursor-not-allowed font-medium shadow-sm shrink-0"
-            >
-              {rebuildMut.isPending ? 'Reconstruindo…' : 'Reconstruir CORE + ANALYTICS'}
-            </button>
-          </div>
-        </section>
-
-        {/* Cadastros estáticos */}
-        <section className="bg-white border rounded-lg overflow-hidden">
-          <div className="flex items-center justify-between px-4 py-3 border-b">
-            <h2 className="text-sm font-semibold text-neutral-900">Cadastros estáticos</h2>
-            <button
-              onClick={() => staticAllMut.mutate()}
-              disabled={isAnyRunning}
-              className="text-xs px-3 py-1.5 rounded bg-primary-700 text-white hover:bg-primary-800 disabled:opacity-50"
-            >
-              {staticAllMut.isPending ? 'Sincronizando…' : 'Sincronizar todos'}
-            </button>
-          </div>
-          <table className="w-full text-sm">
-            <thead className="bg-neutral-50 text-xs text-neutral-600">
-              <tr>
-                <th className="text-left px-4 py-2 font-medium">Entidade</th>
-                <th className="text-right px-4 py-2 font-medium">Total</th>
-                <th className="text-left px-4 py-2 font-medium">Último sync</th>
-                <th className="text-left px-4 py-2 font-medium">Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {STATIC_ENTITIES.map((e) => {
-                const cp = checkpointsByEntity[e]
-                return (
-                  <tr key={e} className="border-t">
-                    <td className="px-4 py-2 text-neutral-800">{ENTITY_LABELS[e]} <span className="text-xs text-neutral-400 ml-1">{e}</span></td>
-                    <td className="px-4 py-2 text-right tabular-nums text-neutral-700">{fmtNum(cp?.total_records || 0)}</td>
-                    <td className="px-4 py-2 text-neutral-500 text-xs">{fmtDate(cp?.last_synced_at || null)}</td>
-                    <td className="px-4 py-2"><StatusBadge status={cp?.status || 'idle'} /></td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
-        </section>
-
-        {/* Heatmap mensal */}
-        <section className="bg-white border rounded-lg overflow-hidden">
-          <div className="flex items-center justify-between px-4 py-3 border-b">
-            <h2 className="text-sm font-semibold text-neutral-900">Sincronização mensal</h2>
-            <div className="flex items-center gap-2">
-              <select
-                value={year}
-                onChange={(e) => setYear(parseInt(e.target.value, 10))}
-                className="text-xs border rounded px-2 py-1"
+    <main className="px-6 py-6 max-w-7xl mx-auto space-y-4">
+      {/* Tabs */}
+      <div className="border-b border-neutral-200">
+        <nav className="-mb-px flex gap-6">
+          {TABS.map((t) => {
+            const isActive = t.key === activeKey
+            return (
+              <button
+                key={t.key}
+                onClick={() => setActiveKey(t.key)}
+                className={`pb-3 px-1 text-sm font-medium transition border-b-2 ${
+                  isActive
+                    ? 'border-primary-700 text-primary-700'
+                    : 'border-transparent text-neutral-500 hover:text-neutral-800 hover:border-neutral-300'
+                }`}
               >
-                {yearOptions.map((y) => (
-                  <option key={y} value={y}>{y}</option>
-                ))}
-              </select>
-            </div>
-          </div>
+                <div className="flex flex-col items-start">
+                  <span>{t.label}</span>
+                  <span className="text-[10px] font-normal text-neutral-400">{t.subtitle}</span>
+                </div>
+              </button>
+            )
+          })}
+        </nav>
+      </div>
 
-          <div className="overflow-x-auto">
-            <table className="w-full text-xs">
-              <thead className="bg-neutral-50 text-neutral-600">
-                <tr>
-                  <th className="text-left px-4 py-2 font-medium sticky left-0 bg-neutral-50 z-10">Entidade</th>
-                  {MONTHS_SHORT.map((m, idx) => {
-                    const monthNum = idx + 1
-                    const isFuture = year === today.getFullYear() && monthNum > today.getMonth() + 1
-                    return (
-                      <th key={m} className="px-1 py-2 font-medium text-center">
-                        <button
-                          onClick={() => txMonthMut.mutate({ year, month: monthNum })}
-                          disabled={isFuture || isAnyRunning}
-                          title={isFuture ? 'mês futuro' : `Sincronizar ${m}/${year} (todas as entidades)`}
-                          className="px-1 py-0.5 rounded hover:bg-primary-50 disabled:opacity-30 disabled:cursor-not-allowed"
-                        >
-                          {m}
-                        </button>
-                      </th>
-                    )
-                  })}
-                </tr>
-              </thead>
-              <tbody>
-                {HEATMAP_ROWS.map((entity) => (
-                  <tr key={entity} className="border-t">
-                    <td className="px-4 py-2 sticky left-0 bg-white z-10 whitespace-nowrap">
-                      <div className="text-neutral-800">{ENTITY_LABELS[entity]}</div>
-                      <div className="text-[10px] text-neutral-400">{entity}</div>
-                    </td>
-                    {MONTHS_SHORT.map((_, idx) => {
-                      const month = idx + 1
-                      const isFuture = year === today.getFullYear() && month > today.getMonth() + 1
-                      const job = jobsByCell.get(`${entity}-${year}-${month}`)
-                      return (
-                        <td key={month} className="p-1">
-                          <HeatmapCell
-                            entity={entity}
-                            year={year}
-                            month={month}
-                            job={job}
-                            disabled={isFuture || isAnyRunning}
-                            onClick={() => {
-                              if (entity === 'kpis_monthly') kpisMut.mutate({ year, month })
-                              else txEntityMut.mutate({ entity, year, month })
-                            }}
-                          />
-                        </td>
-                      )
-                    })}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </section>
-
-        {/* Log de execuções */}
-        <section className="bg-white border rounded-lg overflow-hidden">
-          <div className="px-4 py-3 border-b">
-            <h2 className="text-sm font-semibold text-neutral-900">Últimas execuções</h2>
-          </div>
-          <div className="max-h-96 overflow-y-auto">
-            <table className="w-full text-xs">
-              <thead className="bg-neutral-50 text-neutral-600 sticky top-0">
-                <tr>
-                  <th className="text-left px-4 py-2 font-medium">#</th>
-                  <th className="text-left px-4 py-2 font-medium">Entidade</th>
-                  <th className="text-left px-4 py-2 font-medium">Período</th>
-                  <th className="text-left px-4 py-2 font-medium">Status</th>
-                  <th className="text-right px-4 py-2 font-medium">Fetched</th>
-                  <th className="text-right px-4 py-2 font-medium">Inserted</th>
-                  <th className="text-right px-4 py-2 font-medium">Updated</th>
-                  <th className="text-right px-4 py-2 font-medium">Duração</th>
-                  <th className="text-left px-4 py-2 font-medium">Iniciado</th>
-                  <th className="text-left px-4 py-2 font-medium">Erro</th>
-                </tr>
-              </thead>
-              <tbody>
-                {(jobsQ.data || []).map((j) => (
-                  <tr key={j.id} className="border-t">
-                    <td className="px-4 py-1.5 text-neutral-500 tabular-nums">#{j.id}</td>
-                    <td className="px-4 py-1.5 text-neutral-800">{j.entity}</td>
-                    <td className="px-4 py-1.5 text-neutral-600 tabular-nums">{j.period_from ? `${j.period_from} → ${j.period_to}` : '—'}</td>
-                    <td className="px-4 py-1.5"><StatusBadge status={j.status} /></td>
-                    <td className="px-4 py-1.5 text-right tabular-nums">{fmtNum(j.records_fetched)}</td>
-                    <td className="px-4 py-1.5 text-right tabular-nums">{fmtNum(j.records_inserted)}</td>
-                    <td className="px-4 py-1.5 text-right tabular-nums">{fmtNum(j.records_updated)}</td>
-                    <td className="px-4 py-1.5 text-right tabular-nums">{j.duration_ms != null ? `${j.duration_ms}ms` : '—'}</td>
-                    <td className="px-4 py-1.5 text-neutral-500">{fmtDate(j.started_at)}</td>
-                    <td className="px-4 py-1.5 text-error-text max-w-xs truncate" title={j.error_message || ''}>{j.error_message || '—'}</td>
-                  </tr>
-                ))}
-                {(jobsQ.data || []).length === 0 && (
-                  <tr><td colSpan={10} className="px-4 py-6 text-center text-neutral-400">Nenhuma execução ainda.</td></tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </section>
+      {/* Panel */}
+      <SyncProviderPanel key={active.key} config={active.config} />
     </main>
-  )
-}
-
-// ─── helpers visuais ─────────────────────────────────────────────
-
-function KpiCard({ label, value, sub, accent = 'neutral' }: {
-  label: string; value: string; sub?: string; accent?: 'neutral' | 'warning' | 'success'
-}) {
-  const accentClasses = {
-    neutral: 'border-neutral-200',
-    warning: 'border-warning-border bg-warning-bg',
-    success: 'border-success-border',
-  }[accent]
-  return (
-    <div className={`bg-white border ${accentClasses} rounded-lg p-3`}>
-      <div className="text-[10px] uppercase tracking-wide text-neutral-500 font-medium">{label}</div>
-      <div className="mt-1 text-base font-semibold text-neutral-900 tabular-nums">{value}</div>
-      {sub && <div className="text-[11px] text-neutral-400 mt-0.5">{sub}</div>}
-    </div>
-  )
-}
-
-function StatusBadge({ status }: { status: string }) {
-  const map: Record<string, { bg: string; text: string; label: string }> = {
-    idle:    { bg: 'bg-neutral-100',  text: 'text-neutral-600', label: 'idle' },
-    pending: { bg: 'bg-info-bg',      text: 'text-info-text',    label: 'pendente' },
-    running: { bg: 'bg-warning-bg',   text: 'text-warning-text', label: 'rodando' },
-    success: { bg: 'bg-success-bg',   text: 'text-success-text', label: 'ok' },
-    error:   { bg: 'bg-error-bg',     text: 'text-error-text',   label: 'erro' },
-  }
-  const s = map[status] || map.idle
-  return <span className={`text-[10px] px-2 py-0.5 rounded ${s.bg} ${s.text} font-medium`}>{s.label}</span>
-}
-
-function HeatmapCell({
-  job, disabled, onClick,
-}: {
-  entity: SyncEntity; year: number; month: number;
-  job: SyncJob | undefined; disabled: boolean; onClick: () => void;
-}) {
-  const records = (job?.records_inserted || 0) + (job?.records_updated || 0)
-
-  let bg = 'bg-neutral-100 hover:bg-neutral-200 text-neutral-400'
-  let label = '·'
-  if (disabled && !job) {
-    bg = 'bg-transparent text-neutral-300 cursor-not-allowed'
-    label = ''
-  } else if (job?.status === 'success') {
-    if (records === 0) {
-      bg = 'bg-neutral-100 hover:bg-neutral-200 text-neutral-500'
-      label = '0'
-    } else {
-      bg = 'bg-success-bg hover:bg-green-100 text-success-text border border-success-border'
-      label = records >= 1000 ? `${(records / 1000).toFixed(1)}k` : String(records)
-    }
-  } else if (job?.status === 'error') {
-    bg = 'bg-error-bg hover:bg-red-100 text-error-text border border-error-border'
-    label = '!'
-  } else if (job?.status === 'running') {
-    bg = 'bg-warning-bg text-warning-text border border-warning-border animate-pulse'
-    label = '⏳'
-  }
-
-  const tooltip = job
-    ? `${job.entity} ${job.period_from} → ${job.period_to}\n${job.status} · ${fmtNum(job.records_fetched)} fetched · ${job.records_inserted}+ ${job.records_updated}~ · ${job.duration_ms}ms${job.error_message ? '\n' + job.error_message : ''}`
-    : 'clique para sincronizar'
-
-  return (
-    <button
-      onClick={onClick}
-      disabled={disabled}
-      title={tooltip}
-      className={`w-full min-w-[44px] h-7 rounded text-[11px] font-medium tabular-nums transition ${bg} ${disabled ? 'cursor-not-allowed' : 'cursor-pointer'}`}
-    >
-      {label}
-    </button>
   )
 }

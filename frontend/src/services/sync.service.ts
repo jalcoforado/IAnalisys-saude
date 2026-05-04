@@ -1,7 +1,14 @@
 import api from '@/services/api'
-import type { BatchResponse, Checkpoint, SyncEntity, SyncJob } from '@/types/sync'
+import type {
+  BatchResponse,
+  Checkpoint,
+  SyncEntity,
+  SyncJob,
+  SyncSource,
+} from '@/types/sync'
 
 export const syncService = {
+  // ── Clinicorp ────────────────────────────────────────────────
   static: () =>
     api.post<BatchResponse>('/sync/clinicorp/static').then((r) => r.data),
 
@@ -24,11 +31,25 @@ export const syncService = {
       .post<SyncJob>('/sync/clinicorp/kpis_monthly', { year, month })
       .then((r) => r.data),
 
-  jobs: (limit = 30, entity?: SyncEntity, year?: number) =>
+  // ── Conta Azul ───────────────────────────────────────────────
+  contaazulStatic: () =>
+    api.post<BatchResponse>('/sync/contaazul/static').then((r) => r.data),
+
+  contaazulFinancial: (year: number, month: number) =>
     api
-      .get<SyncJob[]>('/sync/jobs', { params: { limit, entity, year } })
+      .post<BatchResponse>('/sync/contaazul/financial', { year, month })
       .then((r) => r.data),
 
-  checkpoints: () =>
-    api.get<Checkpoint[]>('/sync/checkpoints').then((r) => r.data),
+  // ── Read (com filtro source opcional) ────────────────────────
+  jobs: (limit = 30, entity?: SyncEntity, year?: number, source?: SyncSource) =>
+    api
+      .get<SyncJob[]>('/sync/jobs', {
+        params: { limit, entity, year, source },
+      })
+      .then((r) => r.data),
+
+  checkpoints: (source?: SyncSource) =>
+    api
+      .get<Checkpoint[]>('/sync/checkpoints', { params: { source } })
+      .then((r) => r.data),
 }

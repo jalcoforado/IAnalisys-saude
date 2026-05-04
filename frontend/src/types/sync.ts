@@ -1,3 +1,5 @@
+export type SyncSource = 'clinicorp' | 'contaazul'
+
 export type SyncEntity =
   // Estáticas
   | 'business'
@@ -15,8 +17,16 @@ export type SyncEntity =
   | 'invoices'
   | 'receipts'
   | 'summary_entries'
-  // Agregada
+  // Agregada (Clinicorp)
   | 'kpis_monthly'
+  // Conta Azul — estáticas
+  | 'pessoas'
+  | 'produtos'
+  | 'servicos'
+  | 'vendedores'
+  // Conta Azul — transacionais
+  | 'contas_receber'
+  | 'contas_pagar'
 
 export const STATIC_ENTITIES: SyncEntity[] = [
   'business',
@@ -38,6 +48,18 @@ export const TRANSACTIONAL_ENTITIES: SyncEntity[] = [
   'summary_entries',
 ]
 
+export const CA_STATIC_ENTITIES: SyncEntity[] = [
+  'pessoas',
+  'produtos',
+  'servicos',
+  'vendedores',
+]
+
+export const CA_TRANSACTIONAL_ENTITIES: SyncEntity[] = [
+  'contas_receber',
+  'contas_pagar',
+]
+
 export const ENTITY_LABELS: Record<SyncEntity, string> = {
   business: 'Unidades',
   users: 'Usuários Clinicorp',
@@ -54,6 +76,13 @@ export const ENTITY_LABELS: Record<SyncEntity, string> = {
   receipts: 'Recibos',
   summary_entries: 'Lançamentos contábeis',
   kpis_monthly: 'KPIs mensais',
+  // Conta Azul
+  pessoas: 'Pessoas (clientes + fornecedores)',
+  produtos: 'Produtos',
+  servicos: 'Serviços',
+  vendedores: 'Vendedores',
+  contas_receber: 'Contas a Receber',
+  contas_pagar: 'Contas a Pagar',
 }
 
 export type SyncStatus = 'pending' | 'running' | 'success' | 'error' | 'idle'

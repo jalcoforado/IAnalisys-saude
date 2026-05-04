@@ -24,6 +24,7 @@ from app.integrations.clinicorp.sync_service import (
     sync_transactional_entity,
     TRANSACTIONAL_ENTITIES,
 )
+from app.integrations.contaazul import sync_service as ca_sync
 from app.models.sync_checkpoint import SyncCheckpoint
 from app.models.sync_job import SyncJob
 from app.schemas.auth import UserMe
@@ -112,6 +113,45 @@ async def sync_clinicorp_transactional_batch(
     )
 
 
+@router.post("/contaazul/static", response_model=StaticSyncResponse, status_code=200)
+async def sync_contaazul_static(
+    current_user: UserMe = Depends(requires("sync.run")),
+    db: AsyncSession = Depends(get_db),
+) -> StaticSyncResponse:
+    """Sync das 4 entidades estáticas Conta Azul (pessoas, produtos, servicos, vendedores)."""
+    tenant_id = _require_tenant(current_user)
+    jobs = await ca_sync.sync_all_static(db, tenant_id)
+    return StaticSyncResponse(
+        jobs=[SyncJobResponse.model_validate(j) for j in jobs],
+        total_inserted=sum(j.records_inserted or 0 for j in jobs),
+        total_updated=sum(j.records_updated or 0 for j in jobs),
+        total_errors=sum(j.errors_count or 0 for j in jobs),
+    )
+
+
+@router.post("/contaazul/financial", response_model=TransactionalSyncResponse, status_code=200)
+async def sync_contaazul_financial(
+    payload: KpisMonthlyRequest,
+    current_user: UserMe = Depends(requires("sync.run")),
+    db: AsyncSession = Depends(get_db),
+) -> TransactionalSyncResponse:
+    """Sync de contas a receber + contas a pagar do mês indicado."""
+    tenant_id = _require_tenant(current_user)
+    try:
+        jobs = await ca_sync.sync_transactional_batch(
+            db, tenant_id, payload.year, payload.month,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    return TransactionalSyncResponse(
+        jobs=[SyncJobResponse.model_validate(j) for j in jobs],
+        total_inserted=sum(j.records_inserted or 0 for j in jobs),
+        total_updated=sum(j.records_updated or 0 for j in jobs),
+        total_errors=sum(j.errors_count or 0 for j in jobs),
+    )
+
+
 @router.post("/clinicorp/kpis_monthly", response_model=SyncJobResponse, status_code=200)
 async def sync_clinicorp_kpis_monthly(
     payload: KpisMonthlyRequest,
@@ -135,6 +175,7 @@ async def list_sync_jobs(
     limit: int = 50,
     entity: str | None = None,
     year: int | None = None,
+    source: str | None = None,
     current_user: UserMe = Depends(requires("sync.run")),
     db: AsyncSession = Depends(get_db),
 ) -> List[SyncJobResponse]:
@@ -143,12 +184,15 @@ async def list_sync_jobs(
     - `limit` (default 50): número máximo de jobs.
     - `entity` (opcional): filtra por nome da entidade.
     - `year` (opcional): filtra jobs cujo period_from caia no ano (heatmap).
+    - `source` (opcional): 'clinicorp' | 'contaazul'.
     """
     from datetime import date as _date
     tenant_id = _require_tenant(current_user)
     stmt = select(SyncJob).where(SyncJob.tenant_id == tenant_id)
     if entity:
         stmt = stmt.where(SyncJob.entity == entity)
+    if source:
+        stmt = stmt.where(SyncJob.source == source)
     if year is not None:
         stmt = stmt.where(
             SyncJob.period_from >= _date(year, 1, 1),
@@ -161,12 +205,14 @@ async def list_sync_jobs(
 
 @router.get("/checkpoints", response_model=List[CheckpointResponse])
 async def list_checkpoints(
+    source: str | None = None,
     current_user: UserMe = Depends(requires("sync.run")),
     db: AsyncSession = Depends(get_db),
 ) -> List[CheckpointResponse]:
-    """Estado atual de sync por entidade do tenant."""
+    """Estado atual de sync por entidade do tenant. Filtra por `source` opcional."""
     tenant_id = _require_tenant(current_user)
-    result = await db.execute(
-        select(SyncCheckpoint).where(SyncCheckpoint.tenant_id == tenant_id)
-    )
+    stmt = select(SyncCheckpoint).where(SyncCheckpoint.tenant_id == tenant_id)
+    if source:
+        stmt = stmt.where(SyncCheckpoint.source == source)
+    result = await db.execute(stmt)
     return [CheckpointResponse.model_validate(c) for c in result.scalars().all()]

@@ -186,27 +186,76 @@ Todas têm: `id BIGINT PK`, `tenant_id`, `external_id`, `external_updated_at`, `
 
 ---
 
-### FASE 4 — Pipeline de dados (Conta Azul) ✅ (parcial — OAuth completo)
+### FASE 4 — Pipeline de dados (Conta Azul) 🟡 (OAuth pronto, pipeline próximo PR)
 
-**Objetivo:** Dados financeiros reais entram no banco, separados do Clinicorp.
+**Objetivo:** Dados financeiros reais entram no banco, separados do Clinicorp. Conta Azul é fonte canônica do realizado bancário (entradas + saídas + categorias). Clinicorp continua como fonte canônica do vínculo paciente↔consulta↔valor.
 
 #### OAuth e conexão ✅
 
 - [x] OAuth 2.0 Authorization Code Flow (Cognito-backed)
 - [x] `contaazul_tokens` — token por tenant (migration 0004), unique constraint tenant_id
-- [x] `GET /contaazul/status` — status da conexão (ativo/expirado/desconectado)
-- [x] `GET /contaazul/auth` — gera URL de autorização
-- [x] `GET /contaazul/callback` — recebe code, salva access+refresh token
-- [x] `POST /contaazul/refresh` — renova token via refresh_token
-- [x] `DELETE /contaazul/disconnect` — remove token do tenant
-- [x] Client HTTP (`app/integrations/contaazul/client.py`): accounts_receivable, accounts_payable, financial_movements, sales, customers, company
+- [x] Endpoints `/contaazul/{status,auth,callback,refresh,disconnect}`
 
-#### Pendente
+#### Endpoints reais validados em produção (memória `reference_contaazul_v1.md`)
 
-- [ ] Worker de sync (similar ao Clinicorp)
-- [ ] Tabelas staging: `stg_contaazul_receivable`, `stg_contaazul_payable`, etc.
-- [ ] Transformação staging → core (`core_financial_transactions`)
-- [ ] Unificação financeira Clinicorp + Conta Azul
+> **NOTA IMPORTANTE:** o `client.py` atual da V2 lista endpoints incorretos (`accounts_receivable`, `financial_movements` etc.). Os endpoints REAIS começam com `/v1/...` apesar do base ser `api-v2.contaazul.com`. Vamos descartar o que está no client.py e refazer baseado no v1 PHP.
+
+| Endpoint | Volume Parente | Função |
+|---|---:|---|
+| `GET /v1/financeiro/eventos-financeiros/contas-a-receber/buscar` | 530 | Receitas |
+| `GET /v1/financeiro/eventos-financeiros/contas-a-pagar/buscar` | 631 | Despesas (Clinicorp não tem!) |
+| `GET /v1/pessoas` | 1.389 | Clientes + fornecedores (perfis array) |
+| `GET /v1/produtos` | 961 | Estoque + custo médio |
+| `GET /v1/servico` | 10 | Serviços odontológicos |
+| `GET /v1/venda/vendedores` | 6 | Match com profissional |
+
+**Pegadinhas conhecidas** (em `reference_contaazul_v1.md`):
+- Convenção de wrapper inconsistente (`{itens, itens_totais}` vs `{items, totalItems}` vs array puro)
+- `status_traduzido` já vem em PT-BR
+- Totalizadores `{pago, vencido, vence_hoje, pendente, aberto}` agregados pela API no payload de eventos
+- `perfis` é array — pessoa pode ser cliente E fornecedor
+
+#### Plano de execução — divisão em sub-PRs
+
+**Sub-PR 4a: Refazer `client.py` + smoke-test dos 6 endpoints** (~0.5d)
+- Substituir endpoints fictícios pelos reais
+- Funções tipadas pra cada endpoint
+- Script de smoke-test que valida JSON real bate com schema esperado
+
+**Sub-PR 4b: Migration 0015 — staging Conta Azul** (~0.5d)
+- 6 tabelas `stg_ca_*` (contas_receber, contas_pagar, pessoas, produtos, servicos, vendedores)
+- Schema espelho do JSON real, com colunas-chave indexadas (`external_id`, `tenant_id`, `data_vencimento`, `status`)
+- Payload completo em coluna JSON pra rastreabilidade
+
+**Sub-PR 4c: Sync workers + endpoints + tela** (~1d)
+- `app/integrations/contaazul/sync_service.py` espelhando o do Clinicorp
+- Endpoints `POST /sync/contaazul/{static,financial,all}` protegidos por `requires("sync.run")`
+- Adicionar Conta Azul à SyncPage existente — heatmap separado ou seção dedicada (decidir)
+- Botão "Reconstruir CORE+ANALYTICS" estendido
+
+**Sub-PR 4d: Migration 0016 — CORE Conta Azul** (~1d)
+- `core_ca_eventos_financeiros` (unifica pagar+receber com `tipo` discriminator)
+- `core_ca_pessoas`, `core_ca_categorias`, `core_ca_centros_custo`, `core_ca_produtos`, `core_ca_servicos`, `core_ca_vendedores`
+- Transform staging → core idempotente
+
+**Sub-PR 4e: Migration 0017 — Analytics novo** (~1d)
+- `fato_caixa` (movimentação real Conta Azul) + `dim_categoria` + `dim_centro_custo`
+- `fato_financeiro` (Clinicorp) **mantém** — visão complementar (performance comercial)
+- Builders SQL puros INSERT...SELECT...ON DUPLICATE KEY UPDATE
+- Endpoint `/analytics/rebuild/contaazul`
+
+**Sub-PR 4f: Tela `/financeiro` (Fase 6.2)** (~1.5d)
+- Dashboard com KPIs do `fato_caixa`: entradas/saídas realizadas vs previstas, saldo líquido, inadimplência %, top categorias de despesa
+- Gráficos: Realizado vs Previsto mensal, evolução saldo acumulado, distribuição por categoria
+- Tabela: faturas com status (pago/pendente/vencido) + filtros
+- Permission `financeiro.read` + `financeiro.export` (já no catálogo)
+- Aplica os 5 passos do checklist obrigatório de novo módulo
+
+**Backlog pós-Fase 4 (não bloqueia):**
+- Match Conta Azul ↔ Clinicorp (CPF como chave) — só após validar valores diferentes entre fontes
+- Match vendedor Conta Azul ↔ profissional Clinicorp (por nome)
+- Sync incremental (hoje será full sync mês a mês como Clinicorp)
+- APScheduler pra automação noturna
 
 ---
 
