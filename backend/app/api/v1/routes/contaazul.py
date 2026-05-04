@@ -7,7 +7,6 @@ GET  /contaazul/callback     — recebe code do Conta Azul e salva token
 POST /contaazul/refresh      — renova access_token via refresh_token
 DELETE /contaazul/disconnect — remove token do tenant
 """
-import secrets
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -16,10 +15,13 @@ from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.dependencies.permissions import requires
+from app.core.config import settings
 from app.db.session import get_db
 from app.integrations.contaazul.oauth import (
     ContaAzulOAuthError,
     build_authorization_url,
+    decode_state,
+    encode_state,
     exchange_code_for_token,
     refresh_access_token,
 )
@@ -64,8 +66,8 @@ async def contaazul_status(
 async def contaazul_auth_url(
     current_user: UserMe = Depends(requires("empresa.settings.write")),
 ) -> ContaAzulAuthUrlResponse:
-    """Retorna a URL de autorização OAuth para o frontend redirecionar o usuário."""
-    state = secrets.token_hex(16)
+    """Retorna a URL de autorização OAuth com o tenant_id codificado no state."""
+    state = encode_state(current_user.tenant_id)
     url = build_authorization_url(state)
     return ContaAzulAuthUrlResponse(auth_url=url)
 
@@ -80,21 +82,20 @@ async def contaazul_callback(
 ):
     """
     Callback OAuth do Conta Azul.
-    Recebe o authorization code e troca por access_token + refresh_token.
-
-    Como usar:
-    - O frontend deve incluir tenant_id no state ou como query param ao iniciar o fluxo
-    - Para testes: GET /api/v1/contaazul/callback?code=CODE&tenant_id=TENANT_ID
+    O tenant_id sai do `state` (codificado em base64). Como fallback aceita
+    `?tenant_id=UUID` na query (modo manual de smoke-test).
+    Em sucesso, redireciona pra /admin/sync no frontend.
     """
     if error:
         raise HTTPException(status_code=400, detail=f"Conta Azul retornou erro: {error}")
     if not code:
         raise HTTPException(status_code=400, detail="Código de autorização não recebido.")
-    if not tenant_id:
-        # Em produção, tenant_id viria no state (codificado)
+
+    resolved_tenant = tenant_id or decode_state(state or "")
+    if not resolved_tenant:
         raise HTTPException(
             status_code=400,
-            detail="tenant_id obrigatório. Inclua como query param: ?code=CODE&tenant_id=UUID",
+            detail="tenant_id ausente. Inicie o fluxo via /api/v1/contaazul/auth (que codifica o tenant no state).",
         )
 
     try:
@@ -102,19 +103,21 @@ async def contaazul_callback(
     except ContaAzulOAuthError as exc:
         raise HTTPException(status_code=502, detail=str(exc))
 
-    # Upsert: remove token anterior se existir
     await db.execute(
-        delete(ContaAzulToken).where(ContaAzulToken.tenant_id == tenant_id)
+        delete(ContaAzulToken).where(ContaAzulToken.tenant_id == resolved_tenant)
     )
     db.add(ContaAzulToken(
-        tenant_id=tenant_id,
+        tenant_id=resolved_tenant,
         access_token=token_data["access_token"],
         refresh_token=token_data["refresh_token"],
         expires_at=token_data["expires_at"],
     ))
     await db.commit()
 
-    return {"status": "conectado", "expires_at": token_data["expires_at"].isoformat()}
+    return RedirectResponse(
+        url=f"{settings.APP_URL}/admin/sync?contaazul=conectado",
+        status_code=302,
+    )
 
 
 @router.post("/refresh", response_model=ContaAzulStatusResponse)

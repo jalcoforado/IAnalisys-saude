@@ -7,7 +7,12 @@ Endpoints:
   Scope:   openid profile aws.cognito.signin.user.admin
 
 Token expira em 1 hora; renovação via refresh_token.
+
+State carrega tenant_id codificado em base64-url ("<tenant_id>:<nonce>") para
+amarrar o callback ao tenant correto sem precisar de query param extra.
 """
+import base64
+import secrets
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlencode
 
@@ -21,6 +26,28 @@ _TOKEN_URL = "https://auth.contaazul.com/oauth2/token"
 
 class ContaAzulOAuthError(Exception):
     pass
+
+
+def encode_state(tenant_id: str) -> str:
+    """Empacota tenant_id + nonce no state (base64url, sem padding)."""
+    nonce = secrets.token_hex(8)
+    raw = f"{tenant_id}:{nonce}".encode()
+    return base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
+
+
+def decode_state(state: str) -> str | None:
+    """Extrai o tenant_id do state. Retorna None se o state não for válido."""
+    if not state:
+        return None
+    try:
+        padded = state + "=" * (-len(state) % 4)
+        raw = base64.urlsafe_b64decode(padded.encode()).decode()
+    except Exception:
+        return None
+    parts = raw.split(":", 1)
+    if len(parts) != 2 or not parts[0]:
+        return None
+    return parts[0]
 
 
 def build_authorization_url(state: str) -> str:

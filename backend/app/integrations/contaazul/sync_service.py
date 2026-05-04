@@ -16,9 +16,15 @@ Transacionais (por mês de vencimento): contas_receber, contas_pagar.
 """
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Iterable
+
+# Pausa entre páginas paginadas pra distribuir carga e ficar abaixo do rate limit.
+_PAGE_DELAY_S = 0.4
+# Pausa entre entidades estáticas — evita esgotar quota ao rodar todas em sequência.
+_ENTITY_DELAY_S = 1.0
 
 from sqlalchemy import delete, func, select
 from sqlalchemy.dialects.mysql import insert as mysql_insert
@@ -249,6 +255,7 @@ async def _paginate_static(
         if len(records) < page_size:
             break
         offset += page_size
+        await asyncio.sleep(_PAGE_DELAY_S)
     return all_records
 
 
@@ -367,7 +374,9 @@ async def sync_static_entity(
 async def sync_all_static(db: AsyncSession, tenant_id: str) -> list[SyncJob]:
     """Roda sync das 4 entidades estáticas em sequência."""
     jobs: list[SyncJob] = []
-    for spec in STATIC_ENTITIES:
+    for i, spec in enumerate(STATIC_ENTITIES):
+        if i > 0:
+            await asyncio.sleep(_ENTITY_DELAY_S)
         jobs.append(await sync_static_entity(db, tenant_id, spec))
     return jobs
 
