@@ -242,13 +242,45 @@ Todas têm: `id BIGINT PK`, `tenant_id`, `external_id`, `external_updated_at`, `
 - **Tenant_id no state OAuth**: `oauth.py` ganhou `encode_state`/`decode_state` (base64url). Callback resolve tenant via state em vez de exigir `?tenant_id=` na query, redireciona pra `/admin/sync?contaazul=conectado` em sucesso.
 - **App CA NOVO criado** (`client_id=67p7o6b8ptaanl3fs5uhoavpif`) com `redirect_uri=https://fprime.analisys.info/v2_callback.php` (proxy PHP). Isolado do v1 PHP — fim da disputa pelo refresh_token. App antigo deprecated.
 
-**Sub-PR 4d: Migration 0016 — CORE Conta Azul** (~1d)
-- `core_ca_eventos_financeiros` (unifica pagar+receber com `tipo` discriminator)
-- `core_ca_pessoas`, `core_ca_categorias`, `core_ca_centros_custo`, `core_ca_produtos`, `core_ca_servicos`, `core_ca_vendedores`
+**Sub-PR 4c+ Extensões pós-compactação 2026-05-04** ⏳ não-commitado (8 PRs adicionais)
+
+Sessão de ~6h após pause/compact descobriu/corrigiu múltiplos bugs e adicionou features. Tudo no working tree, **falta commit consolidado**.
+
+1. **🔥 Bug crítico de paginação** — `/v1/pessoas` ignorava `offset` e devolvia mesma página em loop infinito (script de bypass fez 237k chamadas com sempre os mesmos 200 IDs únicos). Causa: nosso código usava `offset`, mas a API exige **`pagina`** (1-indexed) + `tamanho_pagina`. Corrigido em `client.py:107` (`list_pessoas`) e `client.py:134` (`list_produtos`); `sync_service._paginate_static` usa `pagina += 1`.
+2. **Bug `limite=` → `tamanho_pagina=`** nas transacionais — `_paginate_transactional` chamava método com kwarg errado, teria estourado `TypeError` na primeira chamada. Já com paginação real (não chamada única).
+3. **Migration 0016** — 2 novas estáticas: `stg_ca_categorias` (145 registros — RECEITA/DESPESA com hierarquia pai/filho + DRE) e `stg_ca_centros_custo` (Parente não usa, 0 registros — esquema pronto). Ambas adicionadas ao `STATIC_ENTITIES` do sync_service e ao `CA_STATIC_ENTITIES`/`ENTITY_LABELS` do frontend.
+4. **Rota `POST /sync/contaazul/transactional`** — permite sync individual de UMA célula no heatmap (mesma UX do CC). Antes só batch mensal. Plugada no `CONTAAZUL_CONFIG.syncEntityMonth` do frontend.
+5. **Catálogo de endpoints CA v2** — `docs/11_CONTAAZUL_ENDPOINTS_CATALOG.md` cobre os 9 módulos da API (24+ endpoints), com prioridade por endpoint, casos de uso, pegadinhas. Memória `reference_contaazul_endpoints_catalog.md` aponta pra ele. **Consultar antes de implementar endpoint CA novo.** Inconsistência registrada: usamos `/v1/servico` (singular, legado/alias) vs doc oficial `/v1/servicos` (plural).
+6. **Migration 0017 — empresa conectada** — 5 colunas em `contaazul_tokens` (`empresa_documento`, `empresa_razao_social`, `empresa_nome_fantasia`, `empresa_data_fundacao`, `empresa_email`) populadas via `GET /v1/pessoas/conta-conectada` no callback OAuth (best-effort, falha não derruba callback) + backfill no `/refresh` se vazio. Schema `ContaAzulStatusResponse` retorna esses 5 campos. Frontend tem `<ContaAzulConnectedBanner />` (banner verde sticky no topo da aba CA, só aparece quando conectado) com nome fantasia + CNPJ formatado + email. Backfill já feito no token atual da Parente.
+7. **🚀 Delta sync** — em vez de usar `/v1/financeiro/eventos-financeiros/alteracoes` (que retorna só IDs e exigiria N+1 chamadas pra detalhar), descobri que **a busca normal de contas-receber/pagar aceita `data_alteracao_de`/`ate`** como filtro. Implementação: `client.list_contas_*` ganhou esses params opcionais; `sync_service.sync_alteracoes_recentes(hours_back)` faz **2 chamadas** (1× receber + 1× pagar) com janela de vencimento ampla (2010→2050) + filtro `data_alteracao` da janela escolhida. Mesmo schema da listagem normal, upsert idempotente no mesmo staging. Não atualiza checkpoint (delta sync não representa "estado final do mês"). Rota `POST /sync/contaazul/alteracoes`. Frontend tem banner azul "Atualizar mudanças" com select 1h/6h/24h/3d/7d/30d. Smoke-test 24h: 1.7s, 11 registros (4 receber + 7 pagar).
+8. **Volumes finais Parente populados em staging:**
+
+| Tabela | Total |
+|---|---:|
+| `stg_ca_pessoas` | 1.498 |
+| `stg_ca_produtos` | 1.043 |
+| `stg_ca_servicos` | 10 |
+| `stg_ca_vendedores` | 8 |
+| `stg_ca_categorias` | 145 |
+| `stg_ca_centros_custo` | 0 (Parente não usa) |
+| `stg_ca_contas_receber` (abr/2026) | 245 |
+| `stg_ca_contas_pagar` (abr/2026) | 335 |
+
+**Decisão arquitetural confirmada (não-codificada ainda):** seguiremos as 3 camadas (CORE + DIM + FATO) para o CA também, mesmo padrão do CC. Sem CORE, dashboard/IA ficam dependentes do JSON aninhado e inconsistente do CA. Sem DIM/FATO, KPIs ficam lentos e incomparáveis com CC.
+
+**Sub-PR 4d: Migration 0018 — CORE Conta Azul** (~1d)
+- `core_ca_eventos_financeiros` (unifica pagar+receber com `tipo` discriminator — RECEITA/DESPESA)
+- `core_ca_pessoas` (cliente + fornecedor unificado, **CPF/CNPJ permite cross-link com `core_patients` do CC** ⭐)
+- `core_ca_categorias` (com `categoria_pai_id` explícito pra hierarquia + `entrada_dre`)
+- `core_ca_centros_custo`
+- `core_ca_produtos`, `core_ca_servicos`, `core_ca_vendedores`
+- Possivelmente `core_ca_rateio` se a maioria das parcelas tiver rateio múltiplo (validar distribuição real no staging antes de decidir; senão desnormaliza inline em eventos_financeiros)
 - Transform staging → core idempotente
 
-**Sub-PR 4e: Migration 0017 — Analytics novo** (~1d)
-- `fato_caixa` (movimentação real Conta Azul) + `dim_categoria` + `dim_centro_custo`
+**Sub-PR 4e: Migration 0019 — Analytics CA** (~1d)
+- Reusar `dim_tempo` (já existe) ✅
+- Novas: `dim_pessoa_ca`, `dim_categoria_ca`, `dim_centro_custo_ca`
+- `fato_caixa` (1 linha por parcela): métricas (`valor_total`, `valor_pago`, `valor_em_aberto`, `dias_atraso`, `is_pago`/`is_vencido`/`is_em_aberto`), 3 dimensões temporais (`vencimento`, `competencia`, `pagamento`)
 - `fato_financeiro` (Clinicorp) **mantém** — visão complementar (performance comercial)
 - Builders SQL puros INSERT...SELECT...ON DUPLICATE KEY UPDATE
 - Endpoint `/analytics/rebuild/contaazul`

@@ -68,6 +68,8 @@ async def exchange_code_for_token(code: str) -> dict:
     Retorna dict com: access_token, refresh_token, expires_at (datetime UTC).
     """
     creds = (settings.CONTAAZUL_CLIENT_ID, settings.CONTAAZUL_CLIENT_SECRET)
+    # Conta Azul EXIGE client_id E client_secret no body, ALÉM da Basic auth.
+    # Confirmado lendo o v1 PHP da Parente que funciona em produção desde mar/2026.
     async with httpx.AsyncClient(timeout=15) as client:
         resp = await client.post(
             _TOKEN_URL,
@@ -77,6 +79,7 @@ async def exchange_code_for_token(code: str) -> dict:
                 "code": code,
                 "redirect_uri": settings.CONTAAZUL_REDIRECT_URI,
                 "client_id": settings.CONTAAZUL_CLIENT_ID,
+                "client_secret": settings.CONTAAZUL_CLIENT_SECRET,
             },
             headers={"Content-Type": "application/x-www-form-urlencoded"},
         )
@@ -99,6 +102,7 @@ async def refresh_access_token(refresh_token: str) -> dict:
     Retorna dict com: access_token, refresh_token, expires_at.
     """
     creds = (settings.CONTAAZUL_CLIENT_ID, settings.CONTAAZUL_CLIENT_SECRET)
+    # Mesmo padrão do v1: Basic auth + client_id/secret no body.
     async with httpx.AsyncClient(timeout=15) as client:
         resp = await client.post(
             _TOKEN_URL,
@@ -107,6 +111,7 @@ async def refresh_access_token(refresh_token: str) -> dict:
                 "grant_type": "refresh_token",
                 "refresh_token": refresh_token,
                 "client_id": settings.CONTAAZUL_CLIENT_ID,
+                "client_secret": settings.CONTAAZUL_CLIENT_SECRET,
             },
             headers={"Content-Type": "application/x-www-form-urlencoded"},
         )

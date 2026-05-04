@@ -62,6 +62,15 @@ class KpisMonthlyRequest(BaseModel):
     month: int = Field(..., ge=1, le=12)
 
 
+class DeltaSyncRequest(BaseModel):
+    """Request para delta sync — janela de horas atrás até agora.
+
+    Usado pelo CA pra atualizar staging com alterações recentes sem
+    re-sincronizar mês completo. Padrão 24h, máximo 720h (30 dias).
+    """
+    hours_back: int = Field(24, ge=1, le=720)
+
+
 class CheckpointResponse(BaseModel):
     tenant_id: str
     source: str

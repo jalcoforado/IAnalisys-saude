@@ -16,15 +16,9 @@ Transacionais (por mês de vencimento): contas_receber, contas_pagar.
 """
 from __future__ import annotations
 
-import asyncio
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Iterable
-
-# Pausa entre páginas paginadas pra distribuir carga e ficar abaixo do rate limit.
-_PAGE_DELAY_S = 0.4
-# Pausa entre entidades estáticas — evita esgotar quota ao rodar todas em sequência.
-_ENTITY_DELAY_S = 1.0
 
 from sqlalchemy import delete, func, select
 from sqlalchemy.dialects.mysql import insert as mysql_insert
@@ -34,6 +28,8 @@ from app.integrations.contaazul.client import ContaAzulClient, ContaAzulError
 from app.integrations.contaazul.oauth import refresh_access_token, ContaAzulOAuthError
 from app.models.contaazul_token import ContaAzulToken
 from app.models.staging_contaazul import (
+    StgCaCategorias,
+    StgCaCentrosCusto,
     StgCaContasPagar,
     StgCaContasReceber,
     StgCaPessoas,
@@ -92,7 +88,11 @@ async def _get_authenticated_client(
             "Conta Azul não conectada para este tenant. Acesse /empresa/integracoes."
         )
 
-    # Se vai expirar nos próximos 60s, renova preventivamente
+    # Se vai expirar nos próximos 60s, renova preventivamente.
+    # CRÍTICO: o CA rotaciona refresh_token a cada uso. O novo precisa ser
+    # commitado IMEDIATAMENTE no DB — se um rollback ocorrer depois (ex: erro
+    # no sync), o refresh_token novo no CA fica sem par no DB e todo refresh
+    # futuro retorna invalid_grant.
     if _now() >= token.expires_at - timedelta(seconds=60):
         try:
             new_data = await refresh_access_token(token.refresh_token)
@@ -102,7 +102,8 @@ async def _get_authenticated_client(
         token.refresh_token = new_data["refresh_token"]
         token.expires_at = new_data["expires_at"]
         token.updated_at = _now()
-        await db.flush()
+        await db.commit()           # persiste o token rotacionado AGORA
+        await db.refresh(token)     # recarrega o estado pós-commit
 
     return ContaAzulClient(token.access_token)
 
@@ -121,10 +122,12 @@ class EntitySpec:
 
 
 STATIC_ENTITIES: tuple[EntitySpec, ...] = (
-    EntitySpec("pessoas",     StgCaPessoas,     "id", "data_alteracao",      "items", paginate=True),
-    EntitySpec("produtos",    StgCaProdutos,    "id", "ultima_atualizacao",  "items", paginate=True),
-    EntitySpec("servicos",    StgCaServicos,    "id", None,                  "itens", paginate=False),
-    EntitySpec("vendedores",  StgCaVendedores,  "id", None,                  "",      paginate=False),
+    EntitySpec("pessoas",       StgCaPessoas,      "id", "data_alteracao",      "items", paginate=True),
+    EntitySpec("produtos",      StgCaProdutos,     "id", "ultima_atualizacao",  "items", paginate=True),
+    EntitySpec("servicos",      StgCaServicos,     "id", None,                  "itens", paginate=False),
+    EntitySpec("vendedores",    StgCaVendedores,   "id", None,                  "",      paginate=False),
+    EntitySpec("categorias",    StgCaCategorias,   "id", None,                  "itens", paginate=True),
+    EntitySpec("centros_custo", StgCaCentrosCusto, "id", None,                  "items", paginate=True),
 )
 
 
@@ -227,9 +230,14 @@ async def _upsert_records(
 
 async def _paginate_static(
     client: ContaAzulClient, spec: EntitySpec,
-    page_size: int = 200,
+    page_size: int = 500,
 ) -> list[dict]:
-    """Paginadores das estáticas. Retorna lista achatada."""
+    """Paginadores das estáticas. Retorna lista achatada.
+
+    Pagina via `pagina` (1-indexed) + `tamanho_pagina`. ATENÇÃO: o param
+    `offset` é silenciosamente ignorado pela API — sempre devolve página 1.
+    Aprendido via loop infinito de 237k chamadas duplicadas.
+    """
     if not spec.paginate:
         # Servicos, vendedores: chamada única
         if spec.name == "servicos":
@@ -240,45 +248,62 @@ async def _paginate_static(
             raise ValueError(f"Entidade '{spec.name}' não tem fetch sem paginação configurado.")
         return _extract_records(payload, spec.items_key)
 
-    # Paginadas: pessoas, produtos
+    # Paginadas: pessoas, produtos, categorias, centros_custo
     method_map = {
         "pessoas": client.list_pessoas,
         "produtos": client.list_produtos,
+        "categorias": client.list_categorias,
+        "centros_custo": client.list_centros_custo,
     }
     method = method_map[spec.name]
     all_records: list[dict] = []
-    offset = 0
+    pagina = 1
     while True:
-        payload = await method(tamanho_pagina=page_size, offset=offset)
+        payload = await method(tamanho_pagina=page_size, pagina=pagina)
         records = _extract_records(payload, spec.items_key)
         all_records.extend(records)
         if len(records) < page_size:
             break
-        offset += page_size
-        await asyncio.sleep(_PAGE_DELAY_S)
+        pagina += 1
     return all_records
 
 
 async def _paginate_transactional(
     client: ContaAzulClient, spec: EntitySpec,
     period_from: date, period_to: date,
-    page_size: int = 200,
+    page_size: int = 500,
+    data_alteracao_de: str | None = None,
+    data_alteracao_ate: str | None = None,
 ) -> list[dict]:
-    """Eventos financeiros — API Conta Azul não tem offset confiável aqui;
-    usa `limite` alto e busca tudo do período de uma vez. Volume mensal
-    típico (~200-300 itens) cabe folgado.
+    """Eventos financeiros (contas a receber/pagar) — paginados por
+    `pagina` (1-indexed) + `tamanho_pagina`. `data_vencimento_de/ate` são
+    OBRIGATÓRIOS pela API.
+
+    Para delta sync: passe `data_alteracao_de/ate` + janela de vencimento
+    ampla. A API filtra por intersecção, então só retorna o que foi alterado.
     """
     method_map = {
         "contas_receber": client.list_contas_receber,
         "contas_pagar": client.list_contas_pagar,
     }
     method = method_map[spec.name]
-    payload = await method(
-        data_vencimento_de=period_from,
-        data_vencimento_ate=period_to,
-        limite=page_size,
-    )
-    return _extract_records(payload, spec.items_key)
+    all_records: list[dict] = []
+    pagina = 1
+    while True:
+        payload = await method(
+            data_vencimento_de=period_from,
+            data_vencimento_ate=period_to,
+            tamanho_pagina=page_size,
+            pagina=pagina,
+            data_alteracao_de=data_alteracao_de,
+            data_alteracao_ate=data_alteracao_ate,
+        )
+        records = _extract_records(payload, spec.items_key)
+        all_records.extend(records)
+        if len(records) < page_size:
+            break
+        pagina += 1
+    return all_records
 
 
 # ── Lifecycle de SyncJob + Checkpoint (espelho do Clinicorp) ────
@@ -353,6 +378,7 @@ async def sync_static_entity(
     db: AsyncSession, tenant_id: str, spec: EntitySpec,
 ) -> SyncJob:
     job = await _start_job(db, tenant_id, spec.name)
+    client: ContaAzulClient | None = None
     try:
         client = await _get_authenticated_client(db, tenant_id)
         records = await _paginate_static(client, spec)
@@ -364,6 +390,9 @@ async def sync_static_entity(
         await _finish_job(db, job, 0, 0, 0, errors_count=1, error_message=str(exc))
     except Exception as exc:  # noqa: BLE001
         await _finish_job(db, job, 0, 0, 0, errors_count=1, error_message=f"{type(exc).__name__}: {exc}")
+    finally:
+        if client is not None:
+            await client.aclose()
 
     await _update_checkpoint(db, tenant_id, spec.name, job)
     await db.commit()
@@ -374,9 +403,7 @@ async def sync_static_entity(
 async def sync_all_static(db: AsyncSession, tenant_id: str) -> list[SyncJob]:
     """Roda sync das 4 entidades estáticas em sequência."""
     jobs: list[SyncJob] = []
-    for i, spec in enumerate(STATIC_ENTITIES):
-        if i > 0:
-            await asyncio.sleep(_ENTITY_DELAY_S)
+    for spec in STATIC_ENTITIES:
         jobs.append(await sync_static_entity(db, tenant_id, spec))
     return jobs
 
@@ -389,6 +416,7 @@ async def sync_transactional_entity(
 ) -> SyncJob:
     from_date, to_date = _period_bounds_full_month(year, month)
     job = await _start_job(db, tenant_id, spec.name, period_from=from_date, period_to=to_date)
+    client: ContaAzulClient | None = None
     try:
         client = await _get_authenticated_client(db, tenant_id)
         records = await _paginate_transactional(client, spec, from_date, to_date)
@@ -400,6 +428,9 @@ async def sync_transactional_entity(
         await _finish_job(db, job, 0, 0, 0, errors_count=1, error_message=str(exc))
     except Exception as exc:  # noqa: BLE001
         await _finish_job(db, job, 0, 0, 0, errors_count=1, error_message=f"{type(exc).__name__}: {exc}")
+    finally:
+        if client is not None:
+            await client.aclose()
 
     await _update_checkpoint(db, tenant_id, spec.name, job, period_from=from_date, period_to=to_date)
     await db.commit()
@@ -422,4 +453,73 @@ async def sync_transactional_batch(
     jobs: list[SyncJob] = []
     for spec in specs:
         jobs.append(await sync_transactional_entity(db, tenant_id, spec, year, month))
+    return jobs
+
+
+# ── Delta sync — usa filtro `data_alteracao_de/ate` na busca normal ────
+
+# Janela de vencimento ampla pra cobrir tudo independente de quando vence.
+# A API exige data_vencimento obrigatória, mas com data_alteracao_de a
+# intersecção retorna só o que mudou. Padrão V1 PHP: 2010 → +20 anos.
+_DELTA_VENCIMENTO_DE = date(2010, 1, 1)
+_DELTA_VENCIMENTO_ATE = date(2050, 12, 31)
+
+
+async def sync_alteracoes_recentes(
+    db: AsyncSession, tenant_id: str, hours_back: int = 24,
+) -> list[SyncJob]:
+    """Delta sync: pega contas a receber/pagar alteradas nas últimas N horas.
+
+    Estratégia: usa o filtro `data_alteracao_de/ate` da própria busca
+    transacional (em vez de `/v1/financeiro/eventos-financeiros/alteracoes`,
+    que retorna só IDs e exigiria N+1 chamadas). Apenas 2 chamadas:
+    1× contas_receber + 1× contas_pagar. Schema idêntico ao sync mensal,
+    upsert idempotente no mesmo staging.
+
+    Útil pra manter staging atualizado durante o dia sem re-sincronizar
+    meses completos. Economiza muita cota em produção.
+    """
+    if hours_back <= 0:
+        raise ValueError(f"hours_back deve ser > 0, recebido {hours_back}")
+
+    now = _now()
+    since = now - timedelta(hours=hours_back)
+    # Formato ISO local SP/GMT-3 (a API espera assim segundo a doc)
+    alteracao_de = since.strftime("%Y-%m-%dT%H:%M:%S")
+    alteracao_ate = now.strftime("%Y-%m-%dT%H:%M:%S")
+    # Janela de vencimento serve só pra satisfazer o param obrigatório da API
+    period_from = _DELTA_VENCIMENTO_DE
+    period_to = _DELTA_VENCIMENTO_ATE
+
+    jobs: list[SyncJob] = []
+    for spec in TRANSACTIONAL_ENTITIES:
+        # period_from/to do SyncJob = janela de vencimento (mantém schema),
+        # janela de alteração fica registrada via _now() em started_at e a
+        # janela passada nos params da API.
+        job = await _start_job(db, tenant_id, spec.name, period_from=period_from, period_to=period_to)
+        client: ContaAzulClient | None = None
+        try:
+            client = await _get_authenticated_client(db, tenant_id)
+            records = await _paginate_transactional(
+                client, spec, period_from, period_to,
+                data_alteracao_de=alteracao_de,
+                data_alteracao_ate=alteracao_ate,
+            )
+            fetched, inserted, updated = await _upsert_records(
+                db, spec.model, tenant_id, job.id, records, spec.pk_field, spec.updated_at_field,
+            )
+            await _finish_job(db, job, fetched, inserted, updated)
+        except ContaAzulError as exc:
+            await _finish_job(db, job, 0, 0, 0, errors_count=1, error_message=str(exc))
+        except Exception as exc:  # noqa: BLE001
+            await _finish_job(db, job, 0, 0, 0, errors_count=1, error_message=f"{type(exc).__name__}: {exc}")
+        finally:
+            if client is not None:
+                await client.aclose()
+        # Não atualiza checkpoint — delta sync não representa "estado final
+        # do mês". O total no checkpoint continua refletindo o último sync
+        # full daquela entidade.
+        await db.commit()
+        await db.refresh(job)
+        jobs.append(job)
     return jobs

@@ -33,6 +33,8 @@ export interface SyncProviderConfig {
   syncEntityMonth?: (entity: SyncEntity, year: number, month: number) => Promise<SyncJob>
   /** Sync KPIs mensais (Clinicorp). Opcional. */
   syncKpisMonth?: (year: number, month: number) => Promise<SyncJob>
+  /** Delta sync — atualiza alterações recentes em todas transacionais. Opcional (só CA). */
+  syncAlteracoes?: (hoursBack: number) => Promise<BatchResponse>
   /** Mostrar botão de rebuild CORE+ANALYTICS (só Clinicorp por enquanto). */
   showRebuildPipeline?: boolean
 }
@@ -104,6 +106,15 @@ export function SyncProviderPanel({ config }: { config: SyncProviderConfig }) {
       config.syncKpisMonth!(vars.year, vars.month),
     onSuccess: invalidateAll,
   })
+  const [alteracoesHours, setAlteracoesHours] = useState(24)
+  const [lastAlteracoes, setLastAlteracoes] = useState<BatchResponse | null>(null)
+  const alteracoesMut = useMutation({
+    mutationFn: () => config.syncAlteracoes!(alteracoesHours),
+    onSuccess: (data) => {
+      setLastAlteracoes(data)
+      invalidateAll()
+    },
+  })
 
   const [lastRebuild, setLastRebuild] = useState<RebuildPipelineResult | null>(null)
   const rebuildMut = useMutation({
@@ -116,7 +127,7 @@ export function SyncProviderPanel({ config }: { config: SyncProviderConfig }) {
 
   const isAnyRunning =
     staticAllMut.isPending || txEntityMut.isPending || txMonthMut.isPending ||
-    kpisMut.isPending || rebuildMut.isPending
+    kpisMut.isPending || rebuildMut.isPending || alteracoesMut.isPending
 
   const totalStatic = config.staticEntities.reduce(
     (acc, e) => acc + (checkpointsByEntity[e]?.total_records || 0), 0)
@@ -140,6 +151,57 @@ export function SyncProviderPanel({ config }: { config: SyncProviderConfig }) {
         <KpiCard label="Último sync" value={fmtDate(lastSyncAt || null)} sub="qualquer entidade" />
         <KpiCard label="Em execução" value={isAnyRunning ? 'Sim' : 'Não'} sub={isAnyRunning ? 'aguarde…' : 'pronto'} accent={isAnyRunning ? 'warning' : 'success'} />
       </section>
+
+      {/* Delta sync (só CA por hora) */}
+      {config.syncAlteracoes && (
+        <section className="bg-gradient-to-r from-info-bg to-white border border-info-border rounded-lg p-4">
+          <div className="flex items-start justify-between gap-4 flex-wrap">
+            <div className="flex-1 min-w-[260px]">
+              <h2 className="text-sm font-semibold text-neutral-900">Atualizar mudanças (delta sync)</h2>
+              <p className="text-xs text-neutral-600 mt-0.5">
+                Busca contas a receber/pagar alteradas no Conta Azul desde o intervalo selecionado.
+                Pega lançamentos novos, baixas, edições — em qualquer mês de vencimento — com apenas
+                2 chamadas à API. Use durante o dia em vez de re-sincronizar meses inteiros.
+              </p>
+              {lastAlteracoes && (
+                <div className="mt-2 text-[11px] text-neutral-700 flex flex-wrap gap-3">
+                  <span><strong className="text-success-text">✓ Último delta:</strong></span>
+                  <span><strong>{fmtNum(lastAlteracoes.total_inserted)}</strong> inseridos</span>
+                  <span><strong>{fmtNum(lastAlteracoes.total_updated)}</strong> atualizados</span>
+                  {lastAlteracoes.total_errors > 0 && (
+                    <span className="text-error-text"><strong>{lastAlteracoes.total_errors}</strong> erros</span>
+                  )}
+                </div>
+              )}
+              {alteracoesMut.isError && (
+                <div className="mt-2 text-xs text-error-text">Erro ao rodar delta sync. Verifique os logs do backend.</div>
+              )}
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <select
+                value={alteracoesHours}
+                onChange={(e) => setAlteracoesHours(parseInt(e.target.value, 10))}
+                disabled={isAnyRunning}
+                className="text-xs border rounded px-2 py-2 bg-white"
+              >
+                <option value={1}>última 1h</option>
+                <option value={6}>últimas 6h</option>
+                <option value={24}>últimas 24h</option>
+                <option value={72}>últimos 3 dias</option>
+                <option value={168}>últimos 7 dias</option>
+                <option value={720}>últimos 30 dias</option>
+              </select>
+              <button
+                onClick={() => alteracoesMut.mutate()}
+                disabled={isAnyRunning}
+                className="text-xs px-4 py-2 rounded bg-primary-700 text-white hover:bg-primary-800 disabled:opacity-50 disabled:cursor-not-allowed font-medium shadow-sm"
+              >
+                {alteracoesMut.isPending ? 'Atualizando…' : 'Atualizar mudanças'}
+              </button>
+            </div>
+          </div>
+        </section>
+      )}
 
       {/* Pipeline rebuild (só Clinicorp por hora) */}
       {config.showRebuildPipeline && (

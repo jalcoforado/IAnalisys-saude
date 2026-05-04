@@ -51,6 +51,7 @@ from app.models.password_reset_token import PasswordResetToken
 from app.models.staging_contaazul import (
     StgCaPessoas, StgCaProdutos, StgCaServicos, StgCaVendedores,
     StgCaContasReceber, StgCaContasPagar,
+    StgCaCategorias, StgCaCentrosCusto,
 )
 
 __all__ = [
@@ -81,4 +82,5 @@ __all__ = [
     # Staging Conta Azul
     "StgCaPessoas", "StgCaProdutos", "StgCaServicos", "StgCaVendedores",
     "StgCaContasReceber", "StgCaContasPagar",
+    "StgCaCategorias", "StgCaCentrosCusto",
 ]

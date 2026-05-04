@@ -1,6 +1,8 @@
 import { useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
 
 import { syncService } from '@/services/sync.service'
+import { contaAzulService } from '@/services/contaazul.service'
 import { usePageTitle } from '@/contexts/PageTitleContext'
 import {
   STATIC_ENTITIES,
@@ -30,13 +32,16 @@ const CONTAAZUL_CONFIG: SyncProviderConfig = {
   heatmapRows: CA_TRANSACTIONAL_ENTITIES,
   syncAllStatic: () => syncService.contaazulStatic(),
   syncMonth: (year, month) => syncService.contaazulFinancial(year, month),
-  // Sem entityMonth nem kpisMonth — Conta Azul só roda batch do mês inteiro
+  syncEntityMonth: (entity, year, month) =>
+    syncService.contaazulTransactional(entity, year, month),
+  syncAlteracoes: (hoursBack) => syncService.contaazulAlteracoes(hoursBack),
+  // Sem kpisMonth — Conta Azul não tem agregado pré-calculado
   showRebuildPipeline: false,
 }
 
 const TABS: { key: SyncSource; label: string; subtitle: string; config: SyncProviderConfig }[] = [
   { key: 'clinicorp', label: 'Clinicorp', subtitle: 'agenda · pacientes · receitas · profissionais', config: CLINICORP_CONFIG },
-  { key: 'contaazul', label: 'Conta Azul', subtitle: 'pessoas · financeiro · produtos · serviços', config: CONTAAZUL_CONFIG },
+  { key: 'contaazul', label: 'Conta Azul', subtitle: 'pessoas · produtos · serviços · categorias · centros de custo · financeiro', config: CONTAAZUL_CONFIG },
 ]
 
 
@@ -72,8 +77,45 @@ export default function SyncPage() {
         </nav>
       </div>
 
+      {/* Banner de empresa CA conectada (apenas na aba Conta Azul) */}
+      {activeKey === 'contaazul' && <ContaAzulConnectedBanner />}
+
       {/* Panel */}
       <SyncProviderPanel key={active.key} config={active.config} />
     </main>
+  )
+}
+
+
+function ContaAzulConnectedBanner() {
+  const statusQ = useQuery({
+    queryKey: ['contaazul', 'status'],
+    queryFn: () => contaAzulService.status(),
+    refetchInterval: 30_000,
+  })
+  const s = statusQ.data
+  if (!s || !s.connected) return null
+
+  const fmt = s.empresa_nome_fantasia || s.empresa_razao_social
+  const cnpjMasked = s.empresa_documento
+    ? s.empresa_documento.replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, '$1.$2.$3/$4-$5')
+    : null
+
+  return (
+    <div className="bg-success-bg border border-success-border rounded-lg px-4 py-2.5 flex items-center justify-between gap-3 text-sm">
+      <div className="flex items-center gap-2 min-w-0">
+        <span className="w-2 h-2 rounded-full bg-success-text shrink-0" aria-hidden />
+        <div className="truncate">
+          <span className="font-medium text-success-text">Conta Azul conectada:</span>{' '}
+          <span className="text-neutral-800">{fmt || '—'}</span>
+          {cnpjMasked && (
+            <span className="text-neutral-500 ml-2 text-xs">CNPJ {cnpjMasked}</span>
+          )}
+        </div>
+      </div>
+      {s.empresa_email && (
+        <span className="text-xs text-neutral-500 shrink-0 hidden sm:inline">{s.empresa_email}</span>
+      )}
+    </div>
   )
 }

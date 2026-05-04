@@ -24,6 +24,8 @@ export type SyncEntity =
   | 'produtos'
   | 'servicos'
   | 'vendedores'
+  | 'categorias'
+  | 'centros_custo'
   // Conta Azul — transacionais
   | 'contas_receber'
   | 'contas_pagar'
@@ -53,6 +55,8 @@ export const CA_STATIC_ENTITIES: SyncEntity[] = [
   'produtos',
   'servicos',
   'vendedores',
+  'categorias',
+  'centros_custo',
 ]
 
 export const CA_TRANSACTIONAL_ENTITIES: SyncEntity[] = [
@@ -81,6 +85,8 @@ export const ENTITY_LABELS: Record<SyncEntity, string> = {
   produtos: 'Produtos',
   servicos: 'Serviços',
   vendedores: 'Vendedores',
+  categorias: 'Categorias',
+  centros_custo: 'Centros de Custo',
   contas_receber: 'Contas a Receber',
   contas_pagar: 'Contas a Pagar',
 }

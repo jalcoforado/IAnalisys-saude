@@ -9,7 +9,8 @@ Schema uniforme:
 - sync_job_id: rastreia qual execução trouxe o registro
 - UNIQUE(tenant_id, external_id) garante upsert idempotente
 
-São 6 tabelas: pessoas, produtos, servicos, vendedores, contas_receber, contas_pagar.
+São 8 tabelas: pessoas, produtos, servicos, vendedores, contas_receber,
+contas_pagar, categorias, centros_custo.
 """
 from sqlalchemy import (
     BigInteger, Column, DateTime, ForeignKey, Index, String, UniqueConstraint, func
@@ -69,5 +70,17 @@ class StgCaContasReceber(Base):
 
 class StgCaContasPagar(Base):
     __tablename__ = "stg_ca_contas_pagar"
+    __table_args__ = _staging_table_args(__tablename__)
+    id, tenant_id, external_id, external_updated_at, raw_data, synced_at, sync_job_id = _staging_columns()
+
+
+class StgCaCategorias(Base):
+    __tablename__ = "stg_ca_categorias"
+    __table_args__ = _staging_table_args(__tablename__)
+    id, tenant_id, external_id, external_updated_at, raw_data, synced_at, sync_job_id = _staging_columns()
+
+
+class StgCaCentrosCusto(Base):
+    __tablename__ = "stg_ca_centros_custo"
     __table_args__ = _staging_table_args(__tablename__)
     id, tenant_id, external_id, external_updated_at, raw_data, synced_at, sync_job_id = _staging_columns()

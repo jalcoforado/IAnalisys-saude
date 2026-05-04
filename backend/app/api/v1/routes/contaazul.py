@@ -7,7 +7,8 @@ GET  /contaazul/callback     — recebe code do Conta Azul e salva token
 POST /contaazul/refresh      — renova access_token via refresh_token
 DELETE /contaazul/disconnect — remove token do tenant
 """
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import RedirectResponse
@@ -17,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.v1.dependencies.permissions import requires
 from app.core.config import settings
 from app.db.session import get_db
+from app.integrations.contaazul.client import ContaAzulClient, ContaAzulError
 from app.integrations.contaazul.oauth import (
     ContaAzulOAuthError,
     build_authorization_url,
@@ -34,6 +36,36 @@ router = APIRouter(prefix="/contaazul", tags=["contaazul"])
 
 def _now_utc() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def _parse_iso_date(value: Any) -> date | None:
+    if not value or not isinstance(value, str):
+        return None
+    try:
+        return date.fromisoformat(value[:10])
+    except ValueError:
+        return None
+
+
+async def _populate_empresa(
+    token: ContaAzulToken, access_token: str,
+) -> None:
+    """Popula campos `empresa_*` consultando /v1/pessoas/conta-conectada.
+    Best-effort: se a chamada falhar, deixa NULL e segue (token ainda é válido).
+    """
+    client = ContaAzulClient(access_token)
+    try:
+        data = await client.get_conta_conectada()
+    except ContaAzulError:
+        return
+    finally:
+        await client.aclose()
+
+    token.empresa_documento = data.get("documento")
+    token.empresa_razao_social = data.get("razao_social")
+    token.empresa_nome_fantasia = data.get("nome_fantasia")
+    token.empresa_data_fundacao = _parse_iso_date(data.get("data_fundacao"))
+    token.empresa_email = data.get("email")
 
 
 async def _get_token(db: AsyncSession, tenant_id: str) -> ContaAzulToken | None:
@@ -59,6 +91,11 @@ async def contaazul_status(
         status="expirado" if is_expired else "ativo",
         expires_at=token.expires_at,
         connected_at=token.created_at,
+        empresa_documento=token.empresa_documento,
+        empresa_razao_social=token.empresa_razao_social,
+        empresa_nome_fantasia=token.empresa_nome_fantasia,
+        empresa_data_fundacao=token.empresa_data_fundacao,
+        empresa_email=token.empresa_email,
     )
 
 
@@ -84,7 +121,11 @@ async def contaazul_callback(
     Callback OAuth do Conta Azul.
     O tenant_id sai do `state` (codificado em base64). Como fallback aceita
     `?tenant_id=UUID` na query (modo manual de smoke-test).
-    Em sucesso, redireciona pra /admin/sync no frontend.
+
+    Idempotente: se o callback for chamado duas vezes com o mesmo code (por
+    proxy de redirect que dispara duplicado, retry de browser, etc) e a 2ª
+    chamada falhar com `invalid_grant` mas existir token recém-salvo (<60s)
+    pra esse tenant, redireciona como sucesso. Quem vê o browser só vê o ok.
     """
     if error:
         raise HTTPException(status_code=400, detail=f"Conta Azul retornou erro: {error}")
@@ -101,17 +142,31 @@ async def contaazul_callback(
     try:
         token_data = await exchange_code_for_token(code)
     except ContaAzulOAuthError as exc:
+        # Defesa contra callback duplicado: se o exchange falhou mas tem token
+        # recente pra esse tenant, é a 2ª chamada de um redirect duplicado —
+        # trata como sucesso pra não confundir o usuário.
+        if "invalid_grant" in str(exc):
+            recent = await _get_token(db, resolved_tenant)
+            if recent and recent.updated_at and (
+                _now_utc() - recent.updated_at <= timedelta(seconds=60)
+            ):
+                return RedirectResponse(
+                    url=f"{settings.APP_URL}/admin/sync?contaazul=conectado",
+                    status_code=302,
+                )
         raise HTTPException(status_code=502, detail=str(exc))
 
     await db.execute(
         delete(ContaAzulToken).where(ContaAzulToken.tenant_id == resolved_tenant)
     )
-    db.add(ContaAzulToken(
+    new_token = ContaAzulToken(
         tenant_id=resolved_tenant,
         access_token=token_data["access_token"],
         refresh_token=token_data["refresh_token"],
         expires_at=token_data["expires_at"],
-    ))
+    )
+    await _populate_empresa(new_token, token_data["access_token"])
+    db.add(new_token)
     await db.commit()
 
     return RedirectResponse(
@@ -139,6 +194,9 @@ async def contaazul_refresh(
     token.refresh_token = new_data["refresh_token"]
     token.expires_at = new_data["expires_at"]
     token.updated_at = _now_utc()
+    # Backfill: tokens antigos podem não ter empresa_*; aproveita o refresh.
+    if not token.empresa_razao_social:
+        await _populate_empresa(token, new_data["access_token"])
     await db.commit()
     await db.refresh(token)
 
@@ -147,6 +205,11 @@ async def contaazul_refresh(
         status="ativo",
         expires_at=token.expires_at,
         connected_at=token.created_at,
+        empresa_documento=token.empresa_documento,
+        empresa_razao_social=token.empresa_razao_social,
+        empresa_nome_fantasia=token.empresa_nome_fantasia,
+        empresa_data_fundacao=token.empresa_data_fundacao,
+        empresa_email=token.empresa_email,
     )
 
 

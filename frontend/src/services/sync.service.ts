@@ -40,6 +40,16 @@ export const syncService = {
       .post<BatchResponse>('/sync/contaazul/financial', { year, month })
       .then((r) => r.data),
 
+  contaazulTransactional: (entity: SyncEntity, year: number, month: number) =>
+    api
+      .post<SyncJob>('/sync/contaazul/transactional', { entity, year, month })
+      .then((r) => r.data),
+
+  contaazulAlteracoes: (hoursBack: number) =>
+    api
+      .post<BatchResponse>('/sync/contaazul/alteracoes', { hours_back: hoursBack })
+      .then((r) => r.data),
+
   // ── Read (com filtro source opcional) ────────────────────────
   jobs: (limit = 30, entity?: SyncEntity, year?: number, source?: SyncSource) =>
     api

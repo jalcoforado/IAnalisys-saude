@@ -30,6 +30,7 @@ from app.models.sync_job import SyncJob
 from app.schemas.auth import UserMe
 from app.schemas.sync import (
     CheckpointResponse,
+    DeltaSyncRequest,
     KpisMonthlyRequest,
     StaticSyncResponse,
     SyncJobResponse,
@@ -140,6 +141,58 @@ async def sync_contaazul_financial(
     try:
         jobs = await ca_sync.sync_transactional_batch(
             db, tenant_id, payload.year, payload.month,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    return TransactionalSyncResponse(
+        jobs=[SyncJobResponse.model_validate(j) for j in jobs],
+        total_inserted=sum(j.records_inserted or 0 for j in jobs),
+        total_updated=sum(j.records_updated or 0 for j in jobs),
+        total_errors=sum(j.errors_count or 0 for j in jobs),
+    )
+
+
+@router.post("/contaazul/transactional", response_model=SyncJobResponse, status_code=200)
+async def sync_contaazul_transactional(
+    payload: TransactionalSyncRequest,
+    current_user: UserMe = Depends(requires("sync.run")),
+    db: AsyncSession = Depends(get_db),
+) -> SyncJobResponse:
+    """Sync de UMA entidade transacional CA (contas_receber ou contas_pagar) num mês."""
+    tenant_id = _require_tenant(current_user)
+    try:
+        spec = ca_sync.get_entity_spec(payload.entity)
+        if spec not in ca_sync.TRANSACTIONAL_ENTITIES:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Entidade '{payload.entity}' não é transacional no Conta Azul.",
+            )
+        job = await ca_sync.sync_transactional_entity(
+            db, tenant_id, spec, payload.year, payload.month,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return SyncJobResponse.model_validate(job)
+
+
+@router.post("/contaazul/alteracoes", response_model=TransactionalSyncResponse, status_code=200)
+async def sync_contaazul_alteracoes(
+    payload: DeltaSyncRequest,
+    current_user: UserMe = Depends(requires("sync.run")),
+    db: AsyncSession = Depends(get_db),
+) -> TransactionalSyncResponse:
+    """Delta sync — atualiza staging com contas a receber/pagar alteradas
+    nas últimas N horas (default 24, máximo 720 = 30 dias).
+
+    Apenas 2 chamadas à API CA (1× receber + 1× pagar) com filtro
+    `data_alteracao_de`. Útil pra manter staging atualizado durante o dia
+    sem re-sincronizar meses completos.
+    """
+    tenant_id = _require_tenant(current_user)
+    try:
+        jobs = await ca_sync.sync_alteracoes_recentes(
+            db, tenant_id, hours_back=payload.hours_back,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
