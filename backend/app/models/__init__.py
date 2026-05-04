@@ -53,6 +53,11 @@ from app.models.staging_contaazul import (
     StgCaContasReceber, StgCaContasPagar,
     StgCaCategorias, StgCaCentrosCusto,
 )
+from app.models.core_contaazul import (
+    CoreCaPessoas, CoreCaCategorias, CoreCaCentrosCusto,
+    CoreCaProdutos, CoreCaServicos, CoreCaVendedores,
+    CoreCaEventosFinanceiros, CoreCaRateio,
+)
 
 __all__ = [
     "Tenant", "User", "Role", "UserTenant",
@@ -83,4 +88,8 @@ __all__ = [
     "StgCaPessoas", "StgCaProdutos", "StgCaServicos", "StgCaVendedores",
     "StgCaContasReceber", "StgCaContasPagar",
     "StgCaCategorias", "StgCaCentrosCusto",
+    # Core Conta Azul
+    "CoreCaPessoas", "CoreCaCategorias", "CoreCaCentrosCusto",
+    "CoreCaProdutos", "CoreCaServicos", "CoreCaVendedores",
+    "CoreCaEventosFinanceiros", "CoreCaRateio",
 ]

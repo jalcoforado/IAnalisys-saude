@@ -6,6 +6,9 @@ POST /transform/clinicorp/events            — 6 eventos (estimates emite 2 out
 POST /transform/clinicorp/patients          — extrai pacientes únicos dos eventos
 POST /transform/clinicorp/all               — cadastros + eventos + patients
 POST /transform/clinicorp/{entity}          — uma entidade específica
+POST /transform/contaazul/static            — 6 cadastros CA (pessoas/categorias/CC/...)
+POST /transform/contaazul/eventos           — eventos_financeiros + rateio (lazy upsert pessoas órfãs)
+POST /transform/contaazul/all               — estáticas + eventos
 GET  /transform/status                      — counts staging vs core
 """
 from typing import List
@@ -29,6 +32,11 @@ from app.transformations.clinicorp_to_core import (
     transform_estimates,
     transform_patients,
     transform_static_entity,
+)
+from app.transformations.contaazul_to_core import (
+    transform_all as transform_all_ca,
+    transform_all_static as transform_all_static_ca,
+    transform_eventos_financeiros as transform_eventos_ca,
 )
 
 router = APIRouter(prefix="/transform", tags=["transform"])
@@ -104,6 +112,45 @@ async def transform_clinicorp_all(
     """Transforma cadastros + eventos + patients (derivado)."""
     tenant_id = _require_tenant(current_user)
     results = await transform_all(db, tenant_id)
+    return _aggregate([_to_item(r) for r in results])
+
+
+@router.post("/contaazul/static", response_model=TransformResponse, status_code=200)
+async def transform_contaazul_static(
+    current_user: UserMe = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> TransformResponse:
+    """Transforma os 6 cadastros estáticos CA staging → core (pessoas,
+    categorias, centros_custo, produtos, servicos, vendedores)."""
+    tenant_id = _require_tenant(current_user)
+    results = await transform_all_static_ca(db, tenant_id)
+    return _aggregate([_to_item(r) for r in results])
+
+
+@router.post("/contaazul/eventos", response_model=TransformResultItem, status_code=200)
+async def transform_contaazul_eventos(
+    current_user: UserMe = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> TransformResultItem:
+    """Transforma stg_ca_contas_receber + stg_ca_contas_pagar em
+    core_ca_eventos_financeiros (1 linha por parcela com tipo discriminator)
+    + core_ca_rateio (N linhas por parcela). Faz lazy upsert de pessoas
+    órfãs referenciadas inline mas ausentes em core_ca_pessoas.
+
+    Pré-requisito: rodar /transform/contaazul/static antes."""
+    tenant_id = _require_tenant(current_user)
+    result = await transform_eventos_ca(db, tenant_id)
+    return _to_item(result)
+
+
+@router.post("/contaazul/all", response_model=TransformResponse, status_code=200)
+async def transform_contaazul_all(
+    current_user: UserMe = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> TransformResponse:
+    """Transforma estáticas CA + eventos financeiros."""
+    tenant_id = _require_tenant(current_user)
+    results = await transform_all_ca(db, tenant_id)
     return _aggregate([_to_item(r) for r in results])
 
 

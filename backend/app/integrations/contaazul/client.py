@@ -11,7 +11,7 @@ Endpoints validados em produção (smoke-test 2026-05-04, doc em
   - GET /v1/financeiro/eventos-financeiros/contas-a-receber/buscar
   - GET /v1/financeiro/eventos-financeiros/contas-a-pagar/buscar
   - GET /v1/categorias                                    (`permite_apenas_filhos` obrigatório!)
-  - GET /v1/centro-de-custo                               (wrapper "items" em EN, não "itens")
+  - GET /v1/centro-de-custo                               (wrapper `itens` em PT — doc oficial mente dizendo `items` em EN)
 
 🔥 PEGADINHA CRÍTICA: o gateway exige Content-Type+Accept JSON em TODA
 request, mesmo GET. Sem isso retorna 401 "Invalid token: policy(JWT-VERIFY)"
@@ -21,7 +21,8 @@ Convenção de wrapper inconsistente entre endpoints:
   - pessoas/produtos:    {"totalItems": N, "items": [...]}
   - servicos/eventos:    {"itens_totais": N, "itens": [...], "totais": {...}}
   - categorias:          {"itens_totais": N, "itens": [...], "totais": {...}}
-  - centros_custo:       {"itens_totais": N, "items": [...], "totais": {...}}  ← items EN!
+  - centros_custo:       {"itens_totais": N, "itens": [...], "totais": {...}}
+                         ⚠ doc oficial diz `items` (EN) mas payload real é `itens` (PT) — confirmado em 2026-05-04
   - vendedores:          [...] (array puro)
 """
 from datetime import date
@@ -271,19 +272,23 @@ class ContaAzulClient:
         *,
         tamanho_pagina: int = 500,
         pagina: int = 1,
-        filtro_rapido: str | None = None,
+        filtro_rapido: str = "TODOS",
     ) -> dict:
-        """Lista centros de custo. Wrapper "items" em INGLÊS (pegadinha).
+        """Lista centros de custo.
 
-        Retorno: {"itens_totais", "items": [...], "totais": {...}}.
+        Retorno: {"itens_totais", "itens": [...], "totais": {...}}.
+        ⚠ Doc oficial diz wrapper "items" (EN) mas o payload real usa "itens"
+        (PT) — confirmado em 2026-05-04 contra Parente (7 CCs).
         Item: id, codigo (nullable), nome, ativo.
+
+        ⚠ `filtro_rapido` default é "TODOS" — sem isso, a API às vezes
+        retorna `itens_totais > 0` mas array vazio (bug do CA).
         """
         params: dict[str, Any] = {
             "tamanho_pagina": tamanho_pagina,
             "pagina": pagina,
+            "filtro_rapido": filtro_rapido,
         }
-        if filtro_rapido:
-            params["filtro_rapido"] = filtro_rapido
         return await self._get("/v1/centro-de-custo", params)
 
 

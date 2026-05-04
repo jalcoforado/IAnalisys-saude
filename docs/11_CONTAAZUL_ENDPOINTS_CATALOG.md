@@ -11,9 +11,11 @@
 - **Paginação:** `pagina` (1-indexed) + `tamanho_pagina` (enum: 10, 20, 50, 100, 200, 500, 1000).
   ⚠️ NÃO usar `offset` — silenciosamente ignorado, sempre devolve página 1.
 - **Wrappers inconsistentes:**
-  - `{"totalItems", "items": [...]}` (en) — pessoas, produtos, centros de custo
-  - `{"itens_totais", "itens": [...], "totais": {...}}` (pt) — serviços, eventos financeiros, categorias
+  - `{"totalItems", "items": [...]}` (en) — pessoas, produtos
+  - `{"itens_totais", "itens": [...], "totais": {...}}` (pt) — serviços, eventos financeiros, categorias, **centros de custo**
   - `[...]` array puro — vendedores
+  - ⚠ **Doc oficial mente sobre `/v1/centro-de-custo`**: diz wrapper `items` (en), mas o payload real usa `itens` (pt). Confirmado em 2026-05-04.
+  - ⚠ **`/v1/centro-de-custo` exige `filtro_rapido=TODOS`** explícito — sem isso, retorna `itens_totais > 0` mas array vazio (bug do CA).
 - **Headers obrigatórios em GET:** `Content-Type: application/json` + `Accept: application/json`. Sem isso, 401 mesmo com token válido.
 - **Datas:** ISO 8601 (`YYYY-MM-DDTHH:mm:ssZ`).
 

@@ -127,7 +127,7 @@ STATIC_ENTITIES: tuple[EntitySpec, ...] = (
     EntitySpec("servicos",      StgCaServicos,     "id", None,                  "itens", paginate=False),
     EntitySpec("vendedores",    StgCaVendedores,   "id", None,                  "",      paginate=False),
     EntitySpec("categorias",    StgCaCategorias,   "id", None,                  "itens", paginate=True),
-    EntitySpec("centros_custo", StgCaCentrosCusto, "id", None,                  "items", paginate=True),
+    EntitySpec("centros_custo", StgCaCentrosCusto, "id", None,                  "itens", paginate=True),
 )
 
 
