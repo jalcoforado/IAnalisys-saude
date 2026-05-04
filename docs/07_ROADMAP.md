@@ -236,6 +236,12 @@ Todas têm: `id BIGINT PK`, `tenant_id`, `external_id`, `external_updated_at`, `
 - Endpoints `POST /sync/contaazul/{static,financial}` + `/sync/jobs?source=` + `/sync/checkpoints?source=` filtros
 - Frontend: `SyncProviderPanel` parametrizado (config por source) + `SyncPage` refatorado com tabs (Clinicorp · Conta Azul) — UI 100% idêntica entre os dois
 
+**Hotfixes 2026-05-04** ✅ `ebe323c`
+- **Rate limit retry/backoff** no `client.py`: até 3 tentativas com espera 12s/36s, respeita `Retry-After`, HTTP client reusa conexão. Descoberto durante smoke-test que CA estoura quota em ~24 chamadas seguidas (não 50-100).
+- **Pause distribui carga**: 0.4s entre páginas, 1s entre entidades estáticas no `sync_service.py`.
+- **Tenant_id no state OAuth**: `oauth.py` ganhou `encode_state`/`decode_state` (base64url). Callback resolve tenant via state em vez de exigir `?tenant_id=` na query, redireciona pra `/admin/sync?contaazul=conectado` em sucesso.
+- **App CA NOVO criado** (`client_id=67p7o6b8ptaanl3fs5uhoavpif`) com `redirect_uri=https://fprime.analisys.info/v2_callback.php` (proxy PHP). Isolado do v1 PHP — fim da disputa pelo refresh_token. App antigo deprecated.
+
 **Sub-PR 4d: Migration 0016 — CORE Conta Azul** (~1d)
 - `core_ca_eventos_financeiros` (unifica pagar+receber com `tipo` discriminator)
 - `core_ca_pessoas`, `core_ca_categorias`, `core_ca_centros_custo`, `core_ca_produtos`, `core_ca_servicos`, `core_ca_vendedores`
@@ -253,10 +259,37 @@ Todas têm: `id BIGINT PK`, `tenant_id`, `external_id`, `external_updated_at`, `
 - Tabela: faturas com status (pago/pendente/vencido) + filtros
 - Permission `financeiro.read` + `financeiro.export` (já no catálogo)
 - Aplica os 5 passos do checklist obrigatório de novo módulo
+- Já nasce com drill-down do PR-15 ativo em todos os KPIs
+
+**Sub-PR 15 (NOVO, decidido 2026-05-04): Drill-down auditável dos KPIs** (~3-4d, depois de 14d/14e)
+
+> Decisão arquitetural: cada número do dashboard tem rastreabilidade até a linha de origem. Resolve a pergunta "esse R$ 369.205 está certo?" sem precisar saber nome de tabela/campo. Substitui a ideia inicial de "Smart Report genérico" (rejeitada por UX fraca e baixa rastreabilidade).
+
+**Como funciona:**
+- Cada endpoint do dashboard ganha um endpoint paralelo `/{kpi}/itens` que retorna as linhas que entraram no cálculo (mesma query, sem o agregador)
+- Total no footer do drawer **tem que bater com o KPI** — auditoria built-in
+- Cada linha mostra `external_id` (deep-link pro ERP) + botão "ver JSON staging" pra debug profundo
+
+**Princípios de UX (decididos com Pedro):**
+- ❌ Sem botão extra nos cards — não polui visual atual
+- ✅ Card inteiro clicável (cursor pointer + hover sutil)
+- ✅ Único indicador: pequeno ícone `↗` em cinza claro no canto superior direito
+- ✅ Drawer slide-in da direita (~50% da tela), dashboard continua visível atrás. Não modal centralizado.
+- ✅ Componente `KpiDrillDown` parametrizável reutilizável em todos os KPIs
+
+**Implementa pra Clinicorp primeiro** (já populado) — auditável imediatamente o R$ 369.205 e demais KPIs do `/dashboard/executivo`.
+
+**Sub-PR 16 (NOVO): Match Clinicorp ↔ CA dentro do drill-down** (~2-3d, depois de 15)
+
+Quando `fato_caixa` (Conta Azul) estiver populado, drill-downs de KPIs financeiros ganham coluna **"Match CA"** com 4 estados:
+- ✅ **Em ambos** — chave bate (CPF + valor + data ≈)
+- ⚠️ **Só Clinicorp** — venda registrada mas dinheiro não entrou no CA
+- ⚠️ **Só CA** — entrada bancária sem registro Clinicorp
+- ⚠️ **Divergente** — match parcial mas valor/data diferentes
+
+Pedro abre o ERP só nas linhas marcadas com ⚠️. Vira a ferramenta principal de validação cruzada entre os dois sistemas.
 
 **Backlog pós-Fase 4 (não bloqueia):**
-- Match Conta Azul ↔ Clinicorp (CPF como chave) — só após validar valores diferentes entre fontes
-- Match vendedor Conta Azul ↔ profissional Clinicorp (por nome)
 - Sync incremental (hoje será full sync mês a mês como Clinicorp)
 - APScheduler pra automação noturna
 
@@ -698,6 +731,7 @@ Quando um novo tenant é criado (futuro endpoint de Admin SaaS), uma matriz defa
 | **PR-13** | ✅ | RBAC granular: `permissions` + `role_permissions` + matriz UI + CRUD usuários + convite | `93e6872` |
 | **0014** | ✅ | Catálogo revisado: remove 4 writes (sistema read-only), adiciona `agenda.export` (19 codes) | `cf93dc3` |
 | **PR-14a/b/c** | ✅ | Conta Azul pipeline staging: client refeito + migration 0015 (6 tabelas stg_ca_*) + sync_service + endpoints + UI com tabs | `fdf08cb` |
+| **Hotfix CA** | ✅ | Rate limit retry/backoff + tenant_id no state OAuth + app NOVO CA isolado do v1 | `ebe323c` |
 
 ### PR-9 (Fase 6.1) — Dashboard Executivo
 
@@ -716,9 +750,13 @@ Quando um novo tenant é criado (futuro endpoint de Admin SaaS), uma matriz defa
 - **PR-12** ✅ — Reset de senha via email + login só com email
 - **PR-13** ✅ — RBAC granular + CRUD de usuários + convite
 - **PR-14a/b/c** ✅ — Conta Azul pipeline staging (client + migration + sync workers + UI tabs)
-- **PR-14d** ← próximo — Migration 0016 CORE Conta Azul + transform staging→core idempotente
+- **Hotfix CA** ✅ — Rate limit retry + state OAuth + app novo isolado
+- **Smoke-test e2e CA** ← próximo (Pedro, quando quota recuperar)
+- **PR-14d** — Migration 0016 CORE Conta Azul + transform staging→core idempotente. **Só inicia depois do staging populado** (decisão Pedro 2026-05-04 — não desenhar CORE no escuro)
 - **PR-14e** — Migration 0017 Analytics (`fato_caixa` + `dim_categoria` + `dim_centro_custo`)
-- **PR-14f** — Tela `/financeiro` (Fase 6.2) — primeiro módulo aplicando o checklist obrigatório de 5 passos
+- **PR-15 (NOVO)** — Drill-down auditável dos KPIs do dashboard, padrão visual zero-poluição (card clicável, drawer lateral, total bate com KPI)
+- **PR-16 (NOVO)** — Match Clinicorp ↔ CA dentro do drill-down (4 estados de reconciliação)
+- **PR-14f** — Tela `/financeiro` (Fase 6.2) — primeiro módulo aplicando o checklist obrigatório de 5 passos, já com drill-down do PR-15
 - **Fase 7** — AI Gateway (Claude + DeepSeek com prompt caching, controle de tokens por tenant, log de uso)
 - **Fase 7** — AI Gateway (Claude + DeepSeek com prompt caching, controle de tokens por tenant, log de uso)
   IA consultará as tabelas `fato_*` via SQL controlado, sem queries livres.
