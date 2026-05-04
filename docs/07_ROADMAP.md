@@ -186,7 +186,7 @@ Todas têm: `id BIGINT PK`, `tenant_id`, `external_id`, `external_updated_at`, `
 
 ---
 
-### FASE 4 — Pipeline de dados (Conta Azul) 🟡 (OAuth pronto, pipeline próximo PR)
+### FASE 4 — Pipeline de dados (Conta Azul) 🟡 (4a/4b/4c ✅ done · 4d/4e/4f pendentes)
 
 **Objetivo:** Dados financeiros reais entram no banco, separados do Clinicorp. Conta Azul é fonte canônica do realizado bancário (entradas + saídas + categorias). Clinicorp continua como fonte canônica do vínculo paciente↔consulta↔valor.
 
@@ -217,21 +217,24 @@ Todas têm: `id BIGINT PK`, `tenant_id`, `external_id`, `external_updated_at`, `
 
 #### Plano de execução — divisão em sub-PRs
 
-**Sub-PR 4a: Refazer `client.py` + smoke-test dos 6 endpoints** (~0.5d)
-- Substituir endpoints fictícios pelos reais
-- Funções tipadas pra cada endpoint
-- Script de smoke-test que valida JSON real bate com schema esperado
+**Sub-PR 4a: Refazer `client.py` + smoke-test dos 6 endpoints** ✅ `fdf08cb`
+- Endpoints reais `/v1/...` validados em produção
+- `_REQUIRED_JSON_HEADERS` (Content-Type + Accept obrigatórios pra evitar 401 do gateway)
+- Param de paginação corrigido: `tamanho_pagina` (não `limite` — v1 PHP nunca trazia mais de 10 itens por causa disso)
+- Tratamento explícito de `429 Rate limit` com mensagem clara
+- `backend/scripts/smoke_test_contaazul.py` reproduz hits nos 6 endpoints
 
-**Sub-PR 4b: Migration 0015 — staging Conta Azul** (~0.5d)
-- 6 tabelas `stg_ca_*` (contas_receber, contas_pagar, pessoas, produtos, servicos, vendedores)
-- Schema espelho do JSON real, com colunas-chave indexadas (`external_id`, `tenant_id`, `data_vencimento`, `status`)
-- Payload completo em coluna JSON pra rastreabilidade
+**Sub-PR 4b: Migration 0015 — staging Conta Azul** ✅ `fdf08cb`
+- 6 tabelas `stg_ca_*` (pessoas, produtos, servicos, vendedores, contas_receber, contas_pagar)
+- Schema mínimo: id BigInt PK, tenant_id, external_id, external_updated_at, raw_data JSON, synced_at, sync_job_id
+- UNIQUE(tenant_id, external_id) pra idempotência via INSERT...ON DUPLICATE KEY UPDATE
+- Models em `app/models/staging_contaazul.py` com helper `_staging_columns()`
 
-**Sub-PR 4c: Sync workers + endpoints + tela** (~1d)
-- `app/integrations/contaazul/sync_service.py` espelhando o do Clinicorp
-- Endpoints `POST /sync/contaazul/{static,financial,all}` protegidos por `requires("sync.run")`
-- Adicionar Conta Azul à SyncPage existente — heatmap separado ou seção dedicada (decidir)
-- Botão "Reconstruir CORE+ANALYTICS" estendido
+**Sub-PR 4c: Sync workers + endpoints + tela** ✅ `fdf08cb`
+- `app/integrations/contaazul/sync_service.py` (espelho do Clinicorp): `_get_authenticated_client` com refresh automático se expirar em <60s, `_paginate_static` com `tamanho_pagina=200`, `_upsert_records` em batches de 500
+- `sync_all_static` (4 estáticos) + `sync_transactional_batch(year, month)` (receber + pagar)
+- Endpoints `POST /sync/contaazul/{static,financial}` + `/sync/jobs?source=` + `/sync/checkpoints?source=` filtros
+- Frontend: `SyncProviderPanel` parametrizado (config por source) + `SyncPage` refatorado com tabs (Clinicorp · Conta Azul) — UI 100% idêntica entre os dois
 
 **Sub-PR 4d: Migration 0016 — CORE Conta Azul** (~1d)
 - `core_ca_eventos_financeiros` (unifica pagar+receber com `tipo` discriminator)
@@ -692,8 +695,9 @@ Quando um novo tenant é criado (futuro endpoint de Admin SaaS), uma matriz defa
 | PR-10 | ✅ | AppShell de 2 barras (BrandBar branca + MenuBar configurável) + SettingsContext + PageTitleContext + página `/configuracoes` | `918b60d` |
 | PR-11 | ✅ | Configurações da empresa em `/empresa/configuracoes` — logo/favicon/login_bg + dados + endereço + cores. TenantContext aplica dinamicamente | `f810b8b` |
 | **PR-12** | ✅ | Recuperação de senha via email (Gmail SMTP) + login só com email |
-| **PR-13** | ✅ | RBAC granular: `permissions` + `role_permissions` + matriz UI + CRUD usuários + convite |
-| **0014** | ✅ | Catálogo revisado: remove 4 writes (sistema read-only), adiciona `agenda.export` (19 codes) |
+| **PR-13** | ✅ | RBAC granular: `permissions` + `role_permissions` + matriz UI + CRUD usuários + convite | `93e6872` |
+| **0014** | ✅ | Catálogo revisado: remove 4 writes (sistema read-only), adiciona `agenda.export` (19 codes) | `cf93dc3` |
+| **PR-14a/b/c** | ✅ | Conta Azul pipeline staging: client refeito + migration 0015 (6 tabelas stg_ca_*) + sync_service + endpoints + UI com tabs | `fdf08cb` |
 
 ### PR-9 (Fase 6.1) — Dashboard Executivo
 
@@ -711,7 +715,11 @@ Quando um novo tenant é criado (futuro endpoint de Admin SaaS), uma matriz defa
 - **PR-11** ✅ — Configurações da empresa (Fase 6.6 — Identidade + Dados)
 - **PR-12** ✅ — Reset de senha via email + login só com email
 - **PR-13** ✅ — RBAC granular + CRUD de usuários + convite
-- **PR-14** ← próximo — Módulos Financeiro / Agendamentos / Comercial / Pacientes (Fase 6.2-6.5) e Conta Azul (Fase 4) — todos já nascem protegidos pelas permissions do PR-13
+- **PR-14a/b/c** ✅ — Conta Azul pipeline staging (client + migration + sync workers + UI tabs)
+- **PR-14d** ← próximo — Migration 0016 CORE Conta Azul + transform staging→core idempotente
+- **PR-14e** — Migration 0017 Analytics (`fato_caixa` + `dim_categoria` + `dim_centro_custo`)
+- **PR-14f** — Tela `/financeiro` (Fase 6.2) — primeiro módulo aplicando o checklist obrigatório de 5 passos
+- **Fase 7** — AI Gateway (Claude + DeepSeek com prompt caching, controle de tokens por tenant, log de uso)
 - **Fase 7** — AI Gateway (Claude + DeepSeek com prompt caching, controle de tokens por tenant, log de uso)
   IA consultará as tabelas `fato_*` via SQL controlado, sem queries livres.
 
@@ -729,6 +737,10 @@ Quando um novo tenant é criado (futuro endpoint de Admin SaaS), uma matriz defa
 | 0009 | analytics layer — dim_paciente + dim_profissional |
 | 0010 | analytics layer — fato_agenda + fato_orcamentos + fato_financeiro |
 | 0011 | tenant settings — branding (favicon, login_bg, primary/secondary color) + dados empresa (CNPJ, contato, endereço) |
+| 0012 | password_reset_tokens (token_hash SHA-256, TTL 1h, single-use, purpose) |
+| 0013 | RBAC: permissions (22 codes) + role_permissions (matriz por tenant) |
+| 0014 | RBAC read-only revision: remove 4 writes (pacientes/agenda/clinico/financeiro), adiciona agenda.export — 19 codes finais |
+| 0015 | staging Conta Azul: 6 tabelas stg_ca_* (pessoas, produtos, servicos, vendedores, contas_receber, contas_pagar) |
 
 ### Volumetria atual (smoke-test 2026-05-02 com Parente Odontologia)
 
@@ -739,3 +751,16 @@ Quando um novo tenant é criado (futuro endpoint de Admin SaaS), uma matriz defa
 - **KPIs mensais**: 1 linha (abril/2026, 10/10 endpoints ok)
 
 Idempotência confirmada em todos os PRs (re-execução = 0 inserts, todos updates).
+
+### Volumetria esperada Conta Azul Parente (validada via API ao vivo 2026-05-04)
+
+| Entidade | Volume | Notas |
+|---|---:|---|
+| Pessoas | ~1.508 | clientes + fornecedores juntos (perfis array) |
+| Produtos | ~1.043 | inclui `contagem_agregacao` e `integracao_ecommerce_ativada` |
+| Serviços | 10 | usa wrapper `{itens_totais, itens}` (singular!) |
+| Vendedores | 8 | array puro sem wrapper |
+| Contas Receber jan-abr/2026 | 1.670 | R$ 777k total · R$ 716k em aberto |
+| Contas Pagar jan-abr/2026 | 1.521 | R$ 1.368k total · R$ 244k em aberto |
+
+⚠️ Smoke-test e2e via UI ainda **pendente** (rate limit foi atingido durante validação 2026-05-04, recupera em ~1h). Pipeline completo, falta só validar no browser.
