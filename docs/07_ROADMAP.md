@@ -242,9 +242,9 @@ Todas têm: `id BIGINT PK`, `tenant_id`, `external_id`, `external_updated_at`, `
 - **Tenant_id no state OAuth**: `oauth.py` ganhou `encode_state`/`decode_state` (base64url). Callback resolve tenant via state em vez de exigir `?tenant_id=` na query, redireciona pra `/admin/sync?contaazul=conectado` em sucesso.
 - **App CA NOVO criado** (`client_id=67p7o6b8ptaanl3fs5uhoavpif`) com `redirect_uri=https://fprime.analisys.info/v2_callback.php` (proxy PHP). Isolado do v1 PHP — fim da disputa pelo refresh_token. App antigo deprecated.
 
-**Sub-PR 4c+ Extensões pós-compactação 2026-05-04** ⏳ não-commitado (8 PRs adicionais)
+**Sub-PR 4c+ Extensões pós-compactação 2026-05-04** ✅ `9bac0bc` (8 PRs adicionais)
 
-Sessão de ~6h após pause/compact descobriu/corrigiu múltiplos bugs e adicionou features. Tudo no working tree, **falta commit consolidado**.
+Sessão de ~6h após pause/compact descobriu/corrigiu múltiplos bugs e adicionou features.
 
 1. **🔥 Bug crítico de paginação** — `/v1/pessoas` ignorava `offset` e devolvia mesma página em loop infinito (script de bypass fez 237k chamadas com sempre os mesmos 200 IDs únicos). Causa: nosso código usava `offset`, mas a API exige **`pagina`** (1-indexed) + `tamanho_pagina`. Corrigido em `client.py:107` (`list_pessoas`) e `client.py:134` (`list_produtos`); `sync_service._paginate_static` usa `pagina += 1`.
 2. **Bug `limite=` → `tamanho_pagina=`** nas transacionais — `_paginate_transactional` chamava método com kwarg errado, teria estourado `TypeError` na primeira chamada. Já com paginação real (não chamada única).

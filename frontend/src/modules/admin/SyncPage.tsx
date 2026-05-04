@@ -36,7 +36,9 @@ const CONTAAZUL_CONFIG: SyncProviderConfig = {
     syncService.contaazulTransactional(entity, year, month),
   syncAlteracoes: (hoursBack) => syncService.contaazulAlteracoes(hoursBack),
   // Sem kpisMonth — Conta Azul não tem agregado pré-calculado
-  showRebuildPipeline: false,
+  // showRebuildPipeline: true — o rebuild é global (cobre CC + CA), faz
+  // sentido aparecer nas duas abas pra quem entra direto no CA encontrar.
+  showRebuildPipeline: true,
 }
 
 const TABS: { key: SyncSource; label: string; subtitle: string; config: SyncProviderConfig }[] = [

@@ -58,6 +58,9 @@ from app.models.core_contaazul import (
     CoreCaProdutos, CoreCaServicos, CoreCaVendedores,
     CoreCaEventosFinanceiros, CoreCaRateio,
 )
+from app.models.analytics_contaazul import (
+    DimPessoaCa, DimCategoriaCa, DimCentroCustoCa, FatoCaixa,
+)
 
 __all__ = [
     "Tenant", "User", "Role", "UserTenant",
@@ -92,4 +95,6 @@ __all__ = [
     "CoreCaPessoas", "CoreCaCategorias", "CoreCaCentrosCusto",
     "CoreCaProdutos", "CoreCaServicos", "CoreCaVendedores",
     "CoreCaEventosFinanceiros", "CoreCaRateio",
+    # Analytics Conta Azul
+    "DimPessoaCa", "DimCategoriaCa", "DimCentroCustoCa", "FatoCaixa",
 ]

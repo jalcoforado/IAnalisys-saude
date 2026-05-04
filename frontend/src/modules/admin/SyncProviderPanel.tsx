@@ -203,15 +203,17 @@ export function SyncProviderPanel({ config }: { config: SyncProviderConfig }) {
         </section>
       )}
 
-      {/* Pipeline rebuild (só Clinicorp por hora) */}
+      {/* Pipeline rebuild — global (cobre Clinicorp + Conta Azul). Aparece
+           em ambas as abas pra quem entra direto numa fonte específica. */}
       {config.showRebuildPipeline && (
         <section className="bg-gradient-to-r from-primary-50 to-white border border-primary-100 rounded-lg p-4">
           <div className="flex items-start justify-between gap-4 flex-wrap">
             <div className="flex-1 min-w-[260px]">
               <h2 className="text-sm font-semibold text-neutral-900">Pipeline CORE + ANALYTICS</h2>
               <p className="text-xs text-neutral-600 mt-0.5">
-                Após sincronizar dados novos no STAGING, rode esse passo para atualizar as tabelas
-                relacionais (CORE) e o star schema (ANALYTICS) que alimentam o dashboard.
+                Após sincronizar dados novos no STAGING (Clinicorp e/ou Conta Azul), rode esse passo
+                para atualizar as tabelas relacionais (CORE) e o star schema (ANALYTICS) que
+                alimentam o dashboard. Cobre as duas fontes numa única execução, sequencial.
                 Idempotente — pode rodar quantas vezes quiser.
               </p>
               {lastRebuild && (

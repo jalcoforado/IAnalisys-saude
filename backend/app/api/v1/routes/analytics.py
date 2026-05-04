@@ -5,6 +5,13 @@ POST /analytics/rebuild/dim_tempo        — popula calendário (default 2019..2
 POST /analytics/rebuild/dim_paciente     — materializa dim_paciente de core_patients
 POST /analytics/rebuild/dim_profissional — espelha dim_profissional de core_professionals
 POST /analytics/rebuild/dimensions       — todas as dimensões em sequência
+POST /analytics/rebuild/fato_agenda      — fato_agenda de core_appointments
+POST /analytics/rebuild/fato_orcamentos  — fato_orcamentos de core_estimates
+POST /analytics/rebuild/fato_financeiro  — fato_financeiro de core_payments
+POST /analytics/rebuild/fato_caixa       — fato_caixa de core_ca_rateio + core_ca_eventos
+POST /analytics/rebuild/facts            — 3 fatos CC
+POST /analytics/rebuild/contaazul        — 3 dim_*_ca + fato_caixa
+POST /analytics/rebuild/all              — CC (dims + fatos) + CA (dims + fato_caixa)
 GET  /analytics/status                   — counts das tabelas analytics
 """
 from typing import List
@@ -31,6 +38,10 @@ from app.transformations.core_to_analytics import (
     build_fato_agenda,
     build_fato_financeiro,
     build_fato_orcamentos,
+)
+from app.transformations.core_to_analytics_contaazul import (
+    build_all_analytics_ca,
+    build_fato_caixa,
 )
 
 router = APIRouter(prefix="/analytics", tags=["analytics"])
@@ -172,14 +183,46 @@ async def rebuild_all_facts(
     )
 
 
+@router.post("/rebuild/fato_caixa", response_model=BuilderResultResponse, status_code=200)
+async def rebuild_fato_caixa(
+    current_user: UserMe = Depends(requires("analytics.rebuild")),
+    db: AsyncSession = Depends(get_db),
+) -> BuilderResultResponse:
+    """Constrói fato_caixa a partir de core_ca_rateio JOIN core_ca_eventos_financeiros.
+    Granular no rateio (1 linha por categoria×CC dentro de cada parcela)."""
+    tenant_id = _require_tenant(current_user)
+    return _to_response(await build_fato_caixa(db, tenant_id))
+
+
+@router.post("/rebuild/contaazul", response_model=DimensionsResponse, status_code=200)
+async def rebuild_all_analytics_ca(
+    current_user: UserMe = Depends(requires("analytics.rebuild")),
+    db: AsyncSession = Depends(get_db),
+) -> DimensionsResponse:
+    """Reconstrói camada analytics CA: dim_pessoa_ca, dim_categoria_ca,
+    dim_centro_custo_ca + fato_caixa. dim_tempo é shared com CC, não rebuilda."""
+    tenant_id = _require_tenant(current_user)
+    results = await build_all_analytics_ca(db, tenant_id)
+    items = [_to_response(r) for r in results]
+    return DimensionsResponse(
+        results=items,
+        total_inserted=sum(i.inserted for i in items),
+        total_updated=sum(i.updated for i in items),
+    )
+
+
 @router.post("/rebuild/all", response_model=DimensionsResponse, status_code=200)
 async def rebuild_all_analytics_endpoint(
     current_user: UserMe = Depends(requires("analytics.rebuild")),
     db: AsyncSession = Depends(get_db),
 ) -> DimensionsResponse:
-    """Reconstrói toda a camada analytics: dimensões + fatos."""
+    """Reconstrói toda a camada analytics: CC (dimensões + 3 fatos) + CA
+    (3 dims + fato_caixa). dim_tempo é compartilhada (rebuilda 1 vez via CC).
+    """
     tenant_id = _require_tenant(current_user)
-    results = await build_all_analytics(db, tenant_id)
+    results_cc = await build_all_analytics(db, tenant_id)
+    results_ca = await build_all_analytics_ca(db, tenant_id)
+    results = [*results_cc, *results_ca]
     items = [_to_response(r) for r in results]
     return DimensionsResponse(
         results=items,
