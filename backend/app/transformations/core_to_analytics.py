@@ -282,6 +282,11 @@ async def build_fato_agenda(
     """Constrói fato_agenda a partir de core_appointments."""
     pre_count = await _count_rows(db, FatoAgenda, tenant_id)
 
+    # NOTA: core_appointments.appointment_date guarda só a data (00:00 BRT
+    # convertido pra UTC = 03:00). O horário real fica em `from_time` (varchar
+    # 'HH:MM'). Combinamos os dois aqui pra que appointment_datetime tenha
+    # o horário correto da consulta. Se from_time vier vazio, mantém o
+    # datetime original (meia-noite).
     sql = text("""
         INSERT INTO fato_agenda (
           tenant_id, external_id, date_key, year, month, year_month_key,
@@ -299,7 +304,14 @@ async def build_fato_agenda(
           NOW(),
           patient_external_id,
           professional_external_id,
-          appointment_date,
+          CASE
+            WHEN from_time IS NOT NULL AND from_time <> ''
+              THEN STR_TO_DATE(
+                CONCAT(DATE_FORMAT(appointment_date, '%Y-%m-%d'), ' ', from_time),
+                '%Y-%m-%d %H:%i'
+              )
+            ELSE appointment_date
+          END AS appointment_datetime,
           duration_minutes,
           is_deleted,
           category_description,

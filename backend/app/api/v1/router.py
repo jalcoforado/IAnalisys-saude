@@ -7,6 +7,7 @@ from app.api.v1.routes import transform
 from app.api.v1.routes import analytics
 from app.api.v1.routes import dashboard
 from app.api.v1.routes import financeiro
+from app.api.v1.routes import home
 from app.api.v1.routes import tenant
 from app.api.v1.routes import permissions as permissions_route
 from app.api.v1.routes import users as users_route
@@ -21,6 +22,7 @@ api_router.include_router(transform.router)
 api_router.include_router(analytics.router)
 api_router.include_router(dashboard.router)
 api_router.include_router(financeiro.router)
+api_router.include_router(home.router)
 api_router.include_router(tenant.router)
 api_router.include_router(permissions_route.router)
 api_router.include_router(users_route.router)

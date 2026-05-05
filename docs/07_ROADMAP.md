@@ -328,6 +328,36 @@ Pedro abre o ERP só nas linhas marcadas com ⚠️. Vira a ferramenta principal
 **Backlog pós-Fase 4 (não bloqueia):**
 - Sync incremental (hoje será full sync mês a mês como Clinicorp)
 - APScheduler pra automação noturna
+- **Botão "sincronizar mês corrente inteiro"** (decisão 2026-05-05): clicar no nome do mês = sync de todas as entidades transacionais do mês de uma vez (em vez de uma a uma)
+
+---
+
+### Sub-PR 17 — Cockpit Operacional na HomePage (decidido 2026-05-05)
+
+**Contexto:** HomePage atual mostra atalhos pros menus (redundante com sidebar) e link de conexão CA. Substituir por **cockpit operacional personalizado por role do usuário** com dados acionáveis do dia.
+
+**Personalização por role** (já existem no DB: `commercial`, `financial`, `manager`, `operations`, `tenant_admin`, `saas_admin`):
+
+| Card | operations | financial | commercial | manager | tenant_admin |
+|---|:-:|:-:|:-:|:-:|:-:|
+| Agenda do dia (com fallback próximos 7d) | ✅ | | | ✅ | ✅ |
+| Recall (heurística por histórico) | ✅ | | ✅ | ✅ | ✅ |
+| Orçamentos aprovados parados (30-90d) | | | ✅ | ✅ | ✅ |
+| Inadimplência crítica (>60d, >R$500) | | ✅ | | ✅ | ✅ |
+| Resumo do dia (entradas/saídas previstas) | | ✅ | | ✅ | ✅ |
+| Top profissionais semana | | | ✅ | ✅ | ✅ |
+
+**Sub-PR 17a — Cockpit determinístico** (~1.5d)
+- Backend: `app/services/home_service.py` com 6 builders + orquestrador
+- Endpoint `GET /home/dashboard` decide cards pelo `user.role` (sem nova permission)
+- Frontend: substitui `HomePage.tsx` com grid de cards condicionais — UI rica (ícones gradientes, mini-gráficos, color-coding por urgência)
+- **Heurística de recall**: para cada paciente ativo, calcula intervalo médio entre consultas + dias desde última. Elegível se `dias_desde_última > intervalo_médio × 1.3` E sem agenda futura. Top 20 ordenado por atraso × LTV.
+
+**Sub-PR 17b — IA Layer** (~1d, depois de 17a validado)
+- Integrar Anthropic SDK (`anthropic` Python pkg, `ANTHROPIC_API_KEY` em `.env`)
+- Endpoint `POST /home/insights/recall` (e correlatos): recebe lista determinística + contexto, devolve top N priorizados com motivo + script de ligação
+- Botão "Priorizar com IA" nos cards relevantes — não envia raw rows, só agregados estruturados pra Claude
+- Decidir modelo: Haiku 4.5 (custo baixo, rápido) vs Sonnet 4.6 (mais profundidade)
 
 ---
 
