@@ -129,3 +129,37 @@ export interface DashboardExecutivoResponse {
   pacientes: PacientesAnalise
   evolution: EvolutionPoint[]
 }
+
+// ── Drill-down auditável (PR-15) ───────────────────────────────
+
+export type KpiId =
+  | 'faturamento'
+  | 'consultas'
+  | 'absenteismo'
+  | 'conversao'
+  | 'ticket_medio'
+  | 'pacientes_ativos'
+
+export type KpiUnit = 'BRL' | 'count' | 'pct'
+
+export interface DrillDownItem {
+  external_id: string
+  label: string
+  secondary_label: string | null
+  date_iso: string | null
+  value: number | null
+  extras: Record<string, string>
+}
+
+export interface DrillDownResponse {
+  kpi_id: KpiId
+  kpi_label: string
+  period: PeriodInfo
+  kpi_value: number
+  kpi_unit: KpiUnit
+  total_value: number | null
+  total_count: number
+  audit_ok: boolean | null
+  items_returned: number
+  items: DrillDownItem[]
+}

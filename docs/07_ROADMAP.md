@@ -293,23 +293,19 @@ Sessão de ~6h após pause/compact descobriu/corrigiu múltiplos bugs e adiciono
 - Aplica os 5 passos do checklist obrigatório de novo módulo
 - Já nasce com drill-down do PR-15 ativo em todos os KPIs
 
-**Sub-PR 15 (NOVO, decidido 2026-05-04): Drill-down auditável dos KPIs** (~3-4d, depois de 14d/14e)
+**Sub-PR 15: Drill-down auditável dos KPIs**
 
-> Decisão arquitetural: cada número do dashboard tem rastreabilidade até a linha de origem. Resolve a pergunta "esse R$ 369.205 está certo?" sem precisar saber nome de tabela/campo. Substitui a ideia inicial de "Smart Report genérico" (rejeitada por UX fraca e baixa rastreabilidade).
+**Etapa 1** ✅ (2026-05-04) — drawer slide-in nos 6 KPIs principais (faturamento + 5 KpiCards)
+- Endpoint genérico `GET /dashboard/executivo/itens?kpi=<id>&year&month` reusa a MESMA WHERE clause do `dashboard_service.py` — total do drawer === valor do KPI (auditoria built-in)
+- 6 builders no service: faturamento, consultas, absenteismo, conversao, ticket_medio, pacientes_ativos
+- Componente `KpiDrillDown` parametrizável (drawer ~50% tela, ESC fecha, footer mostra "bate" verde se cumulativo, "indicador percentual/médio" se ratio)
+- Card clicável + ícone `↗` cinza claro no canto superior direito (sem poluir UX existente)
+- Smoke-test Out/2025: faturamento R$ 336.492,56 / 716 linhas, consultas 946, pacientes ativos 1.941, conversão 58,32%, absenteísmo 8,07% — todos auditados ✅
 
-**Como funciona:**
-- Cada endpoint do dashboard ganha um endpoint paralelo `/{kpi}/itens` que retorna as linhas que entraram no cálculo (mesma query, sem o agregador)
-- Total no footer do drawer **tem que bater com o KPI** — auditoria built-in
-- Cada linha mostra `external_id` (deep-link pro ERP) + botão "ver JSON staging" pra debug profundo
-
-**Princípios de UX (decididos com Pedro):**
-- ❌ Sem botão extra nos cards — não polui visual atual
-- ✅ Card inteiro clicável (cursor pointer + hover sutil)
-- ✅ Único indicador: pequeno ícone `↗` em cinza claro no canto superior direito
-- ✅ Drawer slide-in da direita (~50% da tela), dashboard continua visível atrás. Não modal centralizado.
-- ✅ Componente `KpiDrillDown` parametrizável reutilizável em todos os KPIs
-
-**Implementa pra Clinicorp primeiro** (já populado) — auditável imediatamente o R$ 369.205 e demais KPIs do `/dashboard/executivo`.
+**Etapa 2** ⏸ stand-by (re-design pendente) — feedback do Pedro: *"queria mesmo um relatório para servir de auditoria"*
+- Drawer atual atende spot-check rápido durante navegação, mas Pedro tem em mente algo mais próximo de **relatório auditável** (provavelmente exportável CSV/PDF, agrupamentos hierárquicos, totais por categoria/profissional, printável pra evidência)
+- Não plugar drill-down nos cards restantes (Pipeline, Inadimplência, Funil, Top profs/cats, LTV) até alinhar formato com Pedro
+- Endpoint backend já cobre todas as 6 queries auditáveis — o que muda é a apresentação no front
 
 **Sub-PR 16 (NOVO): Match Clinicorp ↔ CA dentro do drill-down** (~2-3d, depois de 15)
 

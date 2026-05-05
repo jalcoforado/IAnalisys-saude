@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
+import KpiDrillDown from './KpiDrillDown'
 import {
   Bar,
   BarChart,
@@ -17,6 +18,7 @@ import {
 } from 'recharts'
 import {
   AlertTriangle,
+  ArrowUpRight,
   Award,
   BarChart3,
   CalendarCheck,
@@ -41,6 +43,7 @@ import type {
   ChurnBucket,
   CurvaAbcItem,
   DashboardExecutivoResponse,
+  KpiId,
   KpiValue,
   MixPagamentoItem,
 } from '@/types/dashboard'
@@ -90,6 +93,8 @@ export default function DashboardPage() {
     const end = today.getFullYear()
     return Array.from({ length: end - start + 1 }, (_, i) => end - i)
   }, [today])
+
+  const [drillKpi, setDrillKpi] = useState<KpiId | null>(null)
 
   const dashQ = useQuery({
     queryKey: ['dashboard', 'executivo', year, month],
@@ -144,15 +149,23 @@ export default function DashboardPage() {
           </div>
         )}
 
-        {dashQ.data && <DashboardContent data={dashQ.data} />}
+        {dashQ.data && <DashboardContent data={dashQ.data} onDrillDown={setDrillKpi} />}
       </div>
+      {drillKpi && (
+        <KpiDrillDown
+          kpiId={drillKpi}
+          year={year}
+          month={month}
+          onClose={() => setDrillKpi(null)}
+        />
+      )}
     </main>
   )
 }
 
 // ── conteúdo ──────────────────────────────────────────────────
 
-function DashboardContent({ data }: { data: DashboardExecutivoResponse }) {
+function DashboardContent({ data, onDrillDown }: { data: DashboardExecutivoResponse; onDrillDown: (kpi: KpiId) => void }) {
   const { kpis, funil, inadimplencia, mix_pagamento, top_profissionais, top_categorias_agenda,
           comparacao_yoy, pacientes, evolution, period } = data
 
@@ -167,6 +180,7 @@ function DashboardContent({ data }: { data: DashboardExecutivoResponse }) {
           yoy={comparacao_yoy.faturamento_yoy_pct}
           yoyPrev={comparacao_yoy.faturamento_yoy}
           period={period.label_pt}
+          onDrillDown={() => onDrillDown('faturamento')}
         />
         <PipelineHero
           valor_pipeline={funil.valor_pipeline}
@@ -192,6 +206,7 @@ function DashboardContent({ data }: { data: DashboardExecutivoResponse }) {
             yoy={comparacao_yoy.consultas_yoy_pct}
             yoyPrev={comparacao_yoy.consultas_yoy}
             yoyType="num"
+            onDrillDown={() => onDrillDown('consultas')}
           />
           <KpiCard
             icon={<Target size={18} />}
@@ -200,6 +215,7 @@ function DashboardContent({ data }: { data: DashboardExecutivoResponse }) {
             value={`${kpis.conversao_pct.value.toFixed(1)}%`}
             kpi={kpis.conversao_pct}
             type="pct"
+            onDrillDown={() => onDrillDown('conversao')}
           />
           <KpiCard
             icon={<CalendarX size={18} />}
@@ -209,6 +225,7 @@ function DashboardContent({ data }: { data: DashboardExecutivoResponse }) {
             kpi={kpis.absenteismo_pct}
             type="pct"
             inverse
+            onDrillDown={() => onDrillDown('absenteismo')}
           />
           <KpiCard
             icon={<Receipt size={18} />}
@@ -217,6 +234,7 @@ function DashboardContent({ data }: { data: DashboardExecutivoResponse }) {
             value={fmtBRL(kpis.ticket_medio.value)}
             kpi={kpis.ticket_medio}
             type="brl"
+            onDrillDown={() => onDrillDown('ticket_medio')}
           />
           <KpiCard
             icon={<Users size={18} />}
@@ -226,6 +244,7 @@ function DashboardContent({ data }: { data: DashboardExecutivoResponse }) {
             kpi={kpis.pacientes_ativos}
             type="num"
             subtitle={`de ${fmtNum(pacientes.total_base)} na base`}
+            onDrillDown={() => onDrillDown('pacientes_ativos')}
           />
         </div>
       </section>
@@ -438,11 +457,25 @@ function CardHeader({ title, subtitle, icon }: { title: string; subtitle?: strin
 
 // ── Hero cards ────────────────────────────────────────────────
 
-function FaturamentoHero({ value, mom, momPrev, yoy, yoyPrev, period }: {
+function FaturamentoHero({ value, mom, momPrev, yoy, yoyPrev, period, onDrillDown }: {
   value: number; mom: number | null; momPrev: number | null; yoy: number | null; yoyPrev: number | null; period: string
+  onDrillDown?: () => void
 }) {
+  const clickable = !!onDrillDown
+  const Tag: React.ElementType = clickable ? 'button' : 'div'
   return (
-    <div className="bg-gradient-to-br from-primary-700 to-primary-900 text-white rounded-xl p-4 shadow-lg relative overflow-hidden">
+    <Tag
+      type={clickable ? 'button' : undefined}
+      onClick={onDrillDown}
+      className={`bg-gradient-to-br from-primary-700 to-primary-900 text-white rounded-xl p-4 shadow-lg relative overflow-hidden text-left w-full ${clickable ? 'cursor-pointer hover:shadow-2xl hover:from-primary-600 hover:to-primary-800 focus:outline-none focus:ring-2 focus:ring-primary-300 group transition-all' : ''}`}
+    >
+      {clickable && (
+        <ArrowUpRight
+          size={16}
+          className="absolute top-3 right-3 text-white/40 group-hover:text-white transition-colors"
+          aria-hidden
+        />
+      )}
       <div className="absolute -right-6 -top-6 w-20 h-20 bg-white/10 rounded-full" />
       <div className="absolute -right-10 top-10 w-24 h-24 bg-white/5 rounded-full" />
       {/* Ilustração: gráfico crescente estilizado */}
@@ -466,7 +499,7 @@ function FaturamentoHero({ value, mom, momPrev, yoy, yoyPrev, period }: {
           <DeltaPill label="YoY" value={yoy} prev={yoyPrev != null ? fmtBRL(yoyPrev, true) : null} dark />
         </div>
       </div>
-    </div>
+    </Tag>
   )
 }
 
@@ -536,10 +569,11 @@ function InadimplenciaHero({ data }: { data: { recebido: number; a_receber: numb
 
 // ── KPI Card ──────────────────────────────────────────────────
 
-function KpiCard({ icon, iconColor, label, value, kpi, type, inverse, subtitle, yoy, yoyPrev, yoyType }: {
+function KpiCard({ icon, iconColor, label, value, kpi, type, inverse, subtitle, yoy, yoyPrev, yoyType, onDrillDown }: {
   icon: React.ReactNode; iconColor: string; label: string; value: string; kpi: KpiValue; type: 'brl' | 'num' | 'pct';
   inverse?: boolean; subtitle?: string;
-  yoy?: number | null; yoyPrev?: number | null; yoyType?: 'brl' | 'num'
+  yoy?: number | null; yoyPrev?: number | null; yoyType?: 'brl' | 'num';
+  onDrillDown?: () => void
 }) {
   const prevLabel = kpi.previous == null ? null
     : type === 'brl' ? fmtBRL(kpi.previous, true)
@@ -550,8 +584,26 @@ function KpiCard({ icon, iconColor, label, value, kpi, type, inverse, subtitle, 
     : yoyType === 'brl' ? fmtBRL(yoyPrev, true)
     : fmtNum(yoyPrev)
 
+  const clickable = !!onDrillDown
+  const baseCls = 'relative bg-white border border-neutral-200 rounded-xl p-4 shadow-md transition-shadow text-left w-full'
+  const interactCls = clickable
+    ? 'hover:shadow-lg hover:border-primary-300 cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary-300 group'
+    : 'hover:shadow-lg'
+  const Tag: React.ElementType = clickable ? 'button' : 'div'
+
   return (
-    <div className="bg-white border border-neutral-200 rounded-xl p-4 shadow-md hover:shadow-lg transition-shadow">
+    <Tag
+      type={clickable ? 'button' : undefined}
+      onClick={onDrillDown}
+      className={`${baseCls} ${interactCls}`}
+    >
+      {clickable && (
+        <ArrowUpRight
+          size={14}
+          className="absolute top-2.5 right-2.5 text-neutral-300 group-hover:text-primary-600 transition-colors"
+          aria-hidden
+        />
+      )}
       <div className="flex items-start justify-between gap-2">
         <span className={`w-9 h-9 rounded-lg ${iconColor} flex items-center justify-center shrink-0`}>{icon}</span>
       </div>
@@ -562,7 +614,7 @@ function KpiCard({ icon, iconColor, label, value, kpi, type, inverse, subtitle, 
         {yoy !== undefined && <DeltaLine label="YoY" pct={yoy} prevLabel={yoyPrevLabel} inverse={inverse} />}
       </div>
       {subtitle && <div className="text-[11px] text-neutral-400 mt-1.5">{subtitle}</div>}
-    </div>
+    </Tag>
   )
 }
 
