@@ -13,6 +13,7 @@ import HomePage from '@/pages/HomePage'
 import DesignSystem from '@/pages/DesignSystem'
 import SyncPage from '@/modules/admin/SyncPage'
 import DashboardPage from '@/modules/dashboard/DashboardPage'
+import FinanceiroPage from '@/modules/financeiro/FinanceiroPage'
 import SettingsPage from '@/modules/settings/SettingsPage'
 import CompanySettingsPage from '@/modules/empresa/CompanySettingsPage'
 import PermissionsPage from '@/modules/empresa/PermissionsPage'
@@ -59,6 +60,18 @@ function App() {
                   <AppShell>
                     <RequirePermission permission="dashboard.read">
                       <DashboardPage />
+                    </RequirePermission>
+                  </AppShell>
+                </PrivateRoute>
+              }
+            />
+            <Route
+              path="/financeiro"
+              element={
+                <PrivateRoute>
+                  <AppShell>
+                    <RequirePermission permission="financeiro.read">
+                      <FinanceiroPage />
                     </RequirePermission>
                   </AppShell>
                 </PrivateRoute>

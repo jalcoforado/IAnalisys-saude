@@ -285,13 +285,21 @@ Sessão de ~6h após pause/compact descobriu/corrigiu múltiplos bugs e adiciono
 - Builders SQL puros INSERT...SELECT...ON DUPLICATE KEY UPDATE
 - Endpoint `/analytics/rebuild/contaazul`
 
-**Sub-PR 4f: Tela `/financeiro` (Fase 6.2)** (~1.5d)
-- Dashboard com KPIs do `fato_caixa`: entradas/saídas realizadas vs previstas, saldo líquido, inadimplência %, top categorias de despesa
-- Gráficos: Realizado vs Previsto mensal, evolução saldo acumulado, distribuição por categoria
-- Tabela: faturas com status (pago/pendente/vencido) + filtros
-- Permission `financeiro.read` + `financeiro.export` (já no catálogo)
-- Aplica os 5 passos do checklist obrigatório de novo módulo
-- Já nasce com drill-down do PR-15 ativo em todos os KPIs
+**Sub-PR 4f: Tela `/financeiro` (Fase 6.2)** ✅ entregue 2026-05-04 (parcial — pendência abaixo)
+- 3 Heroes (Entradas verde / Saídas vermelho / Saldo azul-ou-vermelho) com MoM
+- 4 KPIs: A receber, A pagar, Inadimplência %, Saldo previsto (saldo + a receber - a pagar)
+- Gráfico Evolução 12 meses (barras Entradas+Saídas + linha Saldo)
+- Top 5 receitas + Top 5 despesas + Pie status mix (pago/em aberto/vencido)
+- Tabela centros de custo (entradas/saídas/saldo por unidade)
+- Backend: `GET /financeiro/overview?year&month` em `financeiro_service.py` com 5 funções agregadoras
+- Sem drill-down (PR-15 Etapa 2 stand-by — Pedro quer re-design pra "relatório auditável")
+
+**⚠ Pendência: alinhamento de data ainda não confirmado**
+- `fato_caixa` agrupa por `data_vencimento` (year_month_key). Out/2025 (passado) deu números corretos (R$ 797k entradas pagas) mas Mar-Mai/2026 (futuro) mostraram entradas baixas (R$ 166, R$ 92, R$ 0) porque CA não retorna `data_pagamento` na parcela
+- Pedro vai conferir no ERP CA qual campo de data o dashboard nativo usa antes de mudar nossa modelagem
+- Se CA usar `data_competencia` no nativo: trocar `date_key` em `build_fato_caixa` (coluna já materializada)
+- Se usar data de liquidação via endpoint separado (`/v1/extrato`?): pesquisar no catálogo, pode exigir novo sync
+- Bug correlato corrigido durante smoke-test: `_status_mix` esbarrava no `ONLY_FULL_GROUP_BY` (MySQL strict) — encapsulado em subquery
 
 **Sub-PR 15: Drill-down auditável dos KPIs**
 

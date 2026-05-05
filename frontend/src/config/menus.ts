@@ -43,9 +43,10 @@ export const MAIN_MENU: MenuItem[] = [
   {
     label: 'Análise',
     icon: BarChart3,
-    permission: 'dashboard.read',
+    permissionAny: ['dashboard.read', 'financeiro.read'],
     children: [
       { label: 'Dashboard Executivo', icon: BarChart3, path: '/dashboard', permission: 'dashboard.read' },
+      { label: 'Financeiro', icon: DollarSign, path: '/financeiro', permission: 'financeiro.read' },
       { label: 'Operacional', icon: Calendar, comingSoon: true },
       { label: 'Comercial', icon: DollarSign, comingSoon: true },
     ],
