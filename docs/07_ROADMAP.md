@@ -347,17 +347,135 @@ Pedro abre o ERP só nas linhas marcadas com ⚠️. Vira a ferramenta principal
 | Resumo do dia (entradas/saídas previstas) | | ✅ | | ✅ | ✅ |
 | Top profissionais semana | | | ✅ | ✅ | ✅ |
 
-**Sub-PR 17a — Cockpit determinístico** (~1.5d)
+**Sub-PR 17a — Cockpit determinístico** ✅ (entregue 2026-05-05)
 - Backend: `app/services/home_service.py` com 6 builders + orquestrador
 - Endpoint `GET /home/dashboard` decide cards pelo `user.role` (sem nova permission)
-- Frontend: substitui `HomePage.tsx` com grid de cards condicionais — UI rica (ícones gradientes, mini-gráficos, color-coding por urgência)
-- **Heurística de recall**: para cada paciente ativo, calcula intervalo médio entre consultas + dias desde última. Elegível se `dias_desde_última > intervalo_médio × 1.3` E sem agenda futura. Top 20 ordenado por atraso × LTV.
+- Frontend: substitui `HomePage.tsx` com grid de cards condicionais — UI rica
+- **Heurística de recall**: para cada paciente ativo, calcula intervalo médio + dias desde última. Elegível se `dias_desde_última > intervalo_médio × 1.3` E sem agenda futura. Top 20 ordenado por atraso × LTV.
 
-**Sub-PR 17b — IA Layer** (~1d, depois de 17a validado)
-- Integrar Anthropic SDK (`anthropic` Python pkg, `ANTHROPIC_API_KEY` em `.env`)
-- Endpoint `POST /home/insights/recall` (e correlatos): recebe lista determinística + contexto, devolve top N priorizados com motivo + script de ligação
-- Botão "Priorizar com IA" nos cards relevantes — não envia raw rows, só agregados estruturados pra Claude
-- Decidir modelo: Haiku 4.5 (custo baixo, rápido) vs Sonnet 4.6 (mais profundidade)
+**Sub-PR 18 — Sync de pacientes (PII)** ✅ (entregue 2026-05-05)
+- 18a: `stg_cc_patients_details` + sync iterativa via `/patient/get` (Clinicorp não tem `/patient/list`)
+  - Throttle 0.6s + chunks 50 + timeout duro 25s `asyncio.wait_for`
+  - Background task asyncio.create_task (sobrevive timeout HTTP do uvicorn)
+  - Final: 3476/3811 pacientes (91%) — restante deu rate limit, retomável via skip_existing
+- 18b: ícones idade (Baby/User/UserCog) + cor por gênero (heurística por nome PT-BR pq API não retorna)
+- 18c: extração da matriz da HomePage pra rota dedicada `/agenda` (componentes em `modules/agenda/`)
+- 18d: status do appointment (CONFIRMED, ARRIVED, IN_SESSION, CHECKOUT, MISSED, LATE, CALL, PENDING_MATERIAL) + category_group (consulta/retorno/manutencao/procedimento/reabilitacao/ortodontia/bloqueio/outro) — Insights por status no banner + categoria
+- 18e: seletor Hoje/Amanhã/Depois (limite gerencial +2d) — endpoint `/home/agenda?date=YYYY-MM-DD`
+  - Bug fix: `EntitySpec.allows_future` — appointments era capado em hoje no sync
+- 18f: **Camada 1 — Capacidade & Encaixe** (gerencial)
+  - P95 dos últimos 90d (clínica + por prof) — evita outlier de feirão
+  - Encaixes 30-90min com filtro de janela típica do prof (P5/P95 dos horários históricos)
+  - `duration_minutes` calculado de fromTime/toTime (Clinicorp não preenche `ProceduresDuration`)
+- 18g: **Camada 2 — Risco de no-show** (tático)
+  - `risco = baseline × (1-peso) + taxa_pessoal × peso`, peso = min(1, n/5)
+  - Bumps: +20% 1ª consulta, +15% sem CONFIRMED, +10% histórico de LATE
+  - Badge no chip da matriz (amarelo ≥30%, vermelho ≥50%) + RiskCard com top 6 alto risco
+- 18i: **Visão estratégica do dono** (HomePage `manager`/`tenant_admin`/`saas_admin`)
+  - Endpoint `/home/agenda-strategic` consolida 3 dias (Hoje + Amanhã + Depois)
+  - 3 colunas com KPIs por dia + agregados 3d (consultas, faltas esperadas, encaixe)
+  - Top 5 pacientes a confirmar (consolidado) + top 5 profs ociosos
+  - Roles não-DONO continuam com `AgendaSummaryCard` compacto
+
+**Bug fixes incidentais:**
+- Timezone do tenant em `home_service` (UTC do servidor → BRT via ZoneInfo) — agenda sumia depois das 21h BRT
+- `_period_bounds` força `to_date <= hoje` (corretíssimo pra payments/invoices, errado pra appointments) — flag `allows_future`
+- `raw_data` JSON do MySQL via `text()` vinha como string, transform fazia `isinstance(dict)` → falso → details_map vazio. `json.loads` no início corrige.
+
+**Limitações conhecidas (sem solução do nosso lado):**
+- Clinicorp **não expõe endpoint** pra bloqueios/compromissos (testado /commitment, /block, /unavailability, /compromisso, /event etc — todos 404). Aparecem só no UI deles. Heurística de janela típica (P5/P95 do histórico) cobre ~80%; bloqueios pontuais escapam. Solução futura: cadastro local de disponibilidade (proposto e adiado).
+
+**Sub-PR 17b — IA Layer narrativa** ✅ (entregue 2026-05-06)
+- `anthropic==0.40.0` SDK + `ANTHROPIC_API_KEY` no `.env` (chave reaproveitada do `claude_key.php` do v1 PHP)
+- Modelo padrão **Haiku 4.5** (`claude-haiku-4-5-20251001`) — barato, ~$0.001/chamada, ~2s
+- `app/services/ai_service.py` com prompt engineering pt-BR + cache Redis 5min (chave hasheada do payload)
+- Endpoint `POST /home/agenda/ai-summary` recebe `StrategicOverview` + nome da clínica, devolve prosa
+- `AINarrative` no topo do `AgendaInsightsCard` — botão "Gerar análise IA" (manual, não auto, pra controlar custo)
+- Smoke-test produção 2026-05-06 deu prosa acionável com nomes próprios reais ("Priorize ligar para Márcio, Ana Mannuela e Maria Vitoria nas próximas 2 horas...")
+
+**Sub-PR 18.5 — Tags operacionais (Aguardado vaga, Encaixe etc)** ✅ (entregue 2026-05-06)
+- Descobrimento: Clinicorp tem subsistema de **tags/AppointmentMarkers** no payload do appointment que estávamos ignorando. 1.679 tags em 8 classes detectadas em produção (Parente).
+- **Camada A — bug fix label**: `ARRIVED: 'Em espera'` → `'Chegou'` (evita confusão com tag "Aguardado vaga")
+- **Camada B — Lista de espera & tags na matriz**:
+  - Migration 0025: `core_appointment_tags` + 7 flags `has_*` em `fato_agenda` desnormalizadas
+  - `transform_appointment_tags`: extrai do array `tags` em `stg_cc_appointments.raw_data` + classifica em 8 classes (waitlist/encaixe/remarcar/lembrete/orcamento_pendente/retorno_pendente/financeiro_conferido/outro)
+  - `_waitlist` builder + `WaitlistSection` em `AgendaSection` (janela ±7/+14 dias)
+  - `WaitlistCard` em `/agenda` ao lado do `CapacityCard`
+  - Bolinhas coloridas no rodapé do chip da matriz (até 3 + indicador "+N")
+  - Tooltip rico com tag classificada + nome cru
+  - `StrategicAgendaCard` na HomePage do dono ganhou pílulas "X na fila" / "Y encaixes"
+- **Camada C — Pendências operacionais (DONO)**:
+  - `_pendencias_operacionais` agrega 4 buckets (orcamento/retorno/remarcar/lembrete), top 5 mais antigos por bucket
+  - `PendenciasCard` ocupando linha inteira na HomePage do dono
+  - Smoke-test Parente: **804 pendências** reveladas (454 orçamentos a contatar, alguns com 800+ dias)
+
+**Pendentes adicionais (Camadas 3+):**
+- Tempo/eficiência (modal por categoria, hoje vs típico) — adiado por ter ganho marginal
+- Predição de fechamento do período (% atendimento/falta vs média móvel 30d) — depois das primeiras semanas em produção
+- Cadastro local de disponibilidade do prof (heurística P5/P95 cobre ~80%) — adiado
+
+---
+
+### Sub-PR 19 — Sincronização automática (planejado 2026-05-06, ainda não implementado)
+
+**Motivação:** hoje todas as syncs (CC + CA) são acionadas manualmente pelo botão "Reconstruir" em `/admin/sync`. Pra colocar em produção precisamos disparar de forma agendada por entidade, com periodicidade alinhada à volatilidade real de cada uma. **Não bloqueia release inicial** mas é pré-requisito pra "esquecer" o painel de sync.
+
+**Inventário de entidades (volume Parente 2026-05-06):**
+
+| Provider | Entidade | Volume | Volatilidade | Tier |
+|---|---|---|---|---|
+| CC | appointments | 16.5k | Alta (status muda durante o dia) | T1 (15min) |
+| CC | appointment_tags | 1.7k | Alta (vem junto com appointments) | T1 (junto) |
+| CA | contas_receber | 4.0k | Alta (delta sync já existe) | T1 (15min) |
+| CA | contas_pagar | 3.5k | Alta (delta sync já existe) | T1 (15min) |
+| CC | estimates | 5.7k | Média | T2 (1h) |
+| CC | payments | 12.4k | Média | T2 (1h) |
+| CC | invoices | 55 | Média-baixa | T2 (1h) |
+| CC | receipts | 69 | Média-baixa | T2 (1h) |
+| CC | summary_entries | 30k | Média-baixa | T3 (diário) |
+| CC | patients_details | 3.7k | Baixa (incremental) | T3 (diário) |
+| CC | kpis_monthly | 22 | Baixa | T3 (diário) |
+| CC | business/users/professionals/specialties/procedures/categories/statuses/campaigns | 1–386 | Baixa | T3 (diário) |
+| CA | pessoas/produtos/servicos/vendedores/categorias/centros_custo | 7–1.4k | Baixa | T3 (diário) |
+
+**Tiers de execução:**
+
+| Tier | Frequência | Janela | Entidades | Duração estimada |
+|---|---|---|---|---|
+| **T1** | A cada 15min | 24/7 | CC appointments + tags · CA contas_receber/pagar (delta 1h) | ~30s |
+| **T2** | 1× por hora | 24/7 (no minuto :05) | CC estimates · payments · invoices · receipts (mês corrente) | ~1min |
+| **T3** | 1× por dia | 04:00 BRT | Tudo de baixa volatilidade + mês anterior reload completo | 5–10min |
+| **T4** | 1× por semana | Domingo 03:00 BRT | Full reload últimos 3 meses (catch-all definitivo) + cleanup `sync_jobs` antigos | 20–30min |
+
+**Pipeline pós-sync (encadeado, sempre):**
+1. `transform_clinicorp/all` ou `transform_contaazul/all` (idempotente)
+2. `analytics/rebuild/all` (1.13s pra tudo)
+
+**Tecnologia recomendada:** APScheduler embutido no FastAPI
+- ✅ Sem broker novo, mesmo processo
+- ✅ Persistente em Redis (sobrevive restart via JobStoreRedis)
+- ✅ Lock automático (`max_instances=1` evita overlap)
+- ⚠️ Single-process — quando crescer pra N tenants em workers separados, migrar pra Celery beat
+
+**Salvaguardas obrigatórias:**
+- `sync_jobs` table já existe — todo job grava status/erro/duração
+- Lock por entidade via Redis SETNX TTL 60min — não roda 2× a mesma sync
+- Retry exponencial em 429/5xx (2/4/8/16s) — já temos no client CC
+- Janela de execução: T3/T4 só rodam 02:00–06:00 BRT (não competem com T1/T2)
+- Kill switch por feature flag (`SCHEDULER_ENABLED=false` no .env desliga tudo)
+- Job grava `last_success_at` por entidade pra UI mostrar "atrasado há 30min"
+
+**Ordem de implementação sugerida (incremental):**
+1. **PR-19a** — APScheduler + lock Redis + sync_jobs upgrade + **só Tier 1** (CC appointments + CA delta). Cobre 80% do valor: agenda fresca pro dono.
+2. **PR-19b** — Tier 2 (CC eventos comerciais).
+3. **PR-19c** — Tier 3 (cadastros + mês anterior reload).
+4. **PR-19d** — Tier 4 (full reload semanal) + kill switch UI.
+5. **PR-19e** — Painel `/admin/sync` ganha "Próxima execução: 14:30" + "Última: 14:15 (sucesso, 28s)" por entidade.
+
+**Decisões pendentes pra discutir antes de codar:**
+- Tier 1 a cada 15min é agressivo? Talvez 30min seja suficiente — depende de quanto o dono quer vê-lo "tempo real"
+- T4 full reload semanal é redundante se T3 já recarrega o mês anterior — talvez só faça sentido se descobrirmos que CC retroage mais que 30 dias
+- Multi-tenant: se forem >5 tenants, T1 rodando 4×/h × N tenants pode estourar rate limit do CC. Plano: priorizar tenants ativos, throttle global
 
 ---
 
