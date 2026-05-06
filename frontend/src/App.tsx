@@ -18,6 +18,7 @@ import SettingsPage from '@/modules/settings/SettingsPage'
 import CompanySettingsPage from '@/modules/empresa/CompanySettingsPage'
 import PermissionsPage from '@/modules/empresa/PermissionsPage'
 import UsersPage from '@/modules/empresa/UsersPage'
+import AgendaPage from '@/modules/agenda/AgendaPage'
 
 function App() {
   return (
@@ -60,6 +61,18 @@ function App() {
                   <AppShell>
                     <RequirePermission permission="dashboard.read">
                       <DashboardPage />
+                    </RequirePermission>
+                  </AppShell>
+                </PrivateRoute>
+              }
+            />
+            <Route
+              path="/agenda"
+              element={
+                <PrivateRoute>
+                  <AppShell>
+                    <RequirePermission permission="agenda.read">
+                      <AgendaPage />
                     </RequirePermission>
                   </AppShell>
                 </PrivateRoute>

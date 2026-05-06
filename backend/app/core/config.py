@@ -62,6 +62,12 @@ class Settings(BaseSettings):
     # URL pública do app — usada em links enviados por email
     APP_URL: str = "http://localhost:3000"
 
+    # Anthropic Claude — IA narrativa da agenda (Sub-PR 17b)
+    ANTHROPIC_API_KEY: str = ""
+    # Haiku 4.5 — barato e rápido. Sonnet 4.6 (`claude-sonnet-4-6`) tem mais
+    # depth pra análise mas custa ~5x mais. Trocar via env sem redeploy.
+    ANTHROPIC_MODEL: str = "claude-haiku-4-5-20251001"
+
     class Config:
         env_file = ".env"
         case_sensitive = True

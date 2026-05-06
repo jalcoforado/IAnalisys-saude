@@ -60,7 +60,7 @@ export const MAIN_MENU: MenuItem[] = [
   {
     label: 'Agenda',
     icon: Calendar,
-    comingSoon: true,
+    path: '/agenda',
     permission: 'agenda.read',
   },
   {

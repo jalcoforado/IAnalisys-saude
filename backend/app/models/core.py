@@ -157,6 +157,32 @@ class CoreAppointmentStatuses(Base):
     is_active = Column(Boolean, nullable=False, default=True, server_default="1")
 
 
+class CoreAppointmentTags(Base):
+    """Tags (AppointmentMarker) aplicadas a appointments no Clinicorp.
+    Workflow operacional do gestor: "Aguardado vaga", "Encaixe", "REMARCAR",
+    "FINANCEIRO CONFERIDO", "CRC ORÇAMENTO - contatar", etc.
+    Cada tag tem id global próprio (external_id). Um appointment pode ter N tags.
+    """
+    __tablename__ = "core_appointment_tags"
+    __table_args__ = (
+        _uk("core_appointment_tags"),
+        Index("ix_core_appointment_tags_appointment", "tenant_id", "appointment_external_id"),
+        Index("ix_core_appointment_tags_class", "tenant_id", "tag_class"),
+    )
+    id = _id_col()
+    tenant_id = _tenant_col()
+    external_id = _ext_id_col()
+    appointment_external_id = Column(String(64), nullable=False)
+    name = Column(String(255), nullable=True)
+    color = Column(String(20), nullable=True)
+    type = Column(String(50), nullable=True)
+    template_id = Column(String(64), nullable=True)
+    tag_class = Column(String(20), nullable=True)
+    is_deleted = _deleted_col()
+    external_updated_at = _ext_updated_col()
+    created_at, updated_at = _ts_cols()
+
+
 class CoreCrmCampaigns(Base):
     __tablename__ = "core_crm_campaigns"
     __table_args__ = (_uk("core_crm_campaigns"),)
@@ -178,6 +204,7 @@ class CorePatients(Base):
     __table_args__ = (
         _uk("core_patients"),
         Index("ix_core_patients_last_seen", "tenant_id", "last_seen_at"),
+        Index("ix_core_patients_cpf", "tenant_id", "cpf"),
     )
     id = _id_col()
     tenant_id = _tenant_col()
@@ -189,6 +216,9 @@ class CorePatients(Base):
     mobile_phone = Column(String(50), nullable=True)
     email = Column(String(255), nullable=True)
     birth_date = Column(Date, nullable=True)
+    cpf = Column(String(14), nullable=True)
+    status = Column(String(20), nullable=True)
+    gender = Column(String(1), nullable=True)  # 'M' | 'F' | NULL
     first_seen_at = Column(DateTime, nullable=True)
     last_seen_at = Column(DateTime, nullable=True)
     total_appointments = Column(Integer, nullable=False, default=0, server_default="0")
@@ -225,6 +255,7 @@ class CoreAppointments(Base):
     category_id = Column(BigInteger, nullable=True)
     category_description = Column(String(255), nullable=True)
     category_color = Column(String(20), nullable=True)
+    status_id = Column(BigInteger, nullable=True)
     procedures_text = Column(Text, nullable=True)
     notes = Column(Text, nullable=True)
     alert_info = Column(Text, nullable=True)

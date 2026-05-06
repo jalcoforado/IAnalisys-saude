@@ -1,0 +1,193 @@
+/**
+ * Página dedicada à Agenda.
+ * Consome /home/agenda?date=... — endpoint dedicado que aceita data alvo.
+ * Seletor permite Hoje / Amanhã / Depois de amanhã (limite gerencial: +2d).
+ */
+import { useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
+import { Loader2, Calendar } from 'lucide-react'
+
+import { homeService } from '@/services/home.service'
+import { usePageTitle } from '@/contexts/PageTitleContext'
+import type { AgendaSection, StatusType } from '@/types/home'
+import { AgendaMatrix } from './AgendaMatrix'
+import { AgendaInsightsCard } from './AgendaInsightsCard'
+import { CapacityCard } from './CapacityCard'
+import { RiskCard } from './RiskCard'
+import { WaitlistCard } from './WaitlistCard'
+import { STATUS_LABEL, STATUS_DOT } from './helpers'
+
+// Resolve YYYY-MM-DD em horário LOCAL (não UTC). Necessário porque o
+// backend interpreta esse param no timezone do tenant.
+function dateOffset(daysAhead: number): string {
+  const d = new Date()
+  d.setDate(d.getDate() + daysAhead)
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const dd = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${dd}`
+}
+
+const DATE_OPTIONS: { key: 'today' | 'tomorrow' | 'day_after'; label: string; offset: number }[] = [
+  { key: 'today', label: 'Hoje', offset: 0 },
+  { key: 'tomorrow', label: 'Amanhã', offset: 1 },
+  { key: 'day_after', label: 'Depois de amanhã', offset: 2 },
+]
+
+const fmtDateLong = (iso: string) => {
+  const d = new Date(iso + 'T00:00:00')
+  return d.toLocaleDateString('pt-BR', { day: '2-digit', month: 'long', year: 'numeric' })
+}
+const fmtWeekday = (iso: string) => {
+  const d = new Date(iso + 'T00:00:00')
+  return d.toLocaleDateString('pt-BR', { weekday: 'long' })
+}
+
+// Ordem fixa pra apresentação consistente. Agendado (null) vem primeiro,
+// depois fluxo cronológico do dia: Confirmado → Chegou → Em atendimento
+// → Atendido → Atrasado/Faltou → outros.
+const STATUS_HEADER_ORDER: StatusType[] = [
+  'CONFIRMED', 'ARRIVED', 'IN_SESSION', 'CHECKOUT', 'LATE', 'MISSED', 'CALL', 'PENDING_MATERIAL',
+]
+
+function AgendaPageHeader({ agenda }: { agenda: AgendaSection }) {
+  const counts = new Map<StatusType | 'AGENDADO', number>()
+  for (const it of agenda.items) {
+    const key = it.status_type ?? 'AGENDADO'
+    counts.set(key, (counts.get(key) ?? 0) + 1)
+  }
+  const agendadoQty = counts.get('AGENDADO') ?? 0
+
+  // Decide quais pílulas mostrar: Agendado (se houver) + qualquer status
+  // com contagem > 0, na ordem definida.
+  const pills: { label: string; count: number; dotClass: string }[] = []
+  if (agendadoQty > 0) pills.push({ label: 'Agendado', count: agendadoQty, dotClass: 'bg-white/40' })
+  for (const s of STATUS_HEADER_ORDER) {
+    const c = counts.get(s) ?? 0
+    if (c > 0) pills.push({ label: STATUS_LABEL[s], count: c, dotClass: STATUS_DOT[s] })
+  }
+
+  return (
+    <div className="rounded-xl bg-gradient-to-r from-blue-600 to-blue-700 text-white px-5 py-4 space-y-3">
+      <div className="flex items-center gap-4">
+        <div className="w-12 h-12 rounded-xl bg-white/15 flex items-center justify-center backdrop-blur-sm shrink-0">
+          <Calendar size={24} className="text-white" />
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="text-[10px] uppercase tracking-wider text-white/70 font-semibold">
+            {agenda.is_today ? 'Agenda de hoje' : 'Próximo dia com consultas'}
+          </div>
+          <div className="text-lg font-bold capitalize">{fmtWeekday(agenda.date_iso)}</div>
+          <div className="text-xs text-white/80">{fmtDateLong(agenda.date_iso)}</div>
+        </div>
+        <div className="text-right shrink-0">
+          <div className="text-[10px] uppercase tracking-wider text-white/70 font-semibold">Total</div>
+          <div className="text-3xl font-bold tabular-nums">{agenda.total}</div>
+        </div>
+      </div>
+
+      {/* Breakdown por status — pills com cor + contagem + percentual */}
+      {pills.length > 0 && (
+        <div className="flex flex-wrap gap-2 pt-1">
+          {pills.map((p) => {
+            const pct = agenda.total > 0 ? Math.round((p.count / agenda.total) * 100) : 0
+            return (
+              <div
+                key={p.label}
+                className="inline-flex items-center gap-1.5 bg-white/15 backdrop-blur-sm rounded-full pl-2 pr-2.5 py-1 text-[11px]"
+              >
+                <span className={`w-2 h-2 rounded-full ${p.dotClass} ring-1 ring-white/30`} />
+                <span className="font-medium text-white">{p.label}</span>
+                <span className="font-bold text-white tabular-nums">{p.count}</span>
+                <span className="text-white/60">·</span>
+                <span className="text-white/80 tabular-nums">{pct}%</span>
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
+export default function AgendaPage() {
+  usePageTitle('Agenda', 'Visão do dia · matriz por profissional · insights de IA', 'OPERAÇÕES')
+
+  const [selected, setSelected] = useState<typeof DATE_OPTIONS[number]['key']>('today')
+  const targetOption = DATE_OPTIONS.find((o) => o.key === selected) ?? DATE_OPTIONS[0]
+  const targetDate = dateOffset(targetOption.offset)
+
+  const agendaQ = useQuery({
+    queryKey: ['home', 'agenda', targetDate],
+    // Hoje sem param (deixa o backend resolver via timezone do tenant +
+    // fallback). Demais dias passam date explícita.
+    queryFn: () => homeService.agenda(selected === 'today' ? undefined : targetDate),
+    refetchInterval: selected === 'today' ? 60_000 : false,
+  })
+
+  return (
+    <main className="px-6 py-6 max-w-[1400px] mx-auto space-y-4">
+      {/* Seletor de dia */}
+      <div className="flex items-center gap-2">
+        <span className="text-[11px] uppercase tracking-wider font-semibold text-neutral-500 mr-1">
+          Visão
+        </span>
+        {DATE_OPTIONS.map((opt) => {
+          const isActive = opt.key === selected
+          return (
+            <button
+              key={opt.key}
+              onClick={() => setSelected(opt.key)}
+              className={`px-3 py-1.5 rounded-full text-xs font-medium transition-all ${
+                isActive
+                  ? 'bg-blue-600 text-white shadow-sm'
+                  : 'bg-white border border-neutral-200 text-neutral-600 hover:border-neutral-300 hover:bg-neutral-50'
+              }`}
+            >
+              {opt.label}
+            </button>
+          )
+        })}
+      </div>
+
+      {agendaQ.isLoading && !agendaQ.data ? (
+        <div className="py-12 flex items-center justify-center">
+          <Loader2 size={28} className="animate-spin text-neutral-400" />
+        </div>
+      ) : !agendaQ.data ? (
+        <div className="rounded-xl border border-neutral-200 bg-white p-12 text-center text-neutral-400">
+          <Calendar size={32} className="mx-auto mb-3 text-neutral-300" />
+          Sem dados de agenda disponíveis.
+        </div>
+      ) : agendaQ.data.total === 0 ? (
+        <>
+          <AgendaPageHeader agenda={agendaQ.data} />
+          <div className="rounded-xl border border-dashed border-neutral-300 bg-white p-10 text-center">
+            <Calendar size={32} className="mx-auto mb-3 text-neutral-300" />
+            <div className="text-sm font-semibold text-neutral-700 mb-1">
+              Nenhuma consulta agendada para {targetOption.label.toLowerCase()}
+            </div>
+            <div className="text-xs text-neutral-500 max-w-md mx-auto leading-relaxed">
+              Pode ser que a clínica ainda não tenha marcado nada para esta data
+              ou que a última sincronização não cobre este dia.
+              Verifique o {' '}
+              <a href="/admin/sync" className="text-primary-700 hover:underline font-medium">
+                painel de sincronização
+              </a>
+              {' '} se necessário.
+            </div>
+          </div>
+        </>
+      ) : (
+        <>
+          <AgendaPageHeader agenda={agendaQ.data} />
+          <AgendaInsightsCard data={agendaQ.data} />
+          {agendaQ.data.capacity && <CapacityCard data={agendaQ.data.capacity} />}
+          {agendaQ.data.waitlist && <WaitlistCard data={agendaQ.data.waitlist} />}
+          {agendaQ.data.risk && <RiskCard data={agendaQ.data.risk} />}
+          <AgendaMatrix data={agendaQ.data} />
+        </>
+      )}
+    </main>
+  )
+}

@@ -7,6 +7,9 @@ Parâmetros obrigatórios em toda request: subscriber_id, business_id
 Convenção: todos os métodos retornam JSON cru. Cabe ao sync_service
 extrair listas, normalizar PKs e fazer upsert em staging.
 """
+import asyncio
+import random
+
 import httpx
 from typing import Any
 from app.core.config import settings
@@ -14,6 +17,12 @@ from app.core.config import settings
 
 class ClinicorpError(Exception):
     pass
+
+
+# Retry: total de 1 tentativa inicial + N retries em 429/5xx
+_RETRY_MAX_ATTEMPTS = 4
+# Backoff exponencial em segundos: 2, 4, 8, 16 (com jitter ±0.5s)
+_RETRY_BASE_DELAY = 2.0
 
 
 class ClinicorpClient:
@@ -26,19 +35,36 @@ class ClinicorpClient:
         }
 
     async def _get(self, endpoint: str, params: dict[str, Any] | None = None) -> Any:
+        """GET com retry exponencial em 429 (rate limit) e 5xx (transientes).
+        Outros 4xx falham imediatamente — bug de chamada não se resolve esperando.
+        """
         all_params = {**self._base_params, **(params or {})}
-        async with httpx.AsyncClient(timeout=60) as client:
-            response = await client.get(
-                f"{self._base_url}{endpoint}",
-                params=all_params,
-                auth=self._auth,
-                headers={"Accept": "application/json"},
-            )
-        if response.status_code != 200:
-            raise ClinicorpError(
-                f"Clinicorp {response.status_code} on {endpoint}: {response.text[:200]}"
-            )
-        return response.json()
+        last_status: int | None = None
+        last_text: str = ""
+        for attempt in range(_RETRY_MAX_ATTEMPTS):
+            async with httpx.AsyncClient(timeout=60) as client:
+                response = await client.get(
+                    f"{self._base_url}{endpoint}",
+                    params=all_params,
+                    auth=self._auth,
+                    headers={"Accept": "application/json"},
+                )
+            if response.status_code == 200:
+                return response.json()
+            last_status = response.status_code
+            last_text = response.text[:200]
+            transient = response.status_code == 429 or 500 <= response.status_code < 600
+            if not transient:
+                raise ClinicorpError(
+                    f"Clinicorp {response.status_code} on {endpoint}: {last_text}"
+                )
+            if attempt >= _RETRY_MAX_ATTEMPTS - 1:
+                break
+            delay = _RETRY_BASE_DELAY * (2 ** attempt) + random.uniform(-0.5, 0.5)
+            await asyncio.sleep(max(0.1, delay))
+        raise ClinicorpError(
+            f"Clinicorp {last_status} on {endpoint} (após {_RETRY_MAX_ATTEMPTS} tentativas): {last_text}"
+        )
 
     # ── Cadastros estáticos (sem período) ─────────────────────
 
@@ -68,6 +94,13 @@ class ClinicorpClient:
 
     async def list_active_campaigns(self) -> Any:
         return await self._get("/crm/list_active_campaigns")
+
+    # ── Pacientes individuais ─────────────────────────────────
+    # Não há /patient/list — só busca individual por PatientId.
+    # Usado pelo enriquecimento que traz BirthDate, Email, Phone, CPF, Status.
+
+    async def get_patient(self, patient_id: int) -> Any:
+        return await self._get("/patient/get", {"PatientId": patient_id})
 
     # ── Transacionais (por período) ───────────────────────────
 

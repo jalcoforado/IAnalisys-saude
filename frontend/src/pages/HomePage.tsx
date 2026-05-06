@@ -1,7 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import {
   AlertTriangle,
-  CalendarClock,
   Clock,
   Crown,
   FileText,
@@ -16,9 +15,10 @@ import {
 import { useAuth } from '@/modules/auth/AuthContext'
 import { usePageTitle } from '@/contexts/PageTitleContext'
 import { homeService } from '@/services/home.service'
+import { AgendaSummaryCard } from '@/modules/agenda/AgendaSummaryCard'
+import { StrategicAgendaSection } from '@/modules/agenda/StrategicAgendaCard'
+import { PendenciasCard } from '@/modules/agenda/PendenciasCard'
 import type {
-  AgendaItem,
-  AgendaSection,
   HomeDashboardResponse,
   InadimplenciaCriticaSection,
   OrcamentosParadosSection,
@@ -136,10 +136,16 @@ function Greeting({ name, data }: { name: string; data: HomeDashboardResponse | 
 // ── Grid layout ───────────────────────────────────────────────
 
 function CockpitGrid({ data }: { data: HomeDashboardResponse }) {
+  // Donos/gestores veem a visão estratégica (3 dias agregados + top riscos +
+  // profs ociosos). Outros roles continuam com o resumo compacto de hoje.
+  const isManager = ['manager', 'tenant_admin', 'saas_admin'].includes(data.role)
+
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-      {/* Agenda: full width, sempre topo da grade quando presente */}
-      {data.agenda && <AgendaCard data={data.agenda} />}
+      {isManager
+        ? <StrategicAgendaSection />
+        : data.agenda && <AgendaSummaryCard data={data.agenda} />}
+      {data.pendencias && <PendenciasCard data={data.pendencias} />}
       {data.recall && <RecallCard data={data.recall} />}
       {data.top_profs_semana && <TopProfsCard data={data.top_profs_semana} />}
       {data.orcamentos_parados && <OrcamentosParadosCard data={data.orcamentos_parados} />}
@@ -207,194 +213,6 @@ function Avatar({ name, color = 'bg-primary-50 text-primary-700' }: { name: stri
     <span className={`w-9 h-9 rounded-full ${color} flex items-center justify-center text-xs font-bold shrink-0 ring-2 ring-white shadow-sm`}>
       {initials(name)}
     </span>
-  )
-}
-
-// ── Agenda do dia (matriz hora × profissional) ────────────────
-
-const PROF_COLORS = [
-  { header: 'bg-blue-50 text-blue-700 ring-blue-200', avatar: 'bg-blue-100 text-blue-700', accent: 'border-blue-300' },
-  { header: 'bg-emerald-50 text-emerald-700 ring-emerald-200', avatar: 'bg-emerald-100 text-emerald-700', accent: 'border-emerald-300' },
-  { header: 'bg-amber-50 text-amber-700 ring-amber-200', avatar: 'bg-amber-100 text-amber-700', accent: 'border-amber-300' },
-  { header: 'bg-purple-50 text-purple-700 ring-purple-200', avatar: 'bg-purple-100 text-purple-700', accent: 'border-purple-300' },
-  { header: 'bg-rose-50 text-rose-700 ring-rose-200', avatar: 'bg-rose-100 text-rose-700', accent: 'border-rose-300' },
-  { header: 'bg-cyan-50 text-cyan-700 ring-cyan-200', avatar: 'bg-cyan-100 text-cyan-700', accent: 'border-cyan-300' },
-  { header: 'bg-indigo-50 text-indigo-700 ring-indigo-200', avatar: 'bg-indigo-100 text-indigo-700', accent: 'border-indigo-300' },
-  { header: 'bg-orange-50 text-orange-700 ring-orange-200', avatar: 'bg-orange-100 text-orange-700', accent: 'border-orange-300' },
-]
-
-function buildSlots(items: AgendaItem[]): string[] {
-  const horarios = items.filter((it) => it.horario).map((it) => it.horario!)
-  if (horarios.length === 0) return []
-  const minutes = horarios.map((h) => {
-    const [hh, mm] = h.split(':').map(Number)
-    return hh * 60 + mm
-  })
-  const mn = Math.floor(Math.min(...minutes) / 30) * 30
-  const maxDuration = Math.max(...items.map((it) => it.duration_minutes ?? 30), 30)
-  const mx = Math.ceil((Math.max(...minutes) + maxDuration) / 30) * 30
-  const slots: string[] = []
-  for (let m = mn; m < mx; m += 30) {
-    slots.push(`${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`)
-  }
-  return slots
-}
-
-function slotMinutes(slot: string): number {
-  const [h, m] = slot.split(':').map(Number)
-  return h * 60 + m
-}
-
-function AgendaCard({ data }: { data: AgendaSection }) {
-  // Coleta profissionais distintos com consulta no dia
-  const profsMap = new Map<number, string>()
-  for (const it of data.items) {
-    if (it.profissional_external_id != null) {
-      profsMap.set(
-        it.profissional_external_id,
-        it.profissional_nome || `Prof. #${it.profissional_external_id}`,
-      )
-    }
-  }
-  const profs = Array.from(profsMap.entries()).map(([id, nome], idx) => ({
-    id, nome, color: PROF_COLORS[idx % PROF_COLORS.length],
-  }))
-
-  const slots = buildSlots(data.items)
-  const subtitle = data.is_today
-    ? `${fmtNum(data.total)} ${data.total === 1 ? 'consulta' : 'consultas'} · ${profs.length} ${profs.length === 1 ? 'profissional' : 'profissionais'}`
-    : `Hoje sem consultas — exibindo ${fmtDateShort(data.date_iso)}`
-
-  // "agora" pra opacidade de slots passados
-  const now = new Date()
-  const nowMin = data.is_today ? now.getHours() * 60 + now.getMinutes() : -1
-
-  return (
-    <CardBase span={3}>
-      <CardHeader
-        icon={<CalendarClock size={18} className="text-white" />}
-        iconBg="bg-gradient-to-br from-info-DEFAULT to-blue-700"
-        title="Agenda do dia"
-        subtitle={subtitle}
-        badge={data.is_today ? 'Hoje' : 'Próximo dia'}
-        badgeColor={data.is_today ? 'bg-info-bg text-info-text' : 'bg-warning-bg text-warning-text'}
-      />
-      <div className="flex-1 overflow-hidden">
-        {data.items.length === 0 || profs.length === 0 ? (
-          <EmptyState icon={<CalendarClock size={20} />} label="Sem consultas agendadas." />
-        ) : (
-          <div className="overflow-auto max-h-[480px]">
-            <table className="border-separate border-spacing-0 text-xs w-full">
-              {/* Header: profissionais */}
-              <thead className="sticky top-0 z-20 bg-white">
-                <tr>
-                  <th className="sticky left-0 z-30 bg-white border-b border-r border-neutral-200 w-[68px] py-2 text-[10px] uppercase tracking-wide text-neutral-400 font-bold">
-                    Hora
-                  </th>
-                  {profs.map((p) => (
-                    <th
-                      key={p.id}
-                      className={`border-b border-r border-neutral-100 px-2 py-2 min-w-[110px] ${p.color.header}`}
-                      title={p.nome}
-                    >
-                      <div className="flex items-center gap-1.5 justify-center">
-                        <span className={`w-7 h-7 rounded-full ${p.color.avatar} flex items-center justify-center text-[10px] font-bold ring-2 ring-white shadow-sm`}>
-                          {initials(p.nome)}
-                        </span>
-                        <span className="text-[11px] font-semibold truncate max-w-[80px]">{p.nome.split(' ')[0]}</span>
-                      </div>
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {slots.map((slot, sIdx) => {
-                  const slotMin = slotMinutes(slot)
-                  const isPastSlot = nowMin >= 0 && nowMin >= slotMin + 30
-                  const isCurrentSlot = nowMin >= 0 && nowMin >= slotMin && nowMin < slotMin + 30
-                  return (
-                    <tr key={slot} className={sIdx % 2 === 0 ? 'bg-neutral-50/30' : ''}>
-                      <td
-                        className={`sticky left-0 z-10 border-r border-neutral-100 px-2 py-1.5 text-center font-mono tabular-nums text-[11px] font-semibold ${
-                          isCurrentSlot ? 'bg-info-bg text-info-text' : sIdx % 2 === 0 ? 'bg-neutral-50/80 text-neutral-500' : 'bg-white text-neutral-500'
-                        }`}
-                      >
-                        {slot}
-                      </td>
-                      {profs.map((p) => {
-                        const cellItems = data.items.filter((it) => {
-                          if (it.profissional_external_id !== p.id || !it.horario) return false
-                          const [h, m] = it.horario.split(':').map(Number)
-                          const itMin = h * 60 + m
-                          return itMin >= slotMin && itMin < slotMin + 30
-                        })
-                        return (
-                          <td
-                            key={p.id}
-                            className="border-r border-b border-neutral-100 align-top p-0.5"
-                          >
-                            {cellItems.length === 0 ? (
-                              <div className={`h-9 ${isPastSlot ? '' : ''}`} />
-                            ) : (
-                              <div className="flex flex-col gap-0.5">
-                                {cellItems.map((it) => (
-                                  <AgendaChip
-                                    key={it.external_id}
-                                    item={it}
-                                    profColor={p.color}
-                                    isPast={isPastSlot}
-                                  />
-                                ))}
-                              </div>
-                            )}
-                          </td>
-                        )
-                      })}
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-    </CardBase>
-  )
-}
-
-function AgendaChip({
-  item, profColor, isPast,
-}: {
-  item: AgendaItem
-  profColor: typeof PROF_COLORS[number]
-  isPast: boolean
-}) {
-  const tooltip = [
-    `${item.horario || '—'}${item.duration_minutes ? ` · ${item.duration_minutes} min` : ''}`,
-    item.paciente_nome,
-    item.profissional_nome || '',
-    item.categoria,
-  ].filter(Boolean).join(' · ')
-
-  const borderStyle = item.category_color
-    ? { borderLeftColor: item.category_color, borderLeftWidth: '3px' }
-    : undefined
-
-  return (
-    <div
-      title={tooltip}
-      className={`group relative rounded-md ${profColor.avatar} px-1.5 py-1 flex items-center gap-1.5 cursor-default hover:shadow-md hover:scale-[1.02] transition-all ${
-        isPast ? 'opacity-50' : ''
-      }`}
-      style={borderStyle}
-    >
-      <span className="text-[11px] font-bold tabular-nums tracking-tight">
-        {initials(item.paciente_nome)}
-      </span>
-      <span className="text-[10px] truncate flex-1 opacity-70">
-        {item.paciente_nome.split(' ')[0]}
-      </span>
-    </div>
   )
 }
 

@@ -140,6 +140,10 @@ async def build_dim_paciente(
             external_id,
             name,
             mobile_phone,
+            email,
+            birth_date,
+            cpf,
+            gender,
             first_seen_at,
             last_seen_at,
             DATEDIFF(NOW(), last_seen_at) AS days_since_last_seen,
@@ -164,6 +168,10 @@ async def build_dim_paciente(
             "external_id": str(r.external_id),
             "name": r.name,
             "mobile_phone": r.mobile_phone,
+            "email": r.email,
+            "birth_date": r.birth_date,
+            "cpf": r.cpf,
+            "gender": r.gender,
             "first_seen_at": r.first_seen_at,
             "last_seen_at": r.last_seen_at,
             "days_since_last_seen": int(r.days_since_last_seen) if r.days_since_last_seen is not None else None,
@@ -287,37 +295,123 @@ async def build_fato_agenda(
     # 'HH:MM'). Combinamos os dois aqui pra que appointment_datetime tenha
     # o horário correto da consulta. Se from_time vier vazio, mantém o
     # datetime original (meia-noite).
+    # category_group é heurística por substring no nome da categoria. O
+    # catálogo Clinicorp do tenant tem ~80 entries com nomes inconsistentes
+    # (CONSULTA vs Consulta, CICATRIZADOR x4 com cores diferentes), então
+    # agrupar em buckets semânticos é mais útil pra agregação que o nome cru.
+    # Ordem dos WHEN importa — primeiro match vence.
+    # Flags has_* vêm de subqueries em core_appointment_tags por tag_class.
+    # MAX(...) é usado em vez de EXISTS pra agregar tudo em 1 JOIN só.
     sql = text("""
         INSERT INTO fato_agenda (
           tenant_id, external_id, date_key, year, month, year_month_key,
           rebuilt_at, patient_external_id, professional_external_id,
           appointment_datetime, duration_minutes, is_canceled,
-          category_description, category_color
+          category_description, category_color, category_group,
+          status_id, status_type, status_description, status_color,
+          has_waitlist, has_encaixe, has_remarcar, has_lembrete,
+          has_orcamento_pendente, has_retorno_pendente, has_financeiro_conferido
         )
         SELECT
-          tenant_id,
-          external_id,
-          DATE(appointment_date) AS date_key,
-          YEAR(appointment_date) AS year,
-          MONTH(appointment_date) AS month,
-          DATE_FORMAT(appointment_date, '%Y-%m') AS year_month_key,
+          a.tenant_id,
+          a.external_id,
+          DATE(a.appointment_date) AS date_key,
+          YEAR(a.appointment_date) AS year,
+          MONTH(a.appointment_date) AS month,
+          DATE_FORMAT(a.appointment_date, '%Y-%m') AS year_month_key,
           NOW(),
-          patient_external_id,
-          professional_external_id,
+          a.patient_external_id,
+          a.professional_external_id,
           CASE
-            WHEN from_time IS NOT NULL AND from_time <> ''
+            WHEN a.from_time IS NOT NULL AND a.from_time <> ''
               THEN STR_TO_DATE(
-                CONCAT(DATE_FORMAT(appointment_date, '%Y-%m-%d'), ' ', from_time),
+                CONCAT(DATE_FORMAT(a.appointment_date, '%Y-%m-%d'), ' ', a.from_time),
                 '%Y-%m-%d %H:%i'
               )
-            ELSE appointment_date
+            ELSE a.appointment_date
           END AS appointment_datetime,
-          duration_minutes,
-          is_deleted,
-          category_description,
-          category_color
-        FROM core_appointments
-        WHERE tenant_id = :tenant_id AND appointment_date IS NOT NULL
+          a.duration_minutes,
+          a.is_deleted,
+          a.category_description,
+          a.category_color,
+          CASE
+            WHEN a.category_description IS NULL OR a.category_description = '' THEN 'outro'
+            WHEN UPPER(a.category_description) LIKE '%NÃO AGENDAR%'
+              OR UPPER(a.category_description) LIKE '%NAO AGENDAR%'
+              OR UPPER(a.category_description) LIKE '%PENDENCI%'
+              OR UPPER(a.category_description) LIKE '%PENDÊNCI%' THEN 'bloqueio'
+            WHEN UPPER(a.category_description) LIKE '%RETORNO%'
+              OR UPPER(a.category_description) LIKE '%PERIÓDIC%'
+              OR UPPER(a.category_description) LIKE '%PERIODIC%' THEN 'retorno'
+            WHEN UPPER(a.category_description) LIKE '%CONSULTA%'
+              OR UPPER(a.category_description) LIKE '%EXAME%'
+              OR UPPER(a.category_description) LIKE '%ORÇAMENTO%'
+              OR UPPER(a.category_description) LIKE '%ORCAMENTO%' THEN 'consulta'
+            WHEN UPPER(a.category_description) LIKE '%MANUTEN%'
+              OR UPPER(a.category_description) LIKE '%LIMPEZA%'
+              OR UPPER(a.category_description) LIKE '%AJUSTE%'
+              OR UPPER(a.category_description) LIKE '%REVIS%' THEN 'manutencao'
+            WHEN UPPER(a.category_description) LIKE '%ORTODONTIA%'
+              OR UPPER(a.category_description) LIKE '%APARELHO%'
+              OR UPPER(a.category_description) LIKE '%QUADRIH%'
+              OR UPPER(a.category_description) LIKE '%INVISALIGN%'
+              OR UPPER(a.category_description) LIKE '%CONTEN%' THEN 'ortodontia'
+            WHEN UPPER(a.category_description) LIKE '%PLANEJAMENTO%'
+              OR UPPER(a.category_description) LIKE '%MOCKUP%'
+              OR UPPER(a.category_description) LIKE '%PROVA%'
+              OR UPPER(a.category_description) LIKE '%LENTE%'
+              OR UPPER(a.category_description) LIKE '%COROA%'
+              OR UPPER(a.category_description) LIKE '%ONLAY%'
+              OR UPPER(a.category_description) LIKE '%MOLDAGEM%'
+              OR UPPER(a.category_description) LIKE '%RECEBER TRABALHO%'
+              OR UPPER(a.category_description) LIKE '%PROTOCOLO%'
+              OR UPPER(a.category_description) LIKE '%PINO%'
+              OR UPPER(a.category_description) LIKE '%PR%TESE%'
+              OR UPPER(a.category_description) LIKE '%FOTOS%'
+              OR UPPER(a.category_description) LIKE '%SCANNER%' THEN 'reabilitacao'
+            WHEN UPPER(a.category_description) LIKE '%CIRURGIA%'
+              OR UPPER(a.category_description) LIKE '%ENDODONT%'
+              OR UPPER(a.category_description) LIKE '%RESTAURA%'
+              OR UPPER(a.category_description) LIKE '%RESINA%'
+              OR UPPER(a.category_description) LIKE '%IMPLANTE%'
+              OR UPPER(a.category_description) LIKE '%CICATRIZ%'
+              OR UPPER(a.category_description) LIKE '%EXODONT%'
+              OR UPPER(a.category_description) LIKE '%CLAREAMENTO%'
+              OR UPPER(a.category_description) LIKE '%LASER%'
+              OR UPPER(a.category_description) LIKE '%GENGIVO%'
+              OR UPPER(a.category_description) LIKE '%PLACA%' THEN 'procedimento'
+            ELSE 'outro'
+          END AS category_group,
+          a.status_id,
+          s.type,
+          s.description,
+          s.color,
+          COALESCE(t.has_waitlist, 0),
+          COALESCE(t.has_encaixe, 0),
+          COALESCE(t.has_remarcar, 0),
+          COALESCE(t.has_lembrete, 0),
+          COALESCE(t.has_orcamento_pendente, 0),
+          COALESCE(t.has_retorno_pendente, 0),
+          COALESCE(t.has_financeiro_conferido, 0)
+        FROM core_appointments a
+        LEFT JOIN core_appointment_statuses s
+          ON s.tenant_id = a.tenant_id AND s.external_id = CAST(a.status_id AS CHAR(64))
+        LEFT JOIN (
+          SELECT
+            tenant_id,
+            appointment_external_id,
+            MAX(tag_class = 'waitlist')             AS has_waitlist,
+            MAX(tag_class = 'encaixe')              AS has_encaixe,
+            MAX(tag_class = 'remarcar')             AS has_remarcar,
+            MAX(tag_class = 'lembrete')             AS has_lembrete,
+            MAX(tag_class = 'orcamento_pendente')   AS has_orcamento_pendente,
+            MAX(tag_class = 'retorno_pendente')     AS has_retorno_pendente,
+            MAX(tag_class = 'financeiro_conferido') AS has_financeiro_conferido
+          FROM core_appointment_tags
+          WHERE tenant_id = :tenant_id AND is_deleted = 0
+          GROUP BY tenant_id, appointment_external_id
+        ) t ON t.tenant_id = a.tenant_id AND t.appointment_external_id = a.external_id
+        WHERE a.tenant_id = :tenant_id AND a.appointment_date IS NOT NULL
         ON DUPLICATE KEY UPDATE
           date_key = VALUES(date_key),
           year = VALUES(year),
@@ -330,7 +424,19 @@ async def build_fato_agenda(
           duration_minutes = VALUES(duration_minutes),
           is_canceled = VALUES(is_canceled),
           category_description = VALUES(category_description),
-          category_color = VALUES(category_color)
+          category_color = VALUES(category_color),
+          category_group = VALUES(category_group),
+          status_id = VALUES(status_id),
+          status_type = VALUES(status_type),
+          status_description = VALUES(status_description),
+          status_color = VALUES(status_color),
+          has_waitlist = VALUES(has_waitlist),
+          has_encaixe = VALUES(has_encaixe),
+          has_remarcar = VALUES(has_remarcar),
+          has_lembrete = VALUES(has_lembrete),
+          has_orcamento_pendente = VALUES(has_orcamento_pendente),
+          has_retorno_pendente = VALUES(has_retorno_pendente),
+          has_financeiro_conferido = VALUES(has_financeiro_conferido)
     """)
     await db.execute(sql, {"tenant_id": tenant_id})
     await db.commit()

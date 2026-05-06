@@ -53,6 +53,10 @@ class DimPaciente(Base):
     external_id = Column(String(64), nullable=False)
     name = Column(String(255), nullable=True)
     mobile_phone = Column(String(50), nullable=True)
+    email = Column(String(255), nullable=True)
+    birth_date = Column(Date, nullable=True)
+    cpf = Column(String(14), nullable=True)
+    gender = Column(String(1), nullable=True)
     first_seen_at = Column(DateTime, nullable=True)
     last_seen_at = Column(DateTime, nullable=True)
     days_since_last_seen = Column(Integer, nullable=True)
@@ -105,6 +109,19 @@ class FatoAgenda(Base):
     is_canceled = Column(Boolean, nullable=False, default=False, server_default="0")
     category_description = Column(String(255), nullable=True)
     category_color = Column(String(20), nullable=True)
+    category_group = Column(String(20), nullable=True)  # consulta|retorno|manutencao|...
+    status_id = Column(BigInteger, nullable=True)
+    status_type = Column(String(50), nullable=True)
+    status_description = Column(String(100), nullable=True)
+    status_color = Column(String(20), nullable=True)
+    # Flags desnormalizadas das tags do Clinicorp para agregação rápida
+    has_waitlist = Column(Boolean, nullable=False, default=False, server_default="0")
+    has_encaixe = Column(Boolean, nullable=False, default=False, server_default="0")
+    has_remarcar = Column(Boolean, nullable=False, default=False, server_default="0")
+    has_lembrete = Column(Boolean, nullable=False, default=False, server_default="0")
+    has_orcamento_pendente = Column(Boolean, nullable=False, default=False, server_default="0")
+    has_retorno_pendente = Column(Boolean, nullable=False, default=False, server_default="0")
+    has_financeiro_conferido = Column(Boolean, nullable=False, default=False, server_default="0")
 
 
 class FatoOrcamentos(Base):

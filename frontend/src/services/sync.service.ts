@@ -31,6 +31,11 @@ export const syncService = {
       .post<SyncJob>('/sync/clinicorp/kpis_monthly', { year, month })
       .then((r) => r.data),
 
+  /** Enriquece pacientes via /patient/get (BirthDate, Email, CPF, Status, Phone).
+   * Itera todos os pacientes do tenant — pode demorar minutos. */
+  clinicorpPatientsDetails: () =>
+    api.post<SyncJob>('/sync/clinicorp/patients/details').then((r) => r.data),
+
   // ── Conta Azul ───────────────────────────────────────────────
   contaazulStatic: () =>
     api.post<BatchResponse>('/sync/contaazul/static').then((r) => r.data),

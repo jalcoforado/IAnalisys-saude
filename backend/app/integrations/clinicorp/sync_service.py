@@ -61,10 +61,17 @@ def _parse_dt(value: Any) -> datetime | None:
         return None
 
 
-def _period_bounds(year: int, month: int, today: date | None = None) -> tuple[date, date]:
+def _period_bounds(
+    year: int, month: int, today: date | None = None, allows_future: bool = False,
+) -> tuple[date, date]:
     """
     Calcula (from_date, to_date) cobrindo o mês.
-    to_date é o último dia do mês ou hoje, o que vier primeiro.
+
+    Por default `to_date` é capado em hoje — protege entidades transacionais
+    como payments/invoices de buscar datas sem sentido. Quando `allows_future`
+    é True (caso de appointments — gestor precisa ver o futuro agendado),
+    mantém o último dia do mês.
+
     Levanta ValueError se o mês ainda não começou.
     """
     if not (1 <= month <= 12):
@@ -77,7 +84,7 @@ def _period_bounds(year: int, month: int, today: date | None = None) -> tuple[da
     today = today or date.today()
     if from_date > today:
         raise ValueError(f"Período {year}-{month:02d} ainda não começou.")
-    if to_date > today:
+    if to_date > today and not allows_future:
         to_date = today
     return from_date, to_date
 
@@ -90,6 +97,10 @@ class EntitySpec:
     client_method: str            # método em ClinicorpClient
     pk_field: str                 # campo PK no payload
     updated_at_field: str | None  # campo de timestamp de mudança, se houver
+    allows_future: bool = False   # True pra appointments — sincroniza datas futuras
+                                  # do mês. Default False protege payments/invoices/etc
+                                  # de retornar dados sem sentido (não há pagamento
+                                  # futuro).
 
 
 # ── Configuração das 8 entidades estáticas ──────────────────────
@@ -107,7 +118,7 @@ STATIC_ENTITIES: tuple[EntitySpec, ...] = (
 
 # ── Configuração das 6 entidades transacionais (por mês) ────────
 TRANSACTIONAL_ENTITIES: tuple[EntitySpec, ...] = (
-    EntitySpec("appointments",    StgCcAppointments,    "list_appointments",  "id",          "ModifiedDate"),
+    EntitySpec("appointments",    StgCcAppointments,    "list_appointments",  "id",          "ModifiedDate", allows_future=True),
     EntitySpec("estimates",       StgCcEstimates,       "list_estimates",     "TreatmentId", "LastChange_Date"),
     EntitySpec("payments",        StgCcPayments,        "list_payments",      "id",          "z_LastChange_Date"),
     EntitySpec("invoices",        StgCcInvoices,        "list_invoices",      "InvoiceId",   None),
@@ -339,7 +350,7 @@ async def sync_transactional_entity(
     year: int, month: int,
 ) -> SyncJob:
     """Sincroniza uma entidade transacional cobrindo o mês indicado."""
-    from_date, to_date = _period_bounds(year, month)
+    from_date, to_date = _period_bounds(year, month, allows_future=spec.allows_future)
     job = await _start_job(db, tenant_id, spec.name, period_from=from_date, period_to=to_date)
 
     client = ClinicorpClient()

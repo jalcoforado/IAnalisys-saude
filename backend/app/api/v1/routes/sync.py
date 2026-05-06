@@ -8,6 +8,9 @@ POST /sync/clinicorp/kpis_monthly             — 10 endpoints agregados / 1 mê
 GET  /sync/jobs                               — lista jobs de sync recentes
 GET  /sync/checkpoints                        — estado por entidade
 """
+import asyncio
+import logging
+from datetime import datetime, timezone
 from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -15,7 +18,8 @@ from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.dependencies.permissions import requires
-from app.db.session import get_db
+from app.db.session import AsyncSessionLocal, get_db
+from app.integrations.clinicorp.patients_sync import sync_patients_details
 from app.integrations.clinicorp.sync_service import (
     get_entity_spec,
     sync_all_static,
@@ -66,6 +70,63 @@ async def sync_clinicorp_static(
         total_updated=sum(j.records_updated or 0 for j in jobs),
         total_errors=sum(j.errors_count or 0 for j in jobs),
     )
+
+
+_log = logging.getLogger(__name__)
+
+
+async def _run_patients_details_in_background(tenant_id: str, job_id: int) -> None:
+    """Executa sync de patients/details em sessão DB própria.
+    Roda fora do request — sobrevive a timeout/disconnect do cliente HTTP.
+    Em caso de exceção não tratada, marca o job como error.
+    """
+    async with AsyncSessionLocal() as session:
+        try:
+            await sync_patients_details(session, tenant_id, existing_job_id=job_id)
+        except Exception as exc:
+            _log.exception("Background patients_details sync falhou (job=%s)", job_id)
+            try:
+                job = await session.get(SyncJob, job_id)
+                if job is not None:
+                    job.status = "error"
+                    job.error_message = f"Background task crashed: {exc!r}"[:1000]
+                    job.finished_at = datetime.now(timezone.utc).replace(tzinfo=None)
+                    await session.commit()
+            except Exception:
+                _log.exception("Falha ao marcar job %s como error após crash", job_id)
+
+
+@router.post("/clinicorp/patients/details", response_model=SyncJobResponse, status_code=200)
+async def sync_clinicorp_patients_details(
+    current_user: UserMe = Depends(requires("sync.run")),
+    db: AsyncSession = Depends(get_db),
+) -> SyncJobResponse:
+    """Enriquece pacientes via /patient/get (sub-PR 18).
+
+    Cria o SyncJob com status='running' e dispara o sync em background
+    (asyncio.create_task com sessão DB própria). Retorna imediatamente
+    o job — cliente faz polling em /sync/jobs pra ver progresso.
+
+    Necessário porque o sync sequencial pode levar 10-30+ min e o
+    request HTTP estouraria timeout muito antes (deixando coroutine órfã).
+    Idempotente — atualiza em vez de duplicar. skip_existing por padrão.
+    """
+    tenant_id = _require_tenant(current_user)
+
+    job = SyncJob(
+        tenant_id=tenant_id,
+        source="clinicorp",
+        entity="patients_details",
+        status="running",
+        started_at=datetime.now(timezone.utc).replace(tzinfo=None),
+    )
+    db.add(job)
+    await db.commit()
+    await db.refresh(job)
+
+    asyncio.create_task(_run_patients_details_in_background(tenant_id, job.id))
+
+    return SyncJobResponse.model_validate(job)
 
 
 @router.post("/clinicorp/transactional", response_model=SyncJobResponse, status_code=200)

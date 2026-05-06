@@ -89,6 +89,18 @@ class StgCcCrmCampaigns(Base):
 
 # ── Transacionais (por período) ───────────────────────────────
 
+class StgCcPatientsDetails(Base):
+    """Payload completo do endpoint /patient/get da Clinicorp.
+
+    Sync iterativa (1 call por paciente) — diferente das transacionais
+    que são por período. Roda sob demanda pra enriquecer core_patients
+    com birth_date, email, cpf, status.
+    """
+    __tablename__ = "stg_cc_patients_details"
+    __table_args__ = _staging_table_args(__tablename__)
+    id, tenant_id, external_id, external_updated_at, raw_data, synced_at, sync_job_id = _staging_columns()
+
+
 class StgCcAppointments(Base):
     __tablename__ = "stg_cc_appointments"
     __table_args__ = _staging_table_args(__tablename__)

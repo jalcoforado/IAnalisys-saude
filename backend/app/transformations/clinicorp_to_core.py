@@ -23,6 +23,7 @@ from app.models.core import (
     CoreAppointmentCategories,
     CoreAppointments,
     CoreAppointmentStatuses,
+    CoreAppointmentTags,
     CoreBusiness,
     CoreCrmCampaigns,
     CoreEstimateProcedures,
@@ -297,7 +298,30 @@ def map_crm_campaigns(raw: dict) -> dict:
 
 # ── Mappers de eventos ──────────────────────────────────────────
 
+def _duration_from_times(from_time: Any, to_time: Any) -> int | None:
+    """Calcula duração em minutos a partir de HH:MM strings.
+    Clinicorp tem `ProceduresDuration` mas vem 0 na maioria dos casos —
+    fromTime/toTime são as fontes confiáveis.
+    """
+    try:
+        if not from_time or not to_time:
+            return None
+        fh, fm = str(from_time).split(":")
+        th, tm = str(to_time).split(":")
+        diff = (int(th) * 60 + int(tm)) - (int(fh) * 60 + int(fm))
+        # Filtra anomalias (negativo = cruza meia-noite, > 8h é improvável p/ consulta)
+        if diff <= 0 or diff > 480:
+            return None
+        return diff
+    except (ValueError, AttributeError):
+        return None
+
+
 def map_appointments(raw: dict) -> dict:
+    # Prioriza fromTime/toTime (sempre presentes) sobre ProceduresDuration (0).
+    duration = _duration_from_times(raw.get("fromTime"), raw.get("toTime"))
+    if duration is None:
+        duration = _int(raw.get("ProceduresDuration"))
     return {
         "patient_external_id": _int(raw.get("Patient_PersonId")),
         "patient_name": _str(raw.get("PatientName"), 255),
@@ -308,10 +332,11 @@ def map_appointments(raw: dict) -> dict:
         "appointment_date": _parse_dt(raw.get("date")),
         "from_time": _str(raw.get("fromTime"), 5),
         "to_time": _str(raw.get("toTime"), 5),
-        "duration_minutes": _int(raw.get("ProceduresDuration")),
+        "duration_minutes": duration,
         "category_id": _int(raw.get("CategoryId")),
         "category_description": _str(raw.get("CategoryDescription"), 255),
         "category_color": _str(raw.get("CategoryColor"), 20),
+        "status_id": _int(raw.get("StatusId")),
         "procedures_text": _str(raw.get("Procedures")),
         "notes": _str(raw.get("Notes")),
         "alert_info": _str(raw.get("AlertInfo")),
@@ -639,7 +664,117 @@ async def transform_all_events(
     header_r, procs_r = await transform_estimates(db, tenant_id)
     results.append(header_r)
     results.append(procs_r)
+    # appointment_tags — depende do payload de stg_cc_appointments (não core)
+    results.append(await transform_appointment_tags(db, tenant_id))
     return results
+
+
+# ── Especial: appointment tags (N por appointment, vindas do payload) ──
+
+# Classes semânticas das tags do Clinicorp. Heurística simples por substring.
+# Ordem importa — primeiro match vence (`encaixe` antes de `lembrete` etc).
+def _classify_tag(name: str | None) -> str | None:
+    if not name:
+        return None
+    n = name.upper().strip()
+    # Lista de espera por vaga
+    if "AGUARDADO VAGA" in n or "AGUARDANDO VAGA" in n or "FILA DE ESPERA" in n:
+        return "waitlist"
+    # Encaixe explícito (gestor sinalizou que é encaixe)
+    if "ENCAIXE" in n:
+        return "encaixe"
+    # Workflow de remarcação
+    if "REMARCAR" in n or n.startswith("AGENDAR"):
+        return "remarcar"
+    # Orçamento pendente (CRC ORÇAMENTO - contatar etc)
+    if "ORÇAMENTO" in n or "ORCAMENTO" in n:
+        return "orcamento_pendente"
+    # Retorno pendente (Aguardando retorno, RETORNO BOTOX etc)
+    if "AGUARDANDO RETORNO" in n or n.startswith("RETORNO"):
+        return "retorno_pendente"
+    # Conferência financeira
+    if "FINANCEIRO CONFERIDO" in n:
+        return "financeiro_conferido"
+    # Lembrete / chamada / ligação
+    if "LEMBRETE" in n or "LIGAR" in n or "CHAMAR" in n or "LEMBRAR" in n:
+        return "lembrete"
+    return "outro"
+
+
+async def transform_appointment_tags(
+    db: AsyncSession, tenant_id: str,
+) -> TransformResult:
+    """Extrai tags do array `tags` no raw_data dos appointments.
+    Cada tag tem id global próprio (external_id) — UNIQUE(tenant_id, external_id).
+    """
+    sql = text("""
+        SELECT external_id, raw_data
+        FROM stg_cc_appointments
+        WHERE tenant_id = :tenant_id
+          AND JSON_LENGTH(JSON_EXTRACT(raw_data, '$.tags')) > 0
+    """)
+    rows = (await db.execute(sql, {"tenant_id": tenant_id})).all()
+    if not rows:
+        return TransformResult("appointment_tags", 0, 0, 0, 0)
+
+    import json
+    core_rows: list[dict] = []
+    errors = 0
+    for row in rows:
+        appointment_ext = str(row.external_id)
+        payload = row.raw_data
+        if isinstance(payload, str):
+            try:
+                payload = json.loads(payload)
+            except (ValueError, TypeError):
+                errors += 1
+                continue
+        if not isinstance(payload, dict):
+            continue
+        tags = payload.get("tags") or []
+        for tag in tags:
+            if not isinstance(tag, dict):
+                continue
+            tag_id = tag.get("id")
+            if tag_id is None:
+                continue
+            name = _str(tag.get("Name"), 255)
+            core_rows.append({
+                "tenant_id": tenant_id,
+                "external_id": str(tag_id),
+                "appointment_external_id": appointment_ext,
+                "name": name,
+                "color": _str(tag.get("Color"), 20),
+                "type": _str(tag.get("Type"), 50),
+                "template_id": _str(tag.get("TemplateId"), 64) if tag.get("TemplateId") is not None else None,
+                "tag_class": _classify_tag(name),
+                "is_deleted": False,
+                "external_updated_at": _parse_dt(tag.get("z_LastChange_Date")),
+            })
+
+    if not core_rows:
+        return TransformResult("appointment_tags", len(rows), 0, 0, errors)
+
+    existing = await _existing_external_ids(
+        db, CoreAppointmentTags, tenant_id, (r["external_id"] for r in core_rows),
+    )
+
+    skip = {"tenant_id", "external_id", "created_at"}
+    updatable = [k for k in core_rows[0].keys() if k not in skip]
+
+    batch_size = 1000
+    for i in range(0, len(core_rows), batch_size):
+        batch = core_rows[i:i + batch_size]
+        stmt = mysql_insert(CoreAppointmentTags).values(batch)
+        stmt = stmt.on_duplicate_key_update(
+            **{k: getattr(stmt.inserted, k) for k in updatable}
+        )
+        await db.execute(stmt)
+    await db.commit()
+
+    inserted = sum(1 for r in core_rows if r["external_id"] not in existing)
+    updated = len(core_rows) - inserted
+    return TransformResult("appointment_tags", len(core_rows), inserted, updated, errors)
 
 
 async def transform_patients(
@@ -654,6 +789,10 @@ async def transform_patients(
     - total_appointments / total_estimates / total_payments: COUNT por origem
     - external_updated_at = last_seen_at (último evento conhecido)
     - is_deleted = sempre false (paciente é "inativo", não deletado)
+
+    Enriquecimento (sub-PR 18): se há registro em stg_cc_patients_details
+    pra esse PatientId, extrai email/birth_date/cpf/status do payload do
+    /patient/get. Phone só sobrescreve se evento não trouxe (mobile_phone null).
     """
     sql = text("""
         SELECT
@@ -688,17 +827,120 @@ async def transform_patients(
     if not aggregates:
         return TransformResult("patients", 0, 0, 0, 0)
 
+    # Carrega enriquecimentos do /patient/get (sub-PR 18). Pode estar vazio
+    # se a sync de detalhes nunca rodou — nesse caso, segue sem enriquecer.
+    details_q = await db.execute(
+        text("""
+            SELECT external_id, raw_data
+            FROM stg_cc_patients_details
+            WHERE tenant_id = :tenant_id
+        """),
+        {"tenant_id": tenant_id},
+    )
+    import json
+    details_map: dict[str, dict] = {}
+    for row in details_q.all():
+        payload = row.raw_data
+        # MySQL JSON via text()/aiomysql vem como string; SQLAlchemy ORM
+        # com type JSON desserializa pra dict. Aceita os dois.
+        if isinstance(payload, str):
+            try:
+                payload = json.loads(payload)
+            except (ValueError, TypeError):
+                continue
+        if isinstance(payload, dict):
+            details_map[str(row.external_id)] = payload
+
+    def _parse_birth(raw: Any) -> Any:
+        """API CC retorna 'YYYY-MM-DDTHH:MM' ou similar — quero só a data."""
+        if not raw or not isinstance(raw, str):
+            return None
+        # Aceita 'YYYY-MM-DD' ou 'YYYY-MM-DDT...' — pega os 10 primeiros chars
+        try:
+            return datetime.strptime(raw[:10], "%Y-%m-%d").date()
+        except ValueError:
+            return None
+
+    def _normalize_cpf(raw: Any) -> Any:
+        """OtherDocumentId pode vir só com dígitos. Mantemos só dígitos limitando a 14."""
+        if not raw:
+            return None
+        s = "".join(ch for ch in str(raw) if ch.isdigit())
+        return s[:14] or None
+
+    def _infer_gender(api_gender: Any, name: str | None) -> str | None:
+        """Retorna 'M' | 'F' | None.
+        1) Se a API retornar Gender ('M'/'F'/'MALE'/'FEMALE'), usa.
+        2) Senão, heurística pelo PRIMEIRO NOME PT-BR (sufixo '*'/' jr'/etc removidos).
+        Heurística é conservadora: nomes ambíguos (Sandy, Iran, etc) ficam None.
+        """
+        if api_gender:
+            g = str(api_gender).strip().upper()
+            if g.startswith("M"): return "M"
+            if g.startswith("F"): return "F"
+        if not name:
+            return None
+        first = name.strip().split(" ")[0].upper()
+        # Remove sufixos comuns
+        first = first.rstrip("*").rstrip(".")
+        if not first:
+            return None
+        # Sufixos típicos de nomes femininos PT-BR
+        if first.endswith("A") or first.endswith("AH") or first.endswith("AS"):
+            # Exceções masculinas comuns terminadas em A
+            if first in {"NICOLA", "ELIAS", "TOBIAS", "MATIAS", "JONAS",
+                         "LUCAS", "JESUS", "JUDAS", "ATILA", "DA", "DE",
+                         "CALEBE", "ANDRE", "JOSE", "EZEQUIAS", "ISAIAS",
+                         "JEREMIAS", "SAMUEL"}:
+                return "M"
+            return "F"
+        # Sufixos típicos de nomes masculinos PT-BR
+        if first.endswith("O") or first.endswith("OS") or first.endswith("OR"):
+            return "M"
+        # Casos comuns explícitos
+        masc = {"ABEL", "AILTON", "ANDERSON", "DAVI", "EDSON", "ELIEL",
+                "GABRIEL", "ISMAEL", "ISRAEL", "JOEL", "MANOEL", "MIGUEL",
+                "RAFAEL", "RAQUEL", "SAMUEL", "DANIEL", "EZEQUIEL", "URIEL",
+                "EMERSON", "JEFFERSON", "ROBSON", "VAGNER", "WAGNER", "WALTER",
+                "WANDERSON", "WELLINGTON", "WESLEY", "WILLIAM", "WILSON",
+                "JOAO", "JOÃO", "RAIMUNDO", "VITOR", "VICTOR", "PEDRO",
+                "JESUS", "MATEUS", "MATHEUS", "RAFAH"}
+        fem = {"BEATRIZ", "INES", "INÊS", "ESTHER", "ESTER", "RUTH",
+               "RAQUEL", "RACHEL", "ABIGAIL", "MIRIAM", "MIRIÃ", "AGAR",
+               "JOICE", "DALILA", "EDITH", "JUDITE", "MERCEDES", "DORIS",
+               "IRIS", "ÍRIS", "INGRID", "ELIZABETH", "ISABEL", "MABEL",
+               "ANNE", "JOANNE", "JANE", "DAPHNE", "ASTRID", "CARMEM",
+               "CARMEN", "MIRTES", "LAIS", "LAÍS", "LUIZ", "TAIS", "TAÍS"}
+        # "RAQUEL" aparece nas duas — em PT-BR é majoritariamente fem;
+        # remova de masc
+        if first == "RAQUEL":
+            return "F"
+        if first == "LUIZ":
+            return "M"
+        if first in masc:
+            return "M"
+        if first in fem:
+            return "F"
+        return None
+
     core_rows: list[dict] = []
     for r in aggregates:
+        ext_id = str(r.external_id)
+        det = details_map.get(ext_id, {})
         core_rows.append({
             "tenant_id": tenant_id,
-            "external_id": str(r.external_id),
+            "external_id": ext_id,
             "is_deleted": False,
             "external_updated_at": r.last_seen_at,
             "name": r.name,
-            "mobile_phone": r.mobile_phone,
-            "email": None,         # Clinicorp não expõe email do paciente em eventos
-            "birth_date": None,    # idem birth_date — viria de /patient/get sob demanda
+            "mobile_phone": r.mobile_phone or det.get("Phone"),
+            "email": det.get("Email"),
+            "birth_date": _parse_birth(det.get("BirthDate")),
+            "cpf": _normalize_cpf(det.get("OtherDocumentId")),
+            "status": det.get("Status"),
+            "gender": _infer_gender(
+                det.get("Gender") or det.get("Sex"), r.name,
+            ),
             "first_seen_at": r.first_seen_at,
             "last_seen_at": r.last_seen_at,
             "total_appointments": int(r.total_appointments or 0),

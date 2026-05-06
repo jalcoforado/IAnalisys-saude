@@ -23,6 +23,7 @@ const CLINICORP_CONFIG: SyncProviderConfig = {
   syncEntityMonth: (entity, year, month) =>
     syncService.transactional(entity, year, month),
   syncKpisMonth: (year, month) => syncService.kpisMonthly(year, month),
+  syncPatientsDetails: () => syncService.clinicorpPatientsDetails(),
   showRebuildPipeline: true,
 }
 

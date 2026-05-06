@@ -35,6 +35,8 @@ export interface SyncProviderConfig {
   syncKpisMonth?: (year: number, month: number) => Promise<SyncJob>
   /** Delta sync — atualiza alterações recentes em todas transacionais. Opcional (só CA). */
   syncAlteracoes?: (hoursBack: number) => Promise<BatchResponse>
+  /** Enriquece pacientes via /patient/get (BirthDate, Email, CPF, Status). Só Clinicorp. */
+  syncPatientsDetails?: () => Promise<SyncJob>
   /** Mostrar botão de rebuild CORE+ANALYTICS (só Clinicorp por enquanto). */
   showRebuildPipeline?: boolean
 }
@@ -125,9 +127,19 @@ export function SyncProviderPanel({ config }: { config: SyncProviderConfig }) {
     },
   })
 
+  const [lastPatientsDetails, setLastPatientsDetails] = useState<SyncJob | null>(null)
+  const patientsDetailsMut = useMutation({
+    mutationFn: () => config.syncPatientsDetails!(),
+    onSuccess: (data) => {
+      setLastPatientsDetails(data)
+      invalidateAll()
+    },
+  })
+
   const isAnyRunning =
     staticAllMut.isPending || txEntityMut.isPending || txMonthMut.isPending ||
-    kpisMut.isPending || rebuildMut.isPending || alteracoesMut.isPending
+    kpisMut.isPending || rebuildMut.isPending || alteracoesMut.isPending ||
+    patientsDetailsMut.isPending
 
   const totalStatic = config.staticEntities.reduce(
     (acc, e) => acc + (checkpointsByEntity[e]?.total_records || 0), 0)
@@ -199,6 +211,59 @@ export function SyncProviderPanel({ config }: { config: SyncProviderConfig }) {
                 {alteracoesMut.isPending ? 'Atualizando…' : 'Atualizar mudanças'}
               </button>
             </div>
+          </div>
+        </section>
+      )}
+
+      {/* Detalhes dos pacientes (Clinicorp /patient/get) — sub-PR 18. Sync
+           iterativa: 1 call por paciente. Pode demorar minutos. */}
+      {config.syncPatientsDetails && (
+        <section className="bg-gradient-to-r from-amber-50 to-white border border-amber-200 rounded-lg p-4">
+          <div className="flex items-start justify-between gap-4 flex-wrap">
+            <div className="flex-1 min-w-[260px]">
+              <h2 className="text-sm font-semibold text-neutral-900">
+                Detalhes dos pacientes
+                <span className="ml-2 text-[10px] uppercase font-bold px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 align-middle">
+                  Enriquecimento
+                </span>
+              </h2>
+              <p className="text-xs text-neutral-600 mt-0.5">
+                Busca dados completos de cada paciente via <code className="text-[11px] bg-neutral-100 px-1 rounded">/patient/get</code>:
+                data de nascimento, e-mail, CPF e status. A Clinicorp não tem listagem em massa —
+                é 1 chamada por paciente. Em bases grandes pode demorar alguns minutos.
+                Idempotente — pode rodar quantas vezes quiser.
+              </p>
+              {lastPatientsDetails && (
+                <div className="mt-2 text-[11px] text-neutral-700 flex flex-wrap gap-3">
+                  <span>
+                    <strong className={lastPatientsDetails.status === 'success' ? 'text-success-text' : lastPatientsDetails.status === 'error' ? 'text-error-text' : 'text-warning-text'}>
+                      {lastPatientsDetails.status === 'success' ? '✓' : lastPatientsDetails.status === 'error' ? '✗' : '⚠'} Última execução:
+                    </strong>
+                    {' '}
+                    {lastPatientsDetails.duration_ms != null ? `${(lastPatientsDetails.duration_ms / 1000).toFixed(1)}s` : '—'}
+                  </span>
+                  <span><strong>{fmtNum(lastPatientsDetails.records_fetched)}</strong> pacientes processados</span>
+                  {(lastPatientsDetails.errors_count ?? 0) > 0 && (
+                    <span className="text-error-text"><strong>{fmtNum(lastPatientsDetails.errors_count)}</strong> erros</span>
+                  )}
+                </div>
+              )}
+              {patientsDetailsMut.isError && (
+                <div className="mt-2 text-xs text-error-text">Erro ao sincronizar. Verifique os logs do backend.</div>
+              )}
+              {patientsDetailsMut.isPending && (
+                <div className="mt-2 text-xs text-warning-text italic">
+                  ⏳ Sincronizando — não feche esta página até concluir.
+                </div>
+              )}
+            </div>
+            <button
+              onClick={() => patientsDetailsMut.mutate()}
+              disabled={isAnyRunning}
+              className="text-xs px-4 py-2 rounded bg-amber-600 text-white hover:bg-amber-700 disabled:opacity-50 disabled:cursor-not-allowed font-medium shadow-sm shrink-0"
+            >
+              {patientsDetailsMut.isPending ? 'Sincronizando…' : 'Sincronizar pacientes'}
+            </button>
           </div>
         </section>
       )}

@@ -13,6 +13,7 @@ from app.models.staging import (
     StgCcAppointmentCategories,
     StgCcAppointmentStatuses,
     StgCcCrmCampaigns,
+    StgCcPatientsDetails,
     StgCcAppointments,
     StgCcEstimates,
     StgCcPayments,
@@ -68,7 +69,8 @@ __all__ = [
     "StgCcBusiness", "StgCcUsers", "StgCcProfessionals",
     "StgCcSpecialties", "StgCcProcedures",
     "StgCcAppointmentCategories", "StgCcAppointmentStatuses",
-    "StgCcCrmCampaigns", "StgCcAppointments", "StgCcEstimates",
+    "StgCcCrmCampaigns", "StgCcPatientsDetails",
+    "StgCcAppointments", "StgCcEstimates",
     "StgCcPayments", "StgCcInvoices", "StgCcReceipts",
     "StgCcSummaryEntries", "StgCcKpisMonthly",
     # Core — cadastros
