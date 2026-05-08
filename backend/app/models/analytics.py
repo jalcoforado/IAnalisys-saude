@@ -107,6 +107,13 @@ class FatoAgenda(Base):
     appointment_datetime = Column(DateTime, nullable=True)
     duration_minutes = Column(Integer, nullable=True)
     is_canceled = Column(Boolean, nullable=False, default=False, server_default="0")
+    # Decomposição do universo "não cancelado" pelo status_type:
+    #   is_efetiva    = CHECKOUT  (paciente atendido — base p/ procs/médicos)
+    #   is_falta      = MISSED    (paciente faltou — absenteísmo real)
+    #   is_indefinida = status_type NULL e não cancelado (recepção não atualizou)
+    is_efetiva = Column(Boolean, nullable=False, default=False, server_default="0")
+    is_falta = Column(Boolean, nullable=False, default=False, server_default="0")
+    is_indefinida = Column(Boolean, nullable=False, default=False, server_default="0")
     category_description = Column(String(255), nullable=True)
     category_color = Column(String(20), nullable=True)
     category_group = Column(String(20), nullable=True)  # consulta|retorno|manutencao|...

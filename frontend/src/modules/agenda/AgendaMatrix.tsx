@@ -2,10 +2,18 @@
  * Matriz hora × profissional da agenda do dia.
  * Cada célula mostra apenas ícone idade + iniciais do paciente.
  * Hover abre tooltip rico com nome, idade, gênero, profissional, categoria.
+ *
+ * Otimizações de visualização:
+ * - Gaps vazios consecutivos (almoço, fim de tarde) colapsam em linha única
+ * - Scroll automático na linha "agora" no mount + botão flutuante "Ir para agora"
+ * - Linha do horário atual destacada com faixa vermelha
  */
+import { useEffect, useRef, useState } from 'react'
+import { Clock } from 'lucide-react'
 import type { AgendaItem, AgendaSection } from '@/types/home'
 import {
   PROF_COLORS,
+  buildAgendaRows,
   buildSlots,
   calcAge,
   ageIcon,
@@ -42,12 +50,58 @@ export function AgendaMatrix({ data }: { data: AgendaSection }) {
   }))
 
   const slots = buildSlots(data.items)
+  const rows = buildAgendaRows(slots, data.items)
   const subtitle = data.is_today
     ? `${fmtNum(data.total)} ${data.total === 1 ? 'consulta' : 'consultas'} · ${profs.length} ${profs.length === 1 ? 'profissional' : 'profissionais'}`
     : `Hoje sem consultas — exibindo ${fmtDateShort(data.date_iso)}`
 
   const now = new Date()
   const nowMin = data.is_today ? now.getHours() * 60 + now.getMinutes() : -1
+
+  // Refs pra scroll automático na linha "agora"
+  const scrollRef = useRef<HTMLDivElement | null>(null)
+  const nowRowRef = useRef<HTMLTableRowElement | null>(null)
+  const [showJumpBtn, setShowJumpBtn] = useState(false)
+
+  const scrollToNow = () => {
+    if (!nowRowRef.current || !scrollRef.current) return
+    const container = scrollRef.current
+    const row = nowRowRef.current
+    const containerRect = container.getBoundingClientRect()
+    const rowRect = row.getBoundingClientRect()
+    // Posiciona no centro do container
+    const targetScroll =
+      container.scrollTop + (rowRect.top - containerRect.top) - container.clientHeight / 2 + rowRect.height / 2
+    container.scrollTo({ top: targetScroll, behavior: 'smooth' })
+  }
+
+  // Mount: scrolla para "agora" automaticamente (sem animação no primeiro paint)
+  useEffect(() => {
+    if (!data.is_today || !nowRowRef.current || !scrollRef.current) return
+    const container = scrollRef.current
+    const row = nowRowRef.current
+    const targetScroll =
+      row.offsetTop - container.clientHeight / 2 + row.clientHeight / 2
+    container.scrollTo({ top: Math.max(0, targetScroll), behavior: 'auto' })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data.date_iso])
+
+  // Mostra botão "Ir para agora" se a linha "agora" sair da viewport
+  useEffect(() => {
+    if (!data.is_today || !nowRowRef.current || !scrollRef.current) return
+    const container = scrollRef.current
+    const row = nowRowRef.current
+    const onScroll = () => {
+      const cRect = container.getBoundingClientRect()
+      const rRect = row.getBoundingClientRect()
+      const visible = rRect.bottom > cRect.top + 40 && rRect.top < cRect.bottom - 40
+      setShowJumpBtn(!visible)
+    }
+    container.addEventListener('scroll', onScroll)
+    onScroll()
+    return () => container.removeEventListener('scroll', onScroll)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data.date_iso, rows.length])
 
   if (data.items.length === 0 || profs.length === 0) {
     return (
@@ -58,7 +112,7 @@ export function AgendaMatrix({ data }: { data: AgendaSection }) {
   }
 
   return (
-    <div className="rounded-xl border border-neutral-200 bg-white">
+    <div className="rounded-xl border border-neutral-200 bg-white relative">
       <div className="px-4 py-3 border-b border-neutral-200 flex items-center justify-between">
         <div>
           <div className="text-sm font-semibold text-neutral-800">Agenda do dia</div>
@@ -69,7 +123,7 @@ export function AgendaMatrix({ data }: { data: AgendaSection }) {
         </span>
       </div>
 
-      <div className="overflow-auto max-h-[calc(100vh-220px)]">
+      <div ref={scrollRef} className="overflow-auto max-h-[calc(100vh-220px)]">
         <table className="border-separate border-spacing-0 text-xs w-full">
           <thead className="sticky top-0 z-20">
             <tr>
@@ -97,15 +151,43 @@ export function AgendaMatrix({ data }: { data: AgendaSection }) {
             </tr>
           </thead>
           <tbody>
-            {slots.map((slot, sIdx) => {
+            {rows.map((row, rIdx) => {
+              if (row.type === 'gap') {
+                return (
+                  <tr key={`gap-${row.startSlot}`}>
+                    <td
+                      colSpan={profs.length + 1}
+                      className="border-b border-neutral-100 bg-neutral-50/40 text-center text-[10px] text-neutral-400 italic py-1.5 font-mono tabular-nums"
+                    >
+                      <span className="font-semibold text-neutral-500">{row.startSlot}</span>
+                      <span className="mx-1.5">—</span>
+                      <span className="font-semibold text-neutral-500">{row.endSlot}</span>
+                      <span className="ml-2 not-italic">·</span>
+                      <span className="ml-1.5 not-italic">sem agenda ({Math.floor(row.minutes / 60)}h{row.minutes % 60 ? `${String(row.minutes % 60).padStart(2, '0')}` : ''})</span>
+                    </td>
+                  </tr>
+                )
+              }
+              const slot = row.slot
               const slotMin = slotMinutes(slot)
               const isPastSlot = nowMin >= 0 && nowMin >= slotMin + 30
               const isCurrentSlot = nowMin >= 0 && nowMin >= slotMin && nowMin < slotMin + 30
+              const zebraIdx = rIdx
               return (
-                <tr key={slot} className={sIdx % 2 === 0 ? 'bg-neutral-50/30' : ''}>
+                <tr
+                  key={slot}
+                  ref={isCurrentSlot ? nowRowRef : undefined}
+                  className={`${zebraIdx % 2 === 0 ? 'bg-neutral-50/30' : ''} ${
+                    isCurrentSlot ? 'relative' : ''
+                  }`}
+                >
                   <td
                     className={`sticky left-0 z-10 border-r border-neutral-100 px-2 py-1 text-center font-mono tabular-nums text-[10px] font-semibold ${
-                      isCurrentSlot ? 'bg-info-bg text-info-text' : sIdx % 2 === 0 ? 'bg-neutral-50/80 text-neutral-500' : 'bg-white text-neutral-500'
+                      isCurrentSlot
+                        ? 'bg-rose-50 text-rose-700 border-t-2 border-t-rose-500'
+                        : zebraIdx % 2 === 0
+                          ? 'bg-neutral-50/80 text-neutral-500'
+                          : 'bg-white text-neutral-500'
                     }`}
                   >
                     {slot}
@@ -120,7 +202,9 @@ export function AgendaMatrix({ data }: { data: AgendaSection }) {
                     return (
                       <td
                         key={p.id}
-                        className="border-r border-b border-neutral-100 align-top p-0.5"
+                        className={`border-r border-b border-neutral-100 align-top p-0.5 ${
+                          isCurrentSlot ? 'border-t-2 border-t-rose-500' : ''
+                        }`}
                       >
                         {cellItems.length === 0 ? (
                           <div className="h-7" />
@@ -145,6 +229,18 @@ export function AgendaMatrix({ data }: { data: AgendaSection }) {
           </tbody>
         </table>
       </div>
+
+      {/* Botão flutuante "Ir para agora" — aparece quando a linha atual está fora da viewport */}
+      {data.is_today && showJumpBtn && nowMin >= 0 && (
+        <button
+          onClick={scrollToNow}
+          className="absolute bottom-4 right-4 z-30 inline-flex items-center gap-1.5 px-3 py-2 rounded-full bg-rose-600 hover:bg-rose-700 text-white text-[12px] font-semibold shadow-lg transition-colors"
+          title="Centralizar na linha atual"
+        >
+          <Clock size={13} />
+          Ir para agora
+        </button>
+      )}
     </div>
   )
 }

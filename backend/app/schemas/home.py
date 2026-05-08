@@ -142,6 +142,25 @@ class StrategicOverview(BaseModel):
     baseline_pct: int                    # baseline da clínica (referência única)
 
 
+class WaitlistSuggestion(BaseModel):
+    """Sugestão de slot pra acomodar um paciente da fila de espera.
+
+    Dois tipos:
+    - "vaga_livre": gap real na agenda do profissional (sem ninguém marcado)
+    - "risco_falta": consulta marcada com alto risco de no-show — oportunidade
+      de pré-acionar o paciente em risco e ter um plano B
+    """
+    tipo: str                            # "vaga_livre" | "risco_falta"
+    date_iso: str                        # YYYY-MM-DD
+    horario: str                         # HH:MM
+    duration_min: int                    # minutos disponíveis (vaga) ou da consulta (risco)
+    razao: str                           # frase curta pra UI
+    # Quando tipo="risco_falta":
+    paciente_em_risco_nome: Optional[str] = None
+    paciente_em_risco_id: Optional[int] = None
+    risco_pct: Optional[int] = None      # 0-100
+
+
 class WaitlistItem(BaseModel):
     """Paciente aguardando vaga / encaixe (tag Aguardado vaga ou Encaixe)."""
     appointment_external_id: str
@@ -155,6 +174,8 @@ class WaitlistItem(BaseModel):
     is_encaixe: bool                     # tag "Encaixe"
     dias_aguardando: int                 # dias desde quando a tag foi aplicada
     tag_color: Optional[str] = None
+    # Sugestões geradas pra acomodar este paciente — até 3 ordenadas por prioridade
+    suggestions: List["WaitlistSuggestion"] = []
 
 
 class WaitlistSection(BaseModel):

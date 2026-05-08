@@ -11,6 +11,8 @@ import {
 
 import { tenantService } from '@/services/tenant.service'
 import { usePageTitle } from '@/contexts/PageTitleContext'
+import { PageContainer } from '@/components/layout/PageContainer'
+import { PageHeader } from '@/components/layout/PageHeader'
 import type {
   TenantSettings,
   TenantSettingsUpdate,
@@ -28,25 +30,31 @@ export default function CompanySettingsPage() {
 
   if (settingsQ.isLoading) {
     return (
-      <main className="px-6 py-6 max-w-5xl mx-auto">
+      <PageContainer variant="narrow">
         <div className="bg-white border rounded-xl p-12 text-center text-neutral-500 text-sm shadow-sm">Carregando…</div>
-      </main>
+      </PageContainer>
     )
   }
   if (settingsQ.isError || !settingsQ.data) {
     return (
-      <main className="px-6 py-6 max-w-5xl mx-auto">
+      <PageContainer variant="narrow">
         <div className="bg-error-bg border border-error-border rounded-xl p-6 text-error-text text-sm">
           Erro ao carregar configurações da empresa.
         </div>
-      </main>
+      </PageContainer>
     )
   }
 
   const onUpdated = () => qc.invalidateQueries({ queryKey: ['tenant', 'settings'] })
 
   return (
-    <main className="px-6 py-6 max-w-5xl mx-auto space-y-6">
+    <PageContainer variant="narrow" gap={6}>
+      <PageHeader
+        eyebrow="EMPRESA"
+        title="Configurações da Empresa"
+        subtitle="Identidade visual e dados operacionais"
+        icon={<Building2 size={20} />}
+      />
       <p className="text-xs text-neutral-500">
         Personalize a identidade visual e os dados da clínica. Apenas administradores do tenant podem editar.
       </p>
@@ -54,7 +62,7 @@ export default function CompanySettingsPage() {
       <BrandingSection settings={settingsQ.data} onUpdated={onUpdated} />
       <CompanyDataSection settings={settingsQ.data} onUpdated={onUpdated} />
       <AddressSection settings={settingsQ.data} onUpdated={onUpdated} />
-    </main>
+    </PageContainer>
   )
 }
 

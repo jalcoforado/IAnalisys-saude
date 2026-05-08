@@ -179,3 +179,128 @@ Pendente para alinhar com o padrão deste documento:
 ---
 
 **Última atualização:** 2026-05-03 — versão 1 após validação visual em abril/2026.
+
+---
+
+## 5. Padrão dos dashboards segmentados (Sub-PR 20, 2026-05-07)
+
+A partir de 2026-05-07, o `/dashboard` legado dá lugar a 3 dashboards segmentados sob menu **ANÁLISE**, cada um com perspectiva e cor de header próprios:
+
+| Dashboard | Header | Foco |
+|---|---|---|
+| `/analise/financeiro` | gradiente verde (primary) | R$ — faturamento, conversão, ticket, recebido |
+| `/analise/comercial` | gradiente azul/índigo | Volume — consultas, ocupação, conversão operacional |
+| `/analise/pacientes` | (a definir) | Retenção — listas acionáveis (remarcar/resgatar) |
+
+### Componentes compartilhados
+
+Todos os dashs novos consomem:
+- **`KpiCardEnriched`** — KPI com ícone em badge, valor grande, MoM + YoY, sparkline 12m, insight opcional, projeção quando mês parcial
+- **`PeriodSelector`** — botões `<<` `>>` mes/ano, bloqueia futuro
+- **`Sparkline`** — SVG inline minimalista (sem libs)
+- **`PartialMonthBanner`** — faixa única sky-blue avisando "Mês em andamento · 7/31 dias"
+- **`AIInsightsSection`** — caixa violeta com botão **"Gerar com IA"** (chamada paga sob demanda, nunca automática)
+
+### Backend — pattern uniforme
+
+- Cada dashboard tem `analise_<nome>_service.py` com:
+  - `_aggregate_month()` e `_aggregate_last_12()` retornando dataclass enxuta
+  - Sub-builders por seção (`_funil_*`, `_top_*`, etc.)
+  - `_build_<kpi>_card()` que chama `_build_kpi_card()` compartilhado (importado de `analise_financeiro_service`)
+  - `get_analise_<nome>(db, tenant_id, year, month)` orquestra
+- Cada dashboard tem `POST /analise/<nome>/ai-insights` com prompt dedicado em `ai_service.py` (cache Redis 5min, hash do payload como chave)
+- Mês parcial sempre informado ao prompt da IA com instrução explícita
+
+### Princípios de mês parcial (válidos pra todos os dashs novos)
+
+1. KPIs de VOLUME (faturamento, consultas, recebido, pacientes) → mostrar acumulado parcial + linha "→ R$ X projetado"; MoM/YoY usam projeção (`valor / progress`) automaticamente
+2. KPIs de RAZÃO (conversão %, absenteísmo %, ticket médio) → autocomparáveis, não precisam projeção
+3. Listas com MoM (mix pagamento, top categorias) → MoM aplica projeção contra mês anterior fechado
+4. Banner único no topo concentra todas as ressalvas — cards ficam limpos
+5. Insights via IA recebem flag explícita "MÊS EM ANDAMENTO" no prompt
+
+### Sobreposições intencionais entre Comercial e Pacientes
+
+Pedro autorizou métricas duplicadas quando a perspectiva difere:
+- "Novos × recorrentes" → Comercial (volume mensal) **e** Pacientes (oportunidade de fidelização)
+- "Taxa de recorrência" → Comercial (eficácia) **e** Pacientes (base de retenção)
+- "Top profissionais" → Comercial (volume de consultas) **e** Pacientes (preferência de clientes A)
+
+**Why:** cada dashboard responde a uma pergunta de negócio distinta, não é subset do outro.
+
+---
+
+## 6. Anatomia padrão de página (regra obrigatória — 2026-05-07)
+
+Toda página interna (dashboards, listas, settings, formulários) **DEVE** seguir esta anatomia. Foi padronizado depois que PR-20b e PR-20c entregaram com containers diferentes (boxed vs. fullbleed), gerando inconsistência visual.
+
+### Componentes obrigatórios
+
+Estão em `frontend/src/components/layout/`:
+
+- **`<PageContainer variant>`** — wrapper externo. Substitui `<main className="...">` ad-hoc.
+  - `default` (padrão): `max-w-7xl mx-auto px-6 py-6` — boxed largo. Use para dashboards, listas, paineis admin. Padrão de sistemas corporativos modernos (Stripe, Linear, Salesforce Lightning) — preserva legibilidade em monitores wide.
+  - `wide`: `max-w-[1400px]` — para tabelas/matrizes que exigem mais largura (ex: matriz de agenda).
+  - `narrow`: `max-w-5xl` — formulários e edição de registros (Settings, CompanySettings).
+  - `bleed`: sem `max-w` — só para casos especiais com background full-bleed.
+  - Espaçamento vertical configurável via prop `gap` (3, 4 ou 6 — default 4).
+
+- **`<PageHeader>`** — cabeçalho azul (gradiente `from-blue-700 to-indigo-700`) com ícone, eyebrow, título e subtítulo. Substitui o "Header" interno que cada dashboard escrevia à mão.
+  - Props: `title`, `subtitle`, `eyebrow`, `icon`, `filters` (slot pra PeriodSelector), `actions` (slot pra botões).
+  - **Cor única**: decisão de Pedro em 2026-05-07 — todas as páginas usam o mesmo gradiente azul. Não há prop `accent` propositalmente. Identidade visual coesa sobrepõe diferenciação por seção.
+
+- **`<PageFooter>`** — rodapé opcional com meta-info.
+  - Props: `lastUpdated`, `dataSource`, e `children` livre para ações secundárias.
+  - Visual: barra fina, fundo neutro, separador superior.
+
+### Template canônico
+
+```tsx
+<PageContainer>
+  <PageHeader
+    eyebrow="ANÁLISE"
+    title="Dashboard Comercial"
+    subtitle="Volume, conversão e operação"
+    icon={<Briefcase size={20} />}
+    filters={<PeriodSelector ... />}
+  />
+
+  {/* conteúdo da página: KPIs, gráficos, tabelas */}
+
+  <PageFooter dataSource="Clinicorp + Conta Azul" />
+</PageContainer>
+```
+
+### Regras
+
+1. **Proibido CSS de container ad-hoc** (`max-w-...`, `px-6 py-6`, `mx-auto` direto na página). Sempre passe pelo `PageContainer`.
+2. **Proibido escrever Header de página inline.** Use `PageHeader` e estenda via props. Se uma necessidade nova surgir, proponha props novas no componente — não duplique o markup.
+3. **Cockpits com background especial** (HomePage, /financeiro) podem manter um `<main className="relative">` externo pra absoluto positioning, mas o container interno ainda é `<PageContainer as="div">`.
+4. **PageFooter é opcional** — use quando fizer sentido informar fonte/atualização. Em páginas de settings/forms, geralmente omitir.
+5. **Padrão de gap**: dashboards = `gap={4}` (default); cockpits Home/Financeiro = `gap={6}` (visual mais aerado); forms = `gap={6}`.
+
+### Migração concluída em 2026-05-07
+
+Todas as páginas internas usam `PageContainer` + `PageHeader` no mesmo padrão azul:
+
+| Página | Variant | Notas |
+|---|---|---|
+| `/` (HomePage) | default + bg pattern | Greeting é um PageHeader com saudação dinâmica + perfil em `actions` |
+| `/agenda` | wide | Header com weekday + total em `actions`; pills de status em strip branco abaixo |
+| `/financeiro` (cockpit CA) | default + bg pattern | Filtros mês/ano em `filters` |
+| `/analise/financeiro` | default | PeriodSelector em `filters` |
+| `/analise/comercial` | default | PeriodSelector em `filters` |
+| `/admin/sync` | default | PageHeader acima das tabs CC/CA |
+| `/configuracoes` | narrow | gap=6 |
+| `/empresa` (CompanySettings) | narrow | gap=6 |
+| `/empresa/usuarios` | default | Botão "Convidar" em `actions` |
+| `/empresa/permissoes` | default | Botão "Salvar N roles" em `actions` |
+| `/dashboard` (legado) | — | será extinto no PR-20e, não migrado |
+
+### Sobre footer global
+
+Não existe footer global da aplicação propositalmente. BrandBar (sticky top) já dá identidade + contexto + user menu. Sistemas corporativos modernos (Stripe Dashboard, Linear, Salesforce Lightning, IBM Carbon) **evitam footer global** pra maximizar a área útil em telas de produtividade. Footer global é para sites institucionais, não para SaaS de uso intensivo.
+
+---
+
+**Última atualização:** 2026-05-07 — versão 3: padrão de PageContainer/PageHeader/PageFooter consolidado e aplicado em todas as páginas.

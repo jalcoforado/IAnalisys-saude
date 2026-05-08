@@ -1,9 +1,12 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
+import { RefreshCw } from 'lucide-react'
 
 import { syncService } from '@/services/sync.service'
 import { contaAzulService } from '@/services/contaazul.service'
 import { usePageTitle } from '@/contexts/PageTitleContext'
+import { PageContainer } from '@/components/layout/PageContainer'
+import { PageHeader } from '@/components/layout/PageHeader'
 import {
   STATIC_ENTITIES,
   TRANSACTIONAL_ENTITIES,
@@ -54,7 +57,14 @@ export default function SyncPage() {
   const active = TABS.find((t) => t.key === activeKey) ?? TABS[0]
 
   return (
-    <main className="px-6 py-6 max-w-7xl mx-auto space-y-4">
+    <PageContainer>
+      <PageHeader
+        eyebrow="ADMIN"
+        title="Sincronização"
+        subtitle="Importação · status por entidade · histórico de jobs"
+        icon={<RefreshCw size={20} />}
+      />
+
       {/* Tabs */}
       <div className="border-b border-neutral-200">
         <nav className="-mb-px flex gap-6">
@@ -85,7 +95,7 @@ export default function SyncPage() {
 
       {/* Panel */}
       <SyncProviderPanel key={active.key} config={active.config} />
-    </main>
+    </PageContainer>
   )
 }
 

@@ -28,6 +28,8 @@ import {
 
 import { financeiroService } from '@/services/financeiro.service'
 import { usePageTitle } from '@/contexts/PageTitleContext'
+import { PageContainer } from '@/components/layout/PageContainer'
+import { PageHeader } from '@/components/layout/PageHeader'
 import type {
   CategoriaItem,
   CentroCustoItem,
@@ -100,27 +102,33 @@ export default function FinanceiroPage() {
           backgroundSize: '32px 32px',
         }}
       />
-      <div className="px-6 py-6 max-w-7xl mx-auto space-y-6 relative">
-        <div className="flex items-center justify-end flex-wrap gap-3">
-          <div className="flex items-center gap-2">
-            <select
-              value={month}
-              onChange={(e) => setMonth(parseInt(e.target.value, 10))}
-              className="text-sm border rounded-lg px-3 py-2 bg-white shadow-sm hover:border-primary-400 cursor-pointer"
-            >
-              {MONTHS_PT.map((m, i) => (
-                <option key={m} value={i + 1}>{m}</option>
-              ))}
-            </select>
-            <select
-              value={year}
-              onChange={(e) => setYear(parseInt(e.target.value, 10))}
-              className="text-sm border rounded-lg px-3 py-2 bg-white shadow-sm hover:border-primary-400 cursor-pointer"
-            >
-              {yearOptions.map((y) => <option key={y} value={y}>{y}</option>)}
-            </select>
-          </div>
-        </div>
+      <PageContainer as="div" gap={6} className="relative">
+        <PageHeader
+          eyebrow="CONTA AZUL"
+          title="Financeiro"
+          subtitle={`Fluxo de caixa de ${periodLabel}`}
+          icon={<Wallet size={20} />}
+          filters={
+            <div className="flex items-center gap-2">
+              <select
+                value={month}
+                onChange={(e) => setMonth(parseInt(e.target.value, 10))}
+                className="text-sm rounded-lg px-3 py-2 bg-white/15 hover:bg-white/25 text-white ring-1 ring-white/20 cursor-pointer [&>option]:text-neutral-900"
+              >
+                {MONTHS_PT.map((m, i) => (
+                  <option key={m} value={i + 1}>{m}</option>
+                ))}
+              </select>
+              <select
+                value={year}
+                onChange={(e) => setYear(parseInt(e.target.value, 10))}
+                className="text-sm rounded-lg px-3 py-2 bg-white/15 hover:bg-white/25 text-white ring-1 ring-white/20 cursor-pointer [&>option]:text-neutral-900"
+              >
+                {yearOptions.map((y) => <option key={y} value={y}>{y}</option>)}
+              </select>
+            </div>
+          }
+        />
 
         {q.isLoading && (
           <div className="bg-white border rounded-xl p-12 text-center text-neutral-500 text-sm shadow-sm">
@@ -133,7 +141,7 @@ export default function FinanceiroPage() {
           </div>
         )}
         {q.data && <FinanceiroContent data={q.data} />}
-      </div>
+      </PageContainer>
     </main>
   )
 }

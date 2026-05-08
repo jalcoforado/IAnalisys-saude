@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useMutation, useQueries, useQueryClient } from '@tanstack/react-query'
-import { CheckCircle2, Lock, Save, ShieldAlert } from 'lucide-react'
+import { CheckCircle2, KeyRound, Lock, Save, ShieldAlert } from 'lucide-react'
 
 import { usePageTitle } from '@/contexts/PageTitleContext'
 import { permissionsService } from '@/services/permissions.service'
+import { PageContainer } from '@/components/layout/PageContainer'
+import { PageHeader } from '@/components/layout/PageHeader'
 import type { Permission, RoleWithPermissions } from '@/types/permission'
 
 const PROTECTED_ROLES = new Set(['saas_admin', 'tenant_admin'])
@@ -144,12 +146,16 @@ export default function PermissionsPage() {
   }, [draft, rolesQuery.data])
 
   if (catalogQuery.isLoading || rolesQuery.isLoading) {
-    return <div className="p-8 text-sm text-neutral-500">Carregando matriz…</div>
+    return (
+      <PageContainer>
+        <div className="text-sm text-neutral-500">Carregando matriz…</div>
+      </PageContainer>
+    )
   }
 
   if (catalogQuery.isError || rolesQuery.isError) {
     return (
-      <div className="p-8">
+      <PageContainer>
         <div className="bg-error-bg border border-error-border rounded-lg p-4 text-sm text-error-text flex items-start gap-3">
           <ShieldAlert size={18} />
           <div>
@@ -157,34 +163,32 @@ export default function PermissionsPage() {
             <p>Verifique se você tem permissão <code>empresa.permissions.manage</code>.</p>
           </div>
         </div>
-      </div>
+      </PageContainer>
     )
   }
 
   return (
-    <div className="p-6 max-w-7xl mx-auto">
-      {/* Hero */}
-      <div className="mb-6 flex items-start justify-between gap-4 flex-wrap">
-        <div>
-          <h1 className="text-xl font-bold text-neutral-900">Matriz de Permissões</h1>
-          <p className="text-sm text-neutral-500 mt-1">
-            Controle quem vê o quê. Marcar/desmarcar e salvar — vale para todos os usuários
-            daquela role na próxima vez que entrarem.
-          </p>
-        </div>
-        <button
-          onClick={() => saveMutation.mutate(dirtyRoles)}
-          disabled={dirtyRoles.length === 0 || saveMutation.isPending}
-          className="inline-flex items-center gap-2 bg-primary-700 hover:bg-primary-800 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-medium px-4 py-2 rounded-lg"
-        >
-          <Save size={16} />
-          {saveMutation.isPending
-            ? 'Salvando…'
-            : dirtyRoles.length === 0
-              ? 'Sem alterações'
-              : `Salvar ${dirtyRoles.length} role(s)`}
-        </button>
-      </div>
+    <PageContainer>
+      <PageHeader
+        eyebrow="EMPRESA"
+        title="Matriz de Permissões"
+        subtitle="Controle quem vê o quê. Vale para todos os usuários da role"
+        icon={<KeyRound size={20} />}
+        actions={
+          <button
+            onClick={() => saveMutation.mutate(dirtyRoles)}
+            disabled={dirtyRoles.length === 0 || saveMutation.isPending}
+            className="inline-flex items-center gap-2 bg-white/15 hover:bg-white/25 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-medium px-3 py-2 rounded-lg ring-1 ring-white/20"
+          >
+            <Save size={16} />
+            {saveMutation.isPending
+              ? 'Salvando…'
+              : dirtyRoles.length === 0
+                ? 'Sem alterações'
+                : `Salvar ${dirtyRoles.length} role(s)`}
+          </button>
+        }
+      />
 
       {feedback && (
         <div
@@ -250,7 +254,7 @@ export default function PermissionsPage() {
           </tbody>
         </table>
       </div>
-    </div>
+    </PageContainer>
   )
 }
 

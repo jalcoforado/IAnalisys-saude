@@ -14,6 +14,8 @@ import DesignSystem from '@/pages/DesignSystem'
 import SyncPage from '@/modules/admin/SyncPage'
 import DashboardPage from '@/modules/dashboard/DashboardPage'
 import FinanceiroPage from '@/modules/financeiro/FinanceiroPage'
+import AnaliseFinanceiroPage from '@/modules/analise/financeiro/FinanceiroPage'
+import AnaliseComercialPage from '@/modules/analise/comercial/ComercialPage'
 import SettingsPage from '@/modules/settings/SettingsPage'
 import CompanySettingsPage from '@/modules/empresa/CompanySettingsPage'
 import PermissionsPage from '@/modules/empresa/PermissionsPage'
@@ -85,6 +87,30 @@ function App() {
                   <AppShell>
                     <RequirePermission permission="financeiro.read">
                       <FinanceiroPage />
+                    </RequirePermission>
+                  </AppShell>
+                </PrivateRoute>
+              }
+            />
+            <Route
+              path="/analise/financeiro"
+              element={
+                <PrivateRoute>
+                  <AppShell>
+                    <RequirePermission permission="dashboard.read">
+                      <AnaliseFinanceiroPage />
+                    </RequirePermission>
+                  </AppShell>
+                </PrivateRoute>
+              }
+            />
+            <Route
+              path="/analise/comercial"
+              element={
+                <PrivateRoute>
+                  <AppShell>
+                    <RequirePermission permission="dashboard.read">
+                      <AnaliseComercialPage />
                     </RequirePermission>
                   </AppShell>
                 </PrivateRoute>

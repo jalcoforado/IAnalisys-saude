@@ -530,6 +530,134 @@ Pedro abre o ERP só nas linhas marcadas com ⚠️. Vira a ferramenta principal
 
 ---
 
+### Sub-PR 20 — Dashboards segmentados (Análise) — 2026-05-07
+
+**Estratégia:** dashboard executivo (`/dashboard`) será EXTINTO após criação de 3 dashboards segmentados sob menu **ANÁLISE**, cada um com narrativa própria + IA dedicada. Sobreposições intencionais entre Comercial e Pacientes (ex: "novos × recorrentes" em ambos com perspectivas diferentes).
+
+#### Sub-PR 20b — `/analise/financeiro` ✅ (entregue 2026-05-07)
+
+Foco: relatório estratégico-tático para o DONO, perspectiva de R$.
+- 4 KPIs: Faturamento (orçamentos aprovados) · Conversão por valor (alinhado Clinicorp) · Ticket médio · Recebido — todos com MoM/YoY/sparkline 12m, projeção quando mês parcial
+- Funil orçamentos com conversão por valor E por contagem
+- Mix pagamento, top atendentes (registrantes), top médicos (executantes via distribuição proporcional), top categorias (especialidades)
+- Banner único de mês parcial (em vez de poluir cards)
+- Inadimplência MOVIDA pra `/financeiro` (Fluxo de Caixa) — mais pertinente lá
+- **Insights via IA com botão sob demanda** (Claude Haiku 4.5) com prompt que entende mês parcial e usa projeção
+- Sem insights hardcoded (Pedro removeu — IA cobre melhor)
+
+#### Sub-PR 20c — `/analise/comercial` ✅ (entregue 2026-05-07)
+
+Foco: operação comercial — volume, conversão, demanda, ocupação, mix.
+Pergunta-guia: "como está rodando a máquina de vendas?"
+- 5 KPIs: Consultas executadas · Absenteísmo (`is_inverse`) · Ticket por consulta · Conversão consulta→orçamento · Pacientes únicos
+- Funil POR PACIENTE: consulta → com orçamento → aprovado (taxas + tempo médio em dias)
+- Top procedimentos executados (`core_estimate_procedures.executed=1`)
+- Top especialidades em demanda (procedimentos por specialty_id)
+- Top profissionais por VOLUME de consultas (não R$)
+- Mix de categorias com MoM via projeção
+- Operacional: encaixes, retorno pendente, para remarcar, perda potencial em cancelamentos
+- Service em `analise_comercial_service.py` reusa helpers de `analise_financeiro_service` (não duplica)
+- IA com botão sob demanda (POST `/analise/comercial/ai-insights`) — prompt de operações
+- Header azul/índigo (financeiro=verde) pra distinguir visualmente
+
+#### Sub-PR 20b+ — Validações com cliente (Parente, abr/2026) — 2026-05-08
+
+Sessão de auditoria com Pedro confrontando números do dashboard com PDFs/planilhas reais. Achados e correções:
+
+**Card Recebido (Caixa) — Sub-PR 20b**
+- Bug: card mostrava R$ 373k vs R$ 497k real do PDF Clinicorp. Causa: filtrava por `fato_financeiro.year_month_key` (= `COALESCE(payment_date, due_date)`).
+- Fix: trocar fonte para `core_summary_entries(type=DEBIT, post_type=RECEIVED)` filtrado por `year/month`. Líquido bate centavo a centavo (diff R$ 0,11 em abr/26).
+- Adicionado `RecebidoBreakdown` (líquido + bruto + taxas) e card `CustoAdquirenciaCard` com fatiamento heurístico por forma de pagamento (taxas Crédito 5,0% / Débito 0,9% / Boleto 0,4% calibradas com planilha real, erro < 0,5pp por forma).
+- Memória: `reference_clinicorp_recebido_mapping.md`, `reference_clinicorp_taxa_por_forma.md`.
+
+**Card Mix de Meios de Pagamento — Sub-PR 20b**
+- REMOVIDO. Custo de Adquirência cobre a mesma informação com mais densidade.
+
+**Card Prazos de Recebimento — Sub-PR 20b**
+- Achado: `valor_total` (soma de `core_payments`) ≠ Faturamento (header `core_estimates`). Gap de 23,7% em abr/26 (R$ 410k vs R$ 313k).
+- Causa raiz: Clinicorp gera plano em PARTES (entrada primeiro, demais parcelas conforme paciente paga). 7 orçamentos sem nenhuma parcela; nos 243 com parcelas, soma fica menor que header.
+- Solução (caminho A): manter cálculo + adicionar painel "Cobertura do plano de pagamento" com barra empilhada (lançado vs pendente) e nota explicativa.
+- Schema: `PrazoRecebimentoSection` ganhou `faturamento_aprovado`, `qtd_sem_parcelas`, `valor_sem_parcelas`.
+- Memória: `reference_clinicorp_payment_plan_partial.md`.
+
+**Refator profundo do dashboard comercial — Sub-PR 20c**
+
+Migration `0026_fato_agenda_status_flags.py` + builder + service. Decompõe agendamentos em 5 desfechos via `core_appointment_statuses.type`:
+
+| Flag | Origem | Significado |
+|---|---|---|
+| `is_efetiva` | CHECKOUT | Paciente atendido (base de tops) |
+| `is_falta` | MISSED | Paciente faltou (absenteísmo clínico) |
+| `is_indefinida` | NULL não-cancelado | Recepção não atualizou |
+
+Decomposição abr/26: 691 efetivas + 75 faltas + 87 canceladas + 94 indefinidas + 5 outros = 952 total.
+
+**Mudanças nos KPIs** (todos os títulos descritivos, sem abreviação):
+
+| KPI | Antes | Agora |
+|---|---|---|
+| Consultas atendidas | 865 (`is_canceled=0`) | **691** (CHECKOUT) |
+| Absenteísmo (faltas) | 9,1% (cancel/total) | **9,8%** (faltas / efetivas+faltas) |
+| ~~Ticket / Consulta~~ | rateio artificial | **REMOVIDO** (duplicava visão financeira) |
+| Conversão em orçamento | 36,2% (orçs ÷ consultas) | **42,8%** (pacientes que aprovaram ÷ pacientes atendidos) |
+| Pacientes atendidos | 581 (qualquer status) | **442** (só CHECKOUT) |
+
+**Funil Comercial** — todos os 3 níveis 100% por PACIENTE (era misturado evento/paciente). `total_consultas` entra só como contexto ("691 consultas em 442 pacientes"). Conversão Total bate com KPI.
+
+**Cards e tooltips novos**:
+- `SaudeAgendaCard` — barra empilhada + 5 cartões coloridos com decomposição mensal
+- `ConversaoBreakdown` (5 categorias: aprovou no mês / em decisão / em tratamento / avulso / histórico antigo) com tooltip
+- `KpiCardEnriched.helpTooltip` (prop opcional com HelpCircle)
+- Tooltips ricos no Funil e na Evolução
+- Evolution chart 12m reformatado para barra empilhada com 4 desfechos + legenda clicável (toggle de séries)
+- Mix Categorias agora filtra `is_efetiva=1` (não mostra cancelado/falta por categoria)
+
+**Padrão estabelecido**: cardinalidade não pode ser misturada. Quando contar gente, tudo conta gente. Quando contar evento, tudo conta evento. Não dividir um pelo outro.
+
+Memória de referência: `project_agenda_status_flags.md`.
+
+#### Sub-PR 20d — `/analise/pacientes` ⏳ (próximo)
+
+Foco: retenção e oportunidade — descobrir QUEM remarcar, resgatar, fidelizar.
+Pergunta-guia: "quem eu deveria estar ligando?"
+
+**KPIs principais (5)**: Pacientes ativos · LTV médio · Taxa de recorrência · Novos no mês · Pacientes em risco
+
+**Listas acionáveis (o coração desse dashboard)**:
+- 🔁 Para REMARCAR — retorno pendente / orçamento aprovado sem nova consulta
+- 🆘 Para RESGATAR — inativos 180-365d ranqueados por LTV
+- 💎 Top 10 LTV (clientes A — proteger)
+- ⚠️ Em risco de churn (90-180d sem voltar, LTV alto)
+- 🌱 Novos do mês — virão recorrentes? acompanhar
+
+**Análise de coorte**: Curva ABC · Churn buckets (Ativo/Risco/Inativo/Perdido) com R$ em risco · Novos×Recorrentes mensal · Gap médio de retorno
+
+**Drill-down**: clique no paciente → drawer com histórico (consultas, orçamentos, pagamentos, próximas ações)
+
+**Módulo de mídia social / nichos (parte do 20d)** — usar os dados de paciente pra alimentar campanhas:
+
+*Frente A — Captura de origem (diagnóstico)*
+- Card "Como o paciente conheceu a clínica" lendo `HowDidMeet` e `IndicationSource` do `appointment/list` (raw_data em STAGING).
+- Realidade hoje: 22 de 20.718 appointments preenchidos (0,1%) — valores ricos quando preenchem (Facebook, Instagram, Google, Indicação).
+- Card mostra: % de captura + breakdown dos preenchidos + CTA "treinar recepção a preencher → libera ROI por canal". Choque visual pra forçar a conversa com o dono.
+- Dependência: nenhuma — campos já vêm no payload, só precisa promover do staging pro core (`core_appointments.how_did_meet`, `core_appointments.indication_source`) e plotar.
+
+*Frente B — Personas e nichos (alto valor mesmo sem `HowDidMeet` preenchido)*
+- **Faixa etária × gênero × procedimento favorito** → personas pra criativos de Meta Ads (ex: "mulheres 35-50 que fizeram clareamento → ad de lente de contato dental").
+- **Top procedimentos por ticket × volume** → qual nicho merece verba (ortodontia, implante, harmonização).
+- **Pacientes inativos por procedimento** → arquivo CSV exportável pra Lookalike Audience no Meta (sem precisar de `HowDidMeet`).
+- **Padrão de horário/dia de agendamento de novos pacientes** → quando rodar campanha (sex 18h vs ter 10h).
+- IA narrativa: "seu nicho mais lucrativo é ortodontia adulta (R$ X / paciente, ciclo Y meses); persona dominante é mulher 28-40, recomendo Reels de antes-depois".
+
+*Frente C — ROI por canal (futuro, depende da Frente A pegar tração)*
+- Quando preenchimento de `HowDidMeet` chegar a >40%, montar dashboard de "Canal → R$ aprovado / R$ pago / consultas" pra calcular CAC implícito por canal e comparar com gasto de ads (input manual ou integração futura com Meta Ads API).
+
+#### Sub-PR 20e — Extinção do dashboard executivo legado ⏳
+
+Após 20d, redirecionar `/dashboard` → `/analise` (página de cards levando aos 3 dashs) e remover componentes legados.
+
+---
+
 ### FASE 6 — Dashboards (6.1 ✅ · 6.6 parcial · demais ⏳)
 
 **Objetivo:** Replicar e superar o sistema atual com dados reais.

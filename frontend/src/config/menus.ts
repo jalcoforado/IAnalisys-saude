@@ -45,10 +45,12 @@ export const MAIN_MENU: MenuItem[] = [
     icon: BarChart3,
     permissionAny: ['dashboard.read', 'financeiro.read'],
     children: [
-      { label: 'Dashboard Executivo', icon: BarChart3, path: '/dashboard', permission: 'dashboard.read' },
-      { label: 'Financeiro', icon: DollarSign, path: '/financeiro', permission: 'financeiro.read' },
-      { label: 'Operacional', icon: Calendar, comingSoon: true },
-      { label: 'Comercial', icon: DollarSign, comingSoon: true },
+      { label: 'Financeiro', icon: DollarSign, path: '/analise/financeiro', permission: 'dashboard.read' },
+      { label: 'Comercial', icon: BarChart3, path: '/analise/comercial', permission: 'dashboard.read' },
+      { label: 'Pacientes', icon: Users, comingSoon: true, permission: 'dashboard.read' },
+      { label: 'Fluxo de Caixa', icon: DollarSign, path: '/financeiro', permission: 'financeiro.read' },
+      // Preservado temporariamente até os 3 dashs novos cobrirem 100%
+      { label: 'Visão Consolidada (legado)', icon: BarChart3, path: '/dashboard', permission: 'dashboard.read' },
     ],
   },
   {

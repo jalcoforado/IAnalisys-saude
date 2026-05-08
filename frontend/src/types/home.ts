@@ -115,6 +115,17 @@ export interface RiskSection {
   pacientes_alto_risco: RiskTopPatient[]
 }
 
+export interface WaitlistSuggestion {
+  tipo: 'vaga_livre' | 'risco_falta'
+  date_iso: string
+  horario: string
+  duration_min: number
+  razao: string
+  paciente_em_risco_nome: string | null
+  paciente_em_risco_id: number | null
+  risco_pct: number | null
+}
+
 export interface WaitlistItem {
   appointment_external_id: string
   paciente_external_id: number | null
@@ -127,6 +138,7 @@ export interface WaitlistItem {
   is_encaixe: boolean
   dias_aguardando: number
   tag_color: string | null
+  suggestions: WaitlistSuggestion[]
 }
 
 export interface WaitlistSection {

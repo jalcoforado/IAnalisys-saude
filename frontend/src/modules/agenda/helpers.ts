@@ -142,3 +142,95 @@ export function slotMinutes(slot: string): number {
   const [h, m] = slot.split(':').map(Number)
   return h * 60 + m
 }
+
+/** Slot normal a renderizar (1 linha de 30min). */
+export type AgendaRowSlot = { type: 'slot'; slot: string }
+
+/** Faixa de slots vazios consecutivos colapsada (ex: almoço 12:00–13:30). */
+export type AgendaRowGap = {
+  type: 'gap'
+  startSlot: string
+  endSlot: string                // último slot vazio (exclusive na exibição)
+  minutes: number                // duração total do gap em minutos
+  slotCount: number              // qtd de slots originalmente colapsados
+}
+
+export type AgendaRow = AgendaRowSlot | AgendaRowGap
+
+/**
+ * Processa a lista de slots + items e retorna uma sequência otimizada de linhas:
+ * - Remove gap inicial se ≥1h antes da 1ª consulta
+ * - Colapsa gaps internos (≥1h sem agendamentos em nenhum prof)
+ * - Mantém último slot mesmo se vazio (preserva término natural do dia)
+ *
+ * `MIN_GAP_SLOTS_TO_COLLAPSE` = mínimo de slots vazios consecutivos pra colapsar.
+ * 2 slots = 1h. Abaixo disso (30min) renderiza linhas normais — não vale o overhead visual.
+ */
+const MIN_GAP_SLOTS_TO_COLLAPSE = 2
+
+export function buildAgendaRows(
+  slots: string[],
+  items: AgendaItem[],
+): AgendaRow[] {
+  if (slots.length === 0) return []
+
+  // 1. Para cada slot, marca se há ALGUM item ocupando-o
+  // (item ocupa o slot s se start_minutes <= s < start_minutes + duration)
+  const isOccupied = (slotIdx: number): boolean => {
+    const slotMin = slotMinutes(slots[slotIdx])
+    return items.some((it) => {
+      if (!it.horario) return false
+      const [h, m] = it.horario.split(':').map(Number)
+      const start = h * 60 + m
+      const dur = it.duration_minutes ?? 30
+      return start < slotMin + 30 && start + dur > slotMin
+    })
+  }
+  const occupied = slots.map((_, i) => isOccupied(i))
+
+  // 2. Determina índice da 1ª e última ocupação
+  const firstOcc = occupied.findIndex((o) => o)
+  const lastOcc = occupied.lastIndexOf(true)
+  if (firstOcc === -1) {
+    // dia totalmente vazio: devolve slots originais (caller decide)
+    return slots.map((s) => ({ type: 'slot' as const, slot: s }))
+  }
+
+  // 3. Cortes: começa em firstOcc; vai até lastOcc + 1 slot extra (acomoda fim)
+  const startIdx = firstOcc
+  const endIdx = Math.min(slots.length - 1, lastOcc + 1)
+
+  // 4. Itera no range, agrupando gaps consecutivos
+  const rows: AgendaRow[] = []
+  let i = startIdx
+  while (i <= endIdx) {
+    if (occupied[i]) {
+      rows.push({ type: 'slot', slot: slots[i] })
+      i++
+      continue
+    }
+    // achou vazio: vê quantos consecutivos vazios há (sem ultrapassar endIdx)
+    let j = i
+    while (j <= endIdx && !occupied[j]) j++
+    const gapCount = j - i
+    if (gapCount >= MIN_GAP_SLOTS_TO_COLLAPSE) {
+      const startSlot = slots[i]
+      const endSlot = slots[j - 1]            // último slot vazio
+      // exibição: end = início do próximo ocupado (ou último vazio + 30min)
+      const endShownMin = j <= endIdx ? slotMinutes(slots[j]) : slotMinutes(endSlot) + 30
+      const endShown = `${String(Math.floor(endShownMin / 60)).padStart(2, '0')}:${String(endShownMin % 60).padStart(2, '0')}`
+      rows.push({
+        type: 'gap',
+        startSlot,
+        endSlot: endShown,
+        minutes: gapCount * 30,
+        slotCount: gapCount,
+      })
+    } else {
+      // gap pequeno (1 slot só): mantém como linha normal
+      for (let k = i; k < j; k++) rows.push({ type: 'slot', slot: slots[k] })
+    }
+    i = j
+  }
+  return rows
+}

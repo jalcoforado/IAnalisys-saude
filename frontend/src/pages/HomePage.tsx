@@ -18,6 +18,8 @@ import { homeService } from '@/services/home.service'
 import { AgendaSummaryCard } from '@/modules/agenda/AgendaSummaryCard'
 import { StrategicAgendaSection } from '@/modules/agenda/StrategicAgendaCard'
 import { PendenciasCard } from '@/modules/agenda/PendenciasCard'
+import { PageContainer } from '@/components/layout/PageContainer'
+import { PageHeader } from '@/components/layout/PageHeader'
 import type {
   HomeDashboardResponse,
   InadimplenciaCriticaSection,
@@ -81,7 +83,7 @@ export default function HomePage() {
           backgroundSize: '32px 32px',
         }}
       />
-      <div className="px-6 py-6 max-w-7xl mx-auto space-y-6 relative">
+      <PageContainer as="div" gap={6} className="relative">
         <Greeting name={firstName} data={q.data} />
 
         {q.isLoading && (
@@ -95,7 +97,7 @@ export default function HomePage() {
           </div>
         )}
         {q.data && <CockpitGrid data={q.data} />}
-      </div>
+      </PageContainer>
     </main>
   )
 }
@@ -107,29 +109,21 @@ function Greeting({ name, data }: { name: string; data: HomeDashboardResponse | 
   const greeting = hour < 12 ? 'Bom dia' : hour < 18 ? 'Boa tarde' : 'Boa noite'
   const todayLong = data ? fmtDateLong(data.today_iso) : ''
   const weekday = data ? fmtWeekday(data.today_iso) : ''
+  const wdCap = weekday ? weekday.charAt(0).toUpperCase() + weekday.slice(1) : ''
 
   return (
-    <section className="bg-gradient-to-br from-primary-700 via-primary-800 to-primary-900 text-white rounded-2xl p-6 shadow-xl relative overflow-hidden">
-      <div className="absolute -right-10 -top-10 w-48 h-48 bg-white/5 rounded-full" />
-      <div className="absolute right-20 bottom-0 w-32 h-32 bg-white/5 rounded-full" />
-      <div className="relative flex items-start justify-between gap-4 flex-wrap">
-        <div>
-          <div className="text-primary-200 text-xs uppercase tracking-wide font-semibold flex items-center gap-1.5">
-            <Sparkles size={12} /> {greeting}
-          </div>
-          <h1 className="text-2xl md:text-3xl font-bold mt-1">
-            {name ? `${name}` : 'Bem-vindo'} <span className="opacity-80">·</span> <span className="capitalize text-primary-100">{weekday}</span>
-          </h1>
-          <p className="text-primary-100/80 text-sm mt-1">{todayLong}</p>
+    <PageHeader
+      eyebrow={greeting}
+      title={`${name || 'Bem-vindo'}${wdCap ? ` · ${wdCap}` : ''}`}
+      subtitle={todayLong}
+      icon={<Sparkles size={20} />}
+      actions={data && (
+        <div className="bg-white/15 rounded-lg px-3 py-2 ring-1 ring-white/20">
+          <div className="text-[10px] uppercase tracking-wide text-white/70 font-bold">Perfil</div>
+          <div className="text-sm font-bold">{data.role_label}</div>
         </div>
-        {data && (
-          <div className="bg-white/10 backdrop-blur-sm rounded-lg px-4 py-2.5 border border-white/15">
-            <div className="text-[10px] uppercase tracking-wide text-primary-200 font-bold">Perfil</div>
-            <div className="text-base font-bold mt-0.5">{data.role_label}</div>
-          </div>
-        )}
-      </div>
-    </section>
+      )}
+    />
   )
 }
 

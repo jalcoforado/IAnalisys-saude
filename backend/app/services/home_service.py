@@ -14,7 +14,7 @@ Roles → seções:
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta
-from typing import List
+from typing import List, Optional
 
 from sqlalchemy import bindparam as sa_bindparam, text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -46,6 +46,7 @@ from app.schemas.home import (
     TopProfsSemanaSection,
     WaitlistItem,
     WaitlistSection,
+    WaitlistSuggestion,
 )
 
 
@@ -612,7 +613,7 @@ async def _agenda(
 
     capacity = await _capacity(db, tenant_id, target, items)
     risk = await _risk(db, tenant_id, target, items)  # popula items[i].risco_pct in-place
-    waitlist = await _waitlist(db, tenant_id, target)
+    waitlist = await _waitlist(db, tenant_id, target, now_local=now_local)
 
     return AgendaSection(
         date_iso=target.isoformat(),
@@ -627,11 +628,276 @@ async def _agenda(
     )
 
 
+# ── Sugestões de slot pra Lista de Espera ──────────────────────
+
+
+# Janela operacional da clínica (em minutos do dia)
+_DAY_START_MIN = 8 * 60                 # 08:00
+_LUNCH_CORE_START_MIN = 12 * 60 + 30    # 12:30 (núcleo do almoço — flex 30min antes)
+_LUNCH_CORE_END_MIN = 13 * 60 + 30      # 13:30 (núcleo do almoço — flex 30min depois)
+_DAY_END_MIN = 19 * 60 + 30             # 19:30 (com flex pra encaixe tardio)
+
+_SUGG_MIN_GAP_MIN = 30          # menor gap considerado "vaga útil"
+_SUGG_BUSINESS_DAYS = 3         # encaixe é decisão imediata: só próximos 3 dias úteis
+_SUGG_MAX_LOOKAHEAD_DAYS = 7    # limite hard pra evitar atravessar weekend longo
+_SUGG_RISK_THRESHOLD = 0.40     # 40% de risco de falta pra entrar como sugestão
+_SUGG_MAX_PER_ITEM = 3
+_SUGG_MIN_LEAD_MIN = 60         # mínimo 1h de antecedência (não sugerir agora)
+
+
+def _next_business_dates(start: date, count: int, max_lookahead: int) -> list[date]:
+    """Retorna até `count` próximas datas úteis a partir de `start` (inclusive),
+    excluindo sábados e domingos. Limita a busca a `max_lookahead` dias corridos.
+    """
+    out: list[date] = []
+    for offset in range(max_lookahead + 1):
+        d = start + timedelta(days=offset)
+        if d.weekday() >= 5:  # 5=sábado, 6=domingo
+            continue
+        out.append(d)
+        if len(out) >= count:
+            break
+    return out
+
+
+def _fmt_hhmm(min_of_day: int) -> str:
+    return f"{min_of_day // 60:02d}:{min_of_day % 60:02d}"
+
+
+def _fmt_dur(total_min: int) -> str:
+    h, m = divmod(total_min, 60)
+    if h == 0:
+        return f"{m}min"
+    if m == 0:
+        return f"{h}h"
+    return f"{h}h{m:02d}"
+
+
+async def _suggest_for_waitlist_item(
+    db: AsyncSession,
+    tenant_id: str,
+    prof_id: int,
+    target: date,
+    excluded_appt_id: str,
+    now_local: Optional[datetime] = None,
+) -> list[WaitlistSuggestion]:
+    """Gera até 3 sugestões pra acomodar 1 paciente da fila de espera.
+
+    Regras temporais:
+    - Considera apenas slots **com 1h+ de antecedência** (não sugere agora/passado)
+    - Janela diária 08:00–19:30 (com flexibilidade pra encaixe até 19:30)
+    - Bloco de almoço **rígido 12:30–13:30** (núcleo) — slots em 12:00–12:30 e
+      13:30–14:00 são permitidos como "flex de almoço"
+    - Domingos são pulados
+
+    Combina:
+    - VAGAS LIVRES: gaps ≥30min entre consultas/almoço
+    - RISCO DE FALTA: consultas marcadas com paciente de alto risco de no-show
+    """
+    if now_local is None:
+        now_local = datetime.now()
+    today_local = now_local.date()
+    now_min_today = now_local.hour * 60 + now_local.minute
+
+    # Encaixe é decisão IMEDIATA: foco nos próximos 3 dias úteis
+    # (sábado/domingo fora — clínica não atende)
+    search_start = max(target, today_local)
+    busi_dates = _next_business_dates(
+        search_start, _SUGG_BUSINESS_DAYS, _SUGG_MAX_LOOKAHEAD_DAYS,
+    )
+    if not busi_dates:
+        return []
+    janela_inicio = busi_dates[0]
+    janela_fim = busi_dates[-1]
+
+    appts_q = await db.execute(
+        text("""
+            SELECT
+                fa.external_id,
+                fa.appointment_datetime,
+                fa.duration_minutes,
+                fa.date_key,
+                fa.status_type,
+                fa.patient_external_id,
+                dp.name AS paciente_nome
+            FROM fato_agenda fa
+            LEFT JOIN dim_paciente dp
+                ON dp.tenant_id = fa.tenant_id
+               AND CAST(dp.external_id AS UNSIGNED) = fa.patient_external_id
+            WHERE fa.tenant_id = :tid
+              AND fa.professional_external_id = :pid
+              AND fa.is_canceled = 0
+              AND fa.date_key BETWEEN :d AND :fim
+              AND fa.appointment_datetime IS NOT NULL
+              AND fa.external_id <> :excl
+              AND (fa.status_type IS NULL OR fa.status_type NOT IN ('CHECKOUT', 'MISSED'))
+            ORDER BY fa.appointment_datetime
+        """),
+        {"tid": tenant_id, "pid": prof_id, "d": janela_inicio, "fim": janela_fim, "excl": excluded_appt_id},
+    )
+    appts = appts_q.all()
+
+    by_day: dict[date, list] = {}
+    for r in appts:
+        d = r.date_key
+        by_day.setdefault(d, []).append(r)
+
+    vagas_livres: list[WaitlistSuggestion] = []
+
+    # ── VAGAS LIVRES: gaps no expediente, respeitando almoço ─────
+    for d in busi_dates:
+        # Início efetivo: hoje respeita lead time de 1h
+        start_eff = (
+            max(_DAY_START_MIN, now_min_today + _SUGG_MIN_LEAD_MIN)
+            if d == today_local else _DAY_START_MIN
+        )
+        if start_eff >= _DAY_END_MIN:
+            continue  # dia já encerrou ou não dá tempo
+
+        # Lista ordenada de blocos ocupados: appts + núcleo do almoço
+        blocked: list[tuple[int, int]] = [(_LUNCH_CORE_START_MIN, _LUNCH_CORE_END_MIN)]
+        for a in sorted(by_day.get(d, []), key=lambda x: x.appointment_datetime):
+            s = a.appointment_datetime.hour * 60 + a.appointment_datetime.minute
+            e = s + int(a.duration_minutes or 30)
+            blocked.append((s, e))
+        blocked.sort()
+
+        # Encontra gaps entre cursor e cada bloco
+        gaps_dia: list[tuple[int, int]] = []
+        cursor = start_eff
+        for s, e in blocked:
+            if e <= cursor:
+                continue  # bloco totalmente antes do cursor
+            if s < cursor:
+                cursor = max(cursor, e)
+                continue
+            gap_end = min(s, _DAY_END_MIN)
+            gap_min = gap_end - cursor
+            if gap_min >= _SUGG_MIN_GAP_MIN:
+                gaps_dia.append((cursor, gap_end))
+            cursor = max(cursor, e)
+            if cursor >= _DAY_END_MIN:
+                break
+
+        # Gap final até o fim do expediente
+        if cursor < _DAY_END_MIN - _SUGG_MIN_GAP_MIN:
+            gaps_dia.append((cursor, _DAY_END_MIN))
+
+        # Limita a 1 vaga por dia (a maior) pra não poluir
+        if not gaps_dia:
+            continue
+        gaps_dia.sort(key=lambda g: -(g[1] - g[0]))
+        best_start, best_end = gaps_dia[0]
+        gap_min = best_end - best_start
+
+        razao = (
+            f"Bloco livre de {_fmt_dur(gap_min)} ({_fmt_hhmm(best_start)} – {_fmt_hhmm(best_end)})"
+            if gap_min >= 240 else
+            f"Vaga de {_fmt_dur(gap_min)} ({_fmt_hhmm(best_start)} – {_fmt_hhmm(best_end)})"
+        )
+        vagas_livres.append(WaitlistSuggestion(
+            tipo="vaga_livre",
+            date_iso=d.isoformat(),
+            horario=_fmt_hhmm(best_start),
+            duration_min=gap_min,
+            razao=razao,
+        ))
+
+    # Ordena vagas livres por (data, horário) — mais próximas primeiro
+    vagas_livres.sort(key=lambda s: (s.date_iso, s.horario))
+
+    # ── 3. RISCO DE FALTA ────────────────────────────────────────
+    # Para cada consulta candidata, pega histórico do paciente nos últimos 90d
+    # Heurística enxuta: faltou_h / finalizadas_h >= threshold (com mín 2 finalizadas)
+    pids = list({int(r.patient_external_id) for r in appts if r.patient_external_id is not None})
+    hist_map: dict[int, dict] = {}
+    if pids:
+        since = target - timedelta(days=90)
+        # chunk por segurança
+        chunk = 500
+        for i in range(0, len(pids), chunk):
+            batch = pids[i:i + chunk]
+            placeholders = ",".join([f":pid_{j}" for j in range(len(batch))])
+            params = {f"pid_{j}": p for j, p in enumerate(batch)}
+            params.update({"tid": tenant_id, "since": since, "target": target})
+            q = await db.execute(
+                text(f"""
+                    SELECT
+                        patient_external_id,
+                        SUM(status_type = 'MISSED') AS faltou,
+                        SUM(status_type = 'CHECKOUT') AS atendido
+                    FROM fato_agenda
+                    WHERE tenant_id = :tid
+                      AND is_canceled = 0
+                      AND date_key BETWEEN :since AND :target
+                      AND patient_external_id IN ({placeholders})
+                      AND status_type IN ('MISSED', 'CHECKOUT')
+                    GROUP BY patient_external_id
+                """),
+                params,
+            )
+            for row in q.all():
+                hist_map[int(row.patient_external_id)] = {
+                    "faltou": int(row.faltou or 0),
+                    "atendido": int(row.atendido or 0),
+                }
+
+    busi_dates_set = set(busi_dates)
+    riscos: list[WaitlistSuggestion] = []
+    for r in appts:
+        if r.patient_external_id is None:
+            continue
+        # Restringe à mesma janela de 3 dias úteis (sem sábado/domingo)
+        if r.date_key not in busi_dates_set:
+            continue
+        # Respeita lead time de 1h pra hoje
+        if r.date_key == today_local:
+            appt_min = r.appointment_datetime.hour * 60 + r.appointment_datetime.minute
+            if appt_min < now_min_today + _SUGG_MIN_LEAD_MIN:
+                continue
+        h = hist_map.get(int(r.patient_external_id))
+        if not h:
+            continue  # sem histórico não vira sugestão de risco (ruído)
+        finalizadas = h["faltou"] + h["atendido"]
+        if finalizadas < 2:
+            continue
+        taxa = h["faltou"] / finalizadas
+        # bump quando ainda não confirmou
+        if r.status_type is None:
+            taxa += 0.10
+        if taxa < _SUGG_RISK_THRESHOLD:
+            continue
+        risco_pct = int(round(min(1.0, taxa) * 100))
+        razoes = [f"faltou {h['faltou']} de {finalizadas}"]
+        if r.status_type is None:
+            razoes.append("não confirmou")
+        riscos.append(WaitlistSuggestion(
+            tipo="risco_falta",
+            date_iso=r.date_key.isoformat(),
+            horario=r.appointment_datetime.strftime("%H:%M"),
+            duration_min=int(r.duration_minutes or 30),
+            razao=f"{risco_pct}% risco — " + ", ".join(razoes),
+            paciente_em_risco_nome=r.paciente_nome,
+            paciente_em_risco_id=int(r.patient_external_id),
+            risco_pct=risco_pct,
+        ))
+
+    # Ordena riscos por (risco desc, data asc)
+    riscos.sort(key=lambda s: (-(s.risco_pct or 0), s.date_iso, s.horario))
+
+    # ── 4. Mistura: prioriza vagas livres, depois riscos ─────────
+    final: list[WaitlistSuggestion] = []
+    final.extend(vagas_livres[:2])         # até 2 vagas livres
+    final.extend(riscos[:_SUGG_MAX_PER_ITEM - len(final)])  # completa com riscos
+    return final[:_SUGG_MAX_PER_ITEM]
+
+
 # ── Lista de espera (tags Aguardado vaga / Encaixe) ─────────────
 
 
 async def _waitlist(
     db: AsyncSession, tenant_id: str, target: date,
+    now_local: Optional[datetime] = None,
 ) -> WaitlistSection:
     """Pacientes com tag 'Aguardado vaga' ou 'Encaixe' no Clinicorp.
     A tag aplica em UM appointment específico (vaga tentativa). Quando o
@@ -641,6 +907,11 @@ async def _waitlist(
     Retorna janela de ±7 dias (passado conta como aguardando há mais tempo,
     futuro mostra quem JÁ tem vaga marcada e está na fila).
     """
+    # Filtra status finais: o Clinicorp NÃO remove as tags 'Aguardado vaga'
+    # ou 'Encaixe' depois que o paciente é atendido — então precisamos excluir
+    # consultas em status final pra fila não inflar com casos já resolvidos.
+    # Status finais conhecidos: CHECKOUT (atendido), MISSED (faltou).
+    # Mantemos NULL e CONFIRMED (ainda aguardando atendimento).
     sql = text("""
         SELECT
             t.appointment_external_id,
@@ -666,6 +937,7 @@ async def _waitlist(
           AND t.is_deleted = 0
           AND t.tag_class IN ('waitlist', 'encaixe')
           AND fa.is_canceled = 0
+          AND (fa.status_type IS NULL OR fa.status_type NOT IN ('CHECKOUT', 'MISSED'))
           AND fa.date_key BETWEEN DATE_SUB(:d, INTERVAL 7 DAY) AND DATE_ADD(:d, INTERVAL 14 DAY)
         ORDER BY t.tag_class, fa.appointment_datetime ASC
     """)
@@ -703,6 +975,18 @@ async def _waitlist(
         dias_aguard = (target - d["tag_at"].date()).days if d["tag_at"] else 0
         if dias_aguard < 0:
             dias_aguard = 0
+
+        # Sugestões inteligentes: vagas livres + risco de falta com o mesmo prof
+        suggestions: list[WaitlistSuggestion] = []
+        if d["prof_id"] is not None:
+            try:
+                suggestions = await _suggest_for_waitlist_item(
+                    db, tenant_id, int(d["prof_id"]), target,
+                    excluded_appt_id=appt, now_local=now_local,
+                )
+            except Exception:
+                suggestions = []  # falha silenciosa não quebra a fila
+
         items.append(WaitlistItem(
             appointment_external_id=appt,
             paciente_external_id=d["patient_id"],
@@ -715,6 +999,7 @@ async def _waitlist(
             is_encaixe=d["is_encaixe"],
             dias_aguardando=dias_aguard,
             tag_color=d["color"],
+            suggestions=suggestions,
         ))
         if d["is_waitlist"]:
             waitlist_count += 1

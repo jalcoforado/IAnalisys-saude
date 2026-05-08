@@ -7,6 +7,7 @@ import {
   PanelLeft,
   PanelTop,
   Palette,
+  Settings as SettingsIcon,
   Sun,
   Moon,
 } from 'lucide-react'
@@ -17,13 +18,21 @@ import {
   type TopbarColor,
 } from '@/contexts/SettingsContext'
 import { usePageTitle } from '@/contexts/PageTitleContext'
+import { PageContainer } from '@/components/layout/PageContainer'
+import { PageHeader } from '@/components/layout/PageHeader'
 
 export default function SettingsPage() {
   usePageTitle('Configurações', 'Aparência, layout e preferências', 'ADMIN')
   const { settings, setNavMode, setTopbarColor, setLayoutMode, reset } = useSettings()
 
   return (
-    <main className="px-6 py-6 max-w-5xl mx-auto space-y-6">
+    <PageContainer variant="narrow" gap={6}>
+      <PageHeader
+        eyebrow="ADMIN"
+        title="Configurações"
+        subtitle="Aparência, layout e preferências"
+        icon={<SettingsIcon size={20} />}
+      />
       <p className="text-xs text-neutral-500">
         Personalize a aparência e o layout da plataforma. As preferências ficam salvas neste navegador.
       </p>
@@ -116,7 +125,7 @@ export default function SettingsPage() {
           Restaurar padrão
         </button>
       </div>
-    </main>
+    </PageContainer>
   )
 }
 

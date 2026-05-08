@@ -1,12 +1,14 @@
 import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { CheckCircle2, Mail, Plus, ShieldAlert, UserMinus, X } from 'lucide-react'
+import { CheckCircle2, Mail, Plus, ShieldAlert, UserMinus, Users, X } from 'lucide-react'
 
 import { usePageTitle } from '@/contexts/PageTitleContext'
 import { usePermissions } from '@/hooks/usePermissions'
 import { useAuth } from '@/modules/auth/AuthContext'
 import { permissionsService } from '@/services/permissions.service'
 import { usersService } from '@/services/users.service'
+import { PageContainer } from '@/components/layout/PageContainer'
+import { PageHeader } from '@/components/layout/PageHeader'
 import type { UserListItem } from '@/types/user'
 
 const ROLE_LABEL: Record<string, string> = {
@@ -82,12 +84,16 @@ export default function UsersPage() {
   })
 
   if (usersQuery.isLoading || rolesQuery.isLoading) {
-    return <div className="p-8 text-sm text-neutral-500">Carregando usuários…</div>
+    return (
+      <PageContainer>
+        <div className="text-sm text-neutral-500">Carregando usuários…</div>
+      </PageContainer>
+    )
   }
 
   if (usersQuery.isError) {
     return (
-      <div className="p-8">
+      <PageContainer>
         <div className="bg-error-bg border border-error-border rounded-lg p-4 text-sm text-error-text flex items-start gap-3">
           <ShieldAlert size={18} />
           <div>
@@ -95,33 +101,29 @@ export default function UsersPage() {
             <p>Verifique se você tem permissão <code>usuarios.read</code>.</p>
           </div>
         </div>
-      </div>
+      </PageContainer>
     )
   }
 
   const users = usersQuery.data ?? []
 
   return (
-    <div className="p-6 max-w-7xl mx-auto">
-      {/* Hero */}
-      <div className="mb-6 flex items-start justify-between gap-4 flex-wrap">
-        <div>
-          <h1 className="text-xl font-bold text-neutral-900">Usuários</h1>
-          <p className="text-sm text-neutral-500 mt-1">
-            Cadastre, edite ou desative quem tem acesso à plataforma. Convites
-            são enviados por email com link válido por 72 horas.
-          </p>
-        </div>
-        {canInvite && (
+    <PageContainer>
+      <PageHeader
+        eyebrow="EMPRESA"
+        title="Usuários"
+        subtitle="Cadastre, edite ou desative quem tem acesso à plataforma"
+        icon={<Users size={20} />}
+        actions={canInvite && (
           <button
             onClick={() => setShowInvite(true)}
-            className="inline-flex items-center gap-2 bg-primary-700 hover:bg-primary-800 text-white text-sm font-medium px-4 py-2 rounded-lg"
+            className="inline-flex items-center gap-2 bg-white/15 hover:bg-white/25 text-white text-sm font-medium px-3 py-2 rounded-lg ring-1 ring-white/20"
           >
             <Plus size={16} />
             Convidar usuário
           </button>
         )}
-      </div>
+      />
 
       {feedback && (
         <div
@@ -177,7 +179,7 @@ export default function UsersPage() {
           assignableRoles={assignableRoles}
         />
       )}
-    </div>
+    </PageContainer>
   )
 }
 

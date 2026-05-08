@@ -369,8 +369,8 @@ export function SyncProviderPanel({ config }: { config: SyncProviderConfig }) {
                       <button
                         onClick={() => txMonthMut.mutate({ year, month: monthNum })}
                         disabled={isFuture || isAnyRunning}
-                        title={isFuture ? 'mês futuro' : `Sincronizar ${m}/${year} (todas as entidades)`}
-                        className="px-1 py-0.5 rounded hover:bg-primary-50 disabled:opacity-30 disabled:cursor-not-allowed"
+                        title={isFuture ? 'mês futuro' : `Sincronizar ${m}/${year} — todas as entidades`}
+                        className="px-2 py-1 rounded-md text-primary-700 bg-primary-50 ring-1 ring-primary-200 hover:bg-primary-100 hover:ring-primary-300 active:bg-primary-200 disabled:opacity-30 disabled:cursor-not-allowed disabled:bg-transparent disabled:ring-0 disabled:text-neutral-400 transition cursor-pointer font-semibold"
                       >
                         {m}
                       </button>
@@ -415,11 +415,13 @@ export function SyncProviderPanel({ config }: { config: SyncProviderConfig }) {
             </tbody>
           </table>
         </div>
-        {!config.syncEntityMonth && (
-          <div className="text-[11px] text-neutral-500 px-4 py-2 border-t">
-            Para sincronizar, clique no <strong>mês</strong> no cabeçalho — vai disparar todas as entidades transacionais juntas.
-          </div>
-        )}
+        <div className="text-[11px] text-neutral-500 px-4 py-2 border-t">
+          {config.syncEntityMonth ? (
+            <>Clique no <strong>mês</strong> no cabeçalho para sincronizar todas as entidades de uma vez, ou em uma <strong>célula</strong> para sincronizar apenas aquela entidade naquele mês.</>
+          ) : (
+            <>Clique no <strong>mês</strong> no cabeçalho para sincronizar todas as entidades transacionais daquele mês de uma vez.</>
+          )}
+        </div>
       </section>
 
       {/* Log de execuções */}

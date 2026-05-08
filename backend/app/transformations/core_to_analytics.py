@@ -307,6 +307,7 @@ async def build_fato_agenda(
           tenant_id, external_id, date_key, year, month, year_month_key,
           rebuilt_at, patient_external_id, professional_external_id,
           appointment_datetime, duration_minutes, is_canceled,
+          is_efetiva, is_falta, is_indefinida,
           category_description, category_color, category_group,
           status_id, status_type, status_description, status_color,
           has_waitlist, has_encaixe, has_remarcar, has_lembrete,
@@ -332,6 +333,14 @@ async def build_fato_agenda(
           END AS appointment_datetime,
           a.duration_minutes,
           a.is_deleted,
+          -- Decomposição do "não cancelado" pelo status_type da Clinicorp.
+          -- CHECKOUT = paciente atendido (consulta efetiva).
+          -- MISSED = paciente faltou (absenteísmo real, não inclui cancelamento).
+          -- NULL não-cancelado = recepção esqueceu de atualizar — fora das métricas.
+          -- COALESCE protege contra NULL no s.type (LEFT JOIN sem match).
+          IF(a.is_deleted = 0 AND COALESCE(s.type,'') = 'CHECKOUT', 1, 0) AS is_efetiva,
+          IF(a.is_deleted = 0 AND COALESCE(s.type,'') = 'MISSED', 1, 0)   AS is_falta,
+          IF(a.is_deleted = 0 AND s.type IS NULL, 1, 0)                   AS is_indefinida,
           a.category_description,
           a.category_color,
           CASE
@@ -423,6 +432,9 @@ async def build_fato_agenda(
           appointment_datetime = VALUES(appointment_datetime),
           duration_minutes = VALUES(duration_minutes),
           is_canceled = VALUES(is_canceled),
+          is_efetiva = VALUES(is_efetiva),
+          is_falta = VALUES(is_falta),
+          is_indefinida = VALUES(is_indefinida),
           category_description = VALUES(category_description),
           category_color = VALUES(category_color),
           category_group = VALUES(category_group),

@@ -9,6 +9,8 @@ import { Loader2, Calendar } from 'lucide-react'
 
 import { homeService } from '@/services/home.service'
 import { usePageTitle } from '@/contexts/PageTitleContext'
+import { PageContainer } from '@/components/layout/PageContainer'
+import { PageHeader } from '@/components/layout/PageHeader'
 import type { AgendaSection, StatusType } from '@/types/home'
 import { AgendaMatrix } from './AgendaMatrix'
 import { AgendaInsightsCard } from './AgendaInsightsCard'
@@ -67,46 +69,44 @@ function AgendaPageHeader({ agenda }: { agenda: AgendaSection }) {
     if (c > 0) pills.push({ label: STATUS_LABEL[s], count: c, dotClass: STATUS_DOT[s] })
   }
 
+  const wd = fmtWeekday(agenda.date_iso)
+  const wdCap = wd.charAt(0).toUpperCase() + wd.slice(1)
   return (
-    <div className="rounded-xl bg-gradient-to-r from-blue-600 to-blue-700 text-white px-5 py-4 space-y-3">
-      <div className="flex items-center gap-4">
-        <div className="w-12 h-12 rounded-xl bg-white/15 flex items-center justify-center backdrop-blur-sm shrink-0">
-          <Calendar size={24} className="text-white" />
-        </div>
-        <div className="flex-1 min-w-0">
-          <div className="text-[10px] uppercase tracking-wider text-white/70 font-semibold">
-            {agenda.is_today ? 'Agenda de hoje' : 'Próximo dia com consultas'}
+    <>
+      <PageHeader
+        eyebrow={agenda.is_today ? 'AGENDA DE HOJE' : 'PRÓXIMO DIA COM CONSULTAS'}
+        title={wdCap}
+        subtitle={fmtDateLong(agenda.date_iso)}
+        icon={<Calendar size={20} />}
+        actions={
+          <div className="text-right">
+            <div className="text-[10px] uppercase tracking-wider text-white/70 font-semibold">Total</div>
+            <div className="text-3xl font-bold tabular-nums">{agenda.total}</div>
           </div>
-          <div className="text-lg font-bold capitalize">{fmtWeekday(agenda.date_iso)}</div>
-          <div className="text-xs text-white/80">{fmtDateLong(agenda.date_iso)}</div>
-        </div>
-        <div className="text-right shrink-0">
-          <div className="text-[10px] uppercase tracking-wider text-white/70 font-semibold">Total</div>
-          <div className="text-3xl font-bold tabular-nums">{agenda.total}</div>
-        </div>
-      </div>
+        }
+      />
 
       {/* Breakdown por status — pills com cor + contagem + percentual */}
       {pills.length > 0 && (
-        <div className="flex flex-wrap gap-2 pt-1">
+        <div className="flex flex-wrap gap-2">
           {pills.map((p) => {
             const pct = agenda.total > 0 ? Math.round((p.count / agenda.total) * 100) : 0
             return (
               <div
                 key={p.label}
-                className="inline-flex items-center gap-1.5 bg-white/15 backdrop-blur-sm rounded-full pl-2 pr-2.5 py-1 text-[11px]"
+                className="inline-flex items-center gap-1.5 bg-white border border-neutral-200 rounded-full pl-2 pr-2.5 py-1 text-[11px] shadow-sm"
               >
-                <span className={`w-2 h-2 rounded-full ${p.dotClass} ring-1 ring-white/30`} />
-                <span className="font-medium text-white">{p.label}</span>
-                <span className="font-bold text-white tabular-nums">{p.count}</span>
-                <span className="text-white/60">·</span>
-                <span className="text-white/80 tabular-nums">{pct}%</span>
+                <span className={`w-2 h-2 rounded-full ${p.dotClass === 'bg-white/40' ? 'bg-neutral-400' : p.dotClass}`} />
+                <span className="font-medium text-neutral-700">{p.label}</span>
+                <span className="font-bold text-neutral-900 tabular-nums">{p.count}</span>
+                <span className="text-neutral-300">·</span>
+                <span className="text-neutral-500 tabular-nums">{pct}%</span>
               </div>
             )
           })}
         </div>
       )}
-    </div>
+    </>
   )
 }
 
@@ -126,7 +126,7 @@ export default function AgendaPage() {
   })
 
   return (
-    <main className="px-6 py-6 max-w-[1400px] mx-auto space-y-4">
+    <PageContainer variant="wide">
       {/* Seletor de dia */}
       <div className="flex items-center gap-2">
         <span className="text-[11px] uppercase tracking-wider font-semibold text-neutral-500 mr-1">
@@ -188,6 +188,6 @@ export default function AgendaPage() {
           <AgendaMatrix data={agendaQ.data} />
         </>
       )}
-    </main>
+    </PageContainer>
   )
 }
