@@ -157,12 +157,15 @@ function Body({ data }: { data: AnaliseComercialResponse }) {
 
       {/* Top procedimentos + Top especialidades */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-        <TopProcedimentosCard data={data.top_procedimentos} />
-        <TopEspecialidadesCard data={data.top_especialidades} />
+        <TopProcedimentosCard data={data.top_procedimentos} consultasEfetivas={data.kpis.consultas.value} />
+        <TopEspecialidadesCard data={data.top_especialidades} consultasEfetivas={data.kpis.consultas.value} />
       </div>
 
       {/* Top profissionais (linha cheia) */}
-      <TopProfsConsultasCard data={data.top_profissionais} />
+      <TopProfsConsultasCard
+        data={data.top_profissionais}
+        absMediaClinica={data.kpis.absenteismo_pct.value}
+      />
 
       {/* Mix categorias + Operacional */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
@@ -633,16 +636,22 @@ function EvolutionChart({ data }: { data: AnaliseComercialResponse['evolution'] 
 
 // ── Top procedimentos ─────────────────────────────────────────
 
-function TopProcedimentosCard({ data }: { data: TopProcedimentoExecutado[] }) {
+function TopProcedimentosCard({
+  data, consultasEfetivas,
+}: { data: TopProcedimentoExecutado[]; consultasEfetivas: number }) {
   const max = Math.max(...data.map((p) => p.qtd_executados), 1)
+  const totalProcs = data.reduce((s, p) => s + p.qtd_executados, 0)
   return (
     <div className="bg-white border border-neutral-200 rounded-xl p-4 shadow-sm">
-      <div className="flex items-center gap-2 mb-3">
+      <div className="flex items-center gap-2 mb-1">
         <TrendingUp size={14} className="text-neutral-600" />
         <span className="text-[11px] uppercase tracking-wider font-bold text-neutral-500">
           Top Procedimentos Executados
         </span>
         <span className="ml-auto text-[10px] text-neutral-400">por volume</span>
+      </div>
+      <div className="text-[10px] text-neutral-400 mb-3">
+        {fmtNum(totalProcs)} procedimentos em {fmtNum(consultasEfetivas)} consultas atendidas
       </div>
       {data.length === 0 ? (
         <div className="text-sm text-neutral-400 py-6 text-center">Sem procedimentos no período.</div>
@@ -688,16 +697,22 @@ function TopProcedimentosCard({ data }: { data: TopProcedimentoExecutado[] }) {
 
 // ── Top especialidades ────────────────────────────────────────
 
-function TopEspecialidadesCard({ data }: { data: TopEspecialidadeDemanda[] }) {
+function TopEspecialidadesCard({
+  data, consultasEfetivas,
+}: { data: TopEspecialidadeDemanda[]; consultasEfetivas: number }) {
   const max = Math.max(...data.map((e) => e.qtd_procedimentos), 1)
+  const totalProcs = data.reduce((s, e) => s + e.qtd_procedimentos, 0)
   const palette = ['bg-emerald-500', 'bg-blue-500', 'bg-purple-500', 'bg-amber-500', 'bg-rose-500', 'bg-cyan-500', 'bg-indigo-500', 'bg-pink-500']
   return (
     <div className="bg-white border border-neutral-200 rounded-xl p-4 shadow-sm">
-      <div className="flex items-center gap-2 mb-3">
+      <div className="flex items-center gap-2 mb-1">
         <BarChart3 size={14} className="text-neutral-600" />
         <span className="text-[11px] uppercase tracking-wider font-bold text-neutral-500">
           Top Especialidades em Demanda
         </span>
+      </div>
+      <div className="text-[10px] text-neutral-400 mb-3">
+        {fmtNum(totalProcs)} procedimentos em {fmtNum(consultasEfetivas)} consultas atendidas
       </div>
       {data.length === 0 ? (
         <div className="text-sm text-neutral-400 py-6 text-center">Sem dados.</div>
@@ -731,8 +746,15 @@ function TopEspecialidadesCard({ data }: { data: TopEspecialidadeDemanda[] }) {
 
 // ── Top profissionais por consultas ───────────────────────────
 
-function TopProfsConsultasCard({ data }: { data: TopProfissionalConsultas[] }) {
+function TopProfsConsultasCard({
+  data, absMediaClinica,
+}: { data: TopProfissionalConsultas[]; absMediaClinica: number }) {
   const max = Math.max(...data.map((p) => p.qtd_consultas), 1)
+  // Volume mínimo (efetivas + faltas) pra exibir absenteísmo — abaixo disso
+  // o número fica ruidoso (1 falta em 2 atendimentos = 33%).
+  const MIN_VOL_ABS = 10
+  // Destacar quando profissional está acima da média da clínica + 2pp.
+  const ALERT_ABOVE = absMediaClinica + 2
   return (
     <div className="bg-white border border-neutral-200 rounded-xl p-4 shadow-sm">
       <div className="flex items-center gap-2 mb-3">
@@ -740,48 +762,65 @@ function TopProfsConsultasCard({ data }: { data: TopProfissionalConsultas[] }) {
         <span className="text-[11px] uppercase tracking-wider font-bold text-neutral-500">
           Top Profissionais por Volume de Consultas
         </span>
-        <span className="ml-auto text-[10px] text-neutral-400">consultas executadas</span>
+        <span className="ml-auto text-[10px] text-neutral-400">
+          consultas atendidas · média da clínica {absMediaClinica.toFixed(1)}% abs.
+        </span>
       </div>
       {data.length === 0 ? (
         <div className="text-sm text-neutral-400 py-6 text-center">Sem consultas no período.</div>
       ) : (
         <ul className="space-y-2.5">
-          {data.map((p, i) => (
-            <li key={p.professional_external_id}>
-              <div className="flex items-center gap-2 mb-1">
-                <span className={`w-5 h-5 rounded-full text-[10px] font-bold flex items-center justify-center shrink-0 ${
-                  i === 0 ? 'bg-amber-100 text-amber-700' :
-                  i === 1 ? 'bg-neutral-100 text-neutral-600' :
-                  i === 2 ? 'bg-orange-100 text-orange-700' :
-                  'bg-neutral-50 text-neutral-500'
-                }`}>{i + 1}</span>
-                <span className="text-[12px] font-medium text-neutral-800 truncate flex-1" title={p.nome}>
-                  {p.nome}
-                </span>
-                <span className="text-[12px] font-bold tabular-nums text-neutral-900 shrink-0">
-                  {fmtNum(p.qtd_consultas)}
-                </span>
-              </div>
-              <div className="ml-7 flex items-center gap-2">
-                <div className="flex-1 h-1.5 bg-neutral-100 rounded-full overflow-hidden">
-                  <div
-                    className={`h-full rounded-full ${i === 0 ? 'bg-amber-500' : 'bg-blue-500'}`}
-                    style={{ width: `${(p.qtd_consultas / max) * 100}%` }}
-                  />
+          {data.map((p, i) => {
+            const volumeDesfecho = p.qtd_consultas + p.qtd_faltas
+            const showAbs = volumeDesfecho >= MIN_VOL_ABS
+            const absAlerta = showAbs && p.absenteismo_pct > ALERT_ABOVE
+            return (
+              <li key={p.professional_external_id}>
+                <div className="flex items-center gap-2 mb-1">
+                  <span className={`w-5 h-5 rounded-full text-[10px] font-bold flex items-center justify-center shrink-0 ${
+                    i === 0 ? 'bg-amber-100 text-amber-700' :
+                    i === 1 ? 'bg-neutral-100 text-neutral-600' :
+                    i === 2 ? 'bg-orange-100 text-orange-700' :
+                    'bg-neutral-50 text-neutral-500'
+                  }`}>{i + 1}</span>
+                  <span className="text-[12px] font-medium text-neutral-800 truncate flex-1" title={p.nome}>
+                    {p.nome}
+                  </span>
+                  <span className="text-[12px] font-bold tabular-nums text-neutral-900 shrink-0">
+                    {fmtNum(p.qtd_consultas)}
+                  </span>
                 </div>
-                <span className="text-[10px] text-neutral-500 w-10 text-right">{p.pct_volume.toFixed(0)}%</span>
-              </div>
-              <div className="ml-7 mt-1 text-[10px] text-neutral-500 flex items-center gap-2 flex-wrap">
-                <span>{p.pacientes_distintos} pacientes</span>
-                <span className="text-neutral-400">·</span>
-                <span>{p.qtd_canceladas} canc</span>
-                <span className="text-neutral-400">·</span>
-                <span className={p.absenteismo_pct >= 15 ? 'text-rose-600 font-semibold' : ''}>
-                  {p.absenteismo_pct.toFixed(1)}% absent.
-                </span>
-              </div>
-            </li>
-          ))}
+                <div className="ml-7 flex items-center gap-2">
+                  <div className="flex-1 h-1.5 bg-neutral-100 rounded-full overflow-hidden">
+                    <div
+                      className={`h-full rounded-full ${i === 0 ? 'bg-amber-500' : 'bg-blue-500'}`}
+                      style={{ width: `${(p.qtd_consultas / max) * 100}%` }}
+                    />
+                  </div>
+                  <span className="text-[10px] text-neutral-500 w-10 text-right">{p.pct_volume.toFixed(0)}%</span>
+                </div>
+                <div className="ml-7 mt-1 text-[10px] text-neutral-500 flex items-center gap-2 flex-wrap">
+                  <span>{p.pacientes_distintos} pacientes</span>
+                  <span className="text-neutral-400">·</span>
+                  <span>{p.qtd_faltas} faltas</span>
+                  <span className="text-neutral-400">·</span>
+                  <span>{p.qtd_canceladas} cancel</span>
+                  {showAbs && (
+                    <>
+                      <span className="text-neutral-400">·</span>
+                      <span
+                        className={absAlerta ? 'text-rose-600 font-semibold' : ''}
+                        title={absAlerta ? `Acima da média (${absMediaClinica.toFixed(1)}% + 2pp)` : undefined}
+                      >
+                        {p.absenteismo_pct.toFixed(1)}% abs.
+                        {absAlerta && ' ⚠'}
+                      </span>
+                    </>
+                  )}
+                </div>
+              </li>
+            )
+          })}
         </ul>
       )}
     </div>
@@ -790,113 +829,208 @@ function TopProfsConsultasCard({ data }: { data: TopProfissionalConsultas[] }) {
 
 // ── Mix categorias ────────────────────────────────────────────
 
+// ── Mix Categorias — taxonomia semântica ──────────────────────
+//
+// Backend retorna a chave canônica do `category_group` (heurística no builder
+// de fato_agenda). Aqui mapeamos pra label/cor/descrição estável: se ortodontia
+// trocar de cor amanhã, o gráfico inteiro vira inconsistente histórica.
+
+const CATEGORIA_GROUP_META: Record<string, {
+  label: string; color: string; bar: string; descricao: string
+}> = {
+  manutencao:   { label: 'Manutenção',    color: 'text-emerald-700', bar: 'bg-emerald-500', descricao: 'Manutenção, ajuste, limpeza, revisão — pacientes em acompanhamento periódico' },
+  procedimento: { label: 'Procedimentos', color: 'text-blue-700',    bar: 'bg-blue-500',    descricao: 'Cirurgia, restauração, endodontia, implante, exodontia — execução de tratamentos vendidos' },
+  retorno:      { label: 'Retorno',       color: 'text-cyan-700',    bar: 'bg-cyan-500',    descricao: 'Retornos e periódicos — controle pós-tratamento' },
+  reabilitacao: { label: 'Reabilitação',  color: 'text-purple-700',  bar: 'bg-purple-500',  descricao: 'Lentes, coroa, mockup, scanner, prótese, protocolo — etapas de reabilitação estética/funcional' },
+  consulta:     { label: 'Consulta inicial', color: 'text-amber-700', bar: 'bg-amber-500', descricao: 'Consulta, exame, orçamento — porta de entrada do funil comercial' },
+  ortodontia:   { label: 'Ortodontia',    color: 'text-pink-700',    bar: 'bg-pink-500',    descricao: 'Aparelho, contenção, invisalign — tratamentos ortodônticos em curso' },
+  bloqueio:     { label: 'Bloqueio',      color: 'text-neutral-600', bar: 'bg-neutral-400', descricao: 'Não agendar, pendências — tempo bloqueado na agenda' },
+  outro:        { label: 'Outros',        color: 'text-neutral-600', bar: 'bg-neutral-400', descricao: 'Categorias não classificadas pela heurística' },
+}
+
+function MixCategoriasTooltip() {
+  return (
+    <div className="space-y-2">
+      <div className="font-semibold text-[11.5px]">Como ler o mix</div>
+      <div className="text-neutral-300 leading-snug">
+        Agrupamos as ~80 categorias do Clinicorp em <strong>buckets semânticos</strong> pra dar leitura estratégica
+        (catálogo cru tem nomes inconsistentes — CONSULTA vs Consulta, várias variações).
+      </div>
+      <ul className="space-y-1.5 text-neutral-100">
+        {Object.entries(CATEGORIA_GROUP_META).filter(([k]) => k !== 'bloqueio').map(([k, m]) => (
+          <li key={k} className="flex gap-2">
+            <span className={`w-2 h-2 rounded-full ${m.bar} mt-1.5 shrink-0`} />
+            <div>
+              <span className="font-bold">{m.label}</span>
+              <div className="text-neutral-400 text-[10px] leading-snug">{m.descricao}</div>
+            </div>
+          </li>
+        ))}
+      </ul>
+      <div className="text-[10px] text-neutral-400 leading-snug pt-1 border-t border-neutral-700">
+        Insight estratégico: <strong>Manutenção + Retorno + Reabilitação</strong> = continuação de tratamento
+        (pacientes que já fecharam). <strong>Consulta inicial</strong> é a porta de entrada do funil.
+      </div>
+    </div>
+  )
+}
+
 function MixCategoriasCard({ data }: { data: MixCategoriaConsulta[] }) {
-  const palette = ['bg-blue-500', 'bg-emerald-500', 'bg-purple-500', 'bg-amber-500', 'bg-rose-500', 'bg-cyan-500', 'bg-indigo-500', 'bg-pink-500']
+  const fallback = { label: 'Outros', color: 'text-neutral-600', bar: 'bg-neutral-400', descricao: '' }
   return (
     <div className="bg-white border border-neutral-200 rounded-xl p-4 shadow-sm">
       <div className="flex items-center gap-2 mb-3">
         <FileText size={14} className="text-neutral-600" />
         <span className="text-[11px] uppercase tracking-wider font-bold text-neutral-500">
-          Mix de Categorias de Consulta
+          Mix da agenda — por tipo de atendimento
+        </span>
+        <span className="relative group/tip shrink-0 ml-auto">
+          <HelpCircle
+            size={13}
+            className="text-neutral-400 hover:text-neutral-600 cursor-help"
+            aria-label="O que cada grupo significa"
+          />
+          <div className="hidden group-hover/tip:block absolute z-20 right-0 top-full mt-1 w-80 bg-neutral-900 text-white text-[11px] leading-snug rounded-lg shadow-xl p-3 normal-case tracking-normal font-normal">
+            <MixCategoriasTooltip />
+          </div>
         </span>
       </div>
       {data.length === 0 ? (
         <div className="text-sm text-neutral-400 py-6 text-center">Sem consultas no período.</div>
       ) : (
-        <ul className="space-y-2">
-          {data.map((m, i) => (
-            <li key={m.categoria} className="flex items-center gap-3">
-              <span className={`w-2 h-2 rounded-full ${palette[i % palette.length]}`} />
-              <div className="flex-1 min-w-0">
-                <div className="flex items-baseline justify-between gap-2 mb-1">
-                  <span className="text-[12px] font-medium text-neutral-700 truncate">{m.categoria}</span>
-                  <span className="text-[12px] font-bold tabular-nums text-neutral-900 shrink-0">
-                    {fmtNum(m.qtd)}
-                  </span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <div className="flex-1 h-1.5 bg-neutral-100 rounded-full overflow-hidden">
-                    <div className={`h-full ${palette[i % palette.length]} opacity-80`} style={{ width: `${m.pct}%` }} />
+        <ul className="space-y-2.5">
+          {data.map((m) => {
+            const meta = CATEGORIA_GROUP_META[m.categoria] ?? fallback
+            return (
+              <li key={m.categoria} className="flex items-center gap-3">
+                <span className={`w-2 h-6 rounded-sm ${meta.bar} shrink-0`} />
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-baseline justify-between gap-2 mb-1">
+                    <span className={`text-[12px] font-semibold ${meta.color} truncate`}>{meta.label}</span>
+                    <span className="text-[12px] font-bold tabular-nums text-neutral-900 shrink-0">
+                      {fmtNum(m.qtd)}
+                    </span>
                   </div>
-                  <span className="text-[10px] text-neutral-500 tabular-nums w-10 text-right">{m.pct.toFixed(0)}%</span>
-                  {m.canceladas > 0 && (
-                    <span className={`text-[10px] tabular-nums w-12 text-right ${m.absenteismo_pct >= 15 ? 'text-rose-600 font-semibold' : 'text-neutral-500'}`}>
-                      {m.absenteismo_pct.toFixed(0)}% canc
-                    </span>
-                  )}
-                  {m.mom_pct !== null && Math.abs(m.mom_pct) >= 5 && (
-                    <span className={`text-[10px] font-semibold tabular-nums ${m.mom_pct > 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
-                      {fmtPct(m.mom_pct)}
-                    </span>
-                  )}
+                  <div className="flex items-center gap-2">
+                    <div className="flex-1 h-1.5 bg-neutral-100 rounded-full overflow-hidden">
+                      <div className={`h-full ${meta.bar} opacity-80`} style={{ width: `${m.pct}%` }} />
+                    </div>
+                    <span className="text-[10px] text-neutral-500 tabular-nums w-10 text-right">{m.pct.toFixed(1)}%</span>
+                    {m.mom_pct !== null && Math.abs(m.mom_pct) >= 5 && (
+                      <span className={`text-[10px] font-semibold tabular-nums w-12 text-right ${m.mom_pct > 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                        {fmtPct(m.mom_pct)}
+                      </span>
+                    )}
+                  </div>
                 </div>
-              </div>
-            </li>
-          ))}
+              </li>
+            )
+          })}
         </ul>
       )}
     </div>
   )
 }
 
-// ── Operacional ───────────────────────────────────────────────
+// ── Operacional — 3 blocos: problema / oportunidade / ações ───
+//
+// Reformulado em 2026-05-09. Card antigo mostrava 4 números soltos com
+// "R$ potencial perdido" calculado por ticket médio (artificial). Agora:
+//
+//  Bloco 1 — Tempo perdido: horas das faltas+canceladas (palpável, não inflado).
+//  Bloco 2 — Aproveitamento de slots ociosos: % de encaixes sobre slots perdidos.
+//  Bloco 3 — Ações pendentes: contadores das tags do Clinicorp.
 
 function OperacionalCard({ data }: { data: OperacionalComercial }) {
+  const taxaAprov = data.taxa_aproveitamento_pct
+  const taxaCor =
+    taxaAprov >= 30 ? 'text-emerald-700'
+      : taxaAprov >= 10 ? 'text-amber-700'
+        : 'text-rose-700'
+
+  const acoes = [
+    { label: 'Para remarcar',    qtd: data.remarcar_qty,         hint: 'cancelados sem nova data' },
+    { label: 'Retorno pendente', qtd: data.retorno_pendente_qty, hint: 'follow-up esperado'        },
+    { label: 'Em waitlist',      qtd: data.waitlist_qty,         hint: 'esperando vaga'           },
+  ]
+
   return (
     <div className="bg-white border border-neutral-200 rounded-xl p-4 shadow-sm">
       <div className="flex items-center gap-2 mb-3">
         <Activity size={14} className="text-neutral-600" />
         <span className="text-[11px] uppercase tracking-wider font-bold text-neutral-500">
-          Operacional
+          Operacional — problema, oportunidade, ações
         </span>
       </div>
-      <div className="grid grid-cols-2 gap-3">
-        <Stat
-          label="Encaixes"
-          value={fmtNum(data.encaixe_qty)}
-          hint={`${data.encaixe_pct.toFixed(1)}% das consultas`}
-        />
-        <Stat
-          label="Retorno pendente"
-          value={fmtNum(data.retorno_pendente_qty)}
-          hint="follow-up esperado"
-        />
-        <Stat
-          label="Para remarcar"
-          value={fmtNum(data.remarcar_qty)}
-          hint="ação direta"
-        />
-        <Stat
-          label="Cancelados"
-          value={fmtNum(data.cancelados_qty)}
-          hint={`${fmtBRL(data.cancelados_amount_estimado, true)} potencial perdido`}
-          danger
-        />
-      </div>
-    </div>
-  )
-}
 
-function Stat({
-  label, value, hint, danger,
-}: {
-  label: string; value: string; hint?: string; danger?: boolean
-}) {
-  return (
-    <div className={`rounded-lg border px-3 py-2.5 ${
-      danger ? 'bg-rose-50 border-rose-200' : 'bg-neutral-50 border-neutral-200'
-    }`}>
-      <div className={`text-[10px] uppercase tracking-wider font-bold ${
-        danger ? 'text-rose-700' : 'text-neutral-500'
-      }`}>
-        {label}
+      <div className="space-y-3">
+        {/* Bloco 1 — Tempo perdido */}
+        <div className="rounded-lg border border-rose-200 bg-rose-50/50 p-3">
+          <div className="flex items-center justify-between mb-1">
+            <span className="text-[10px] uppercase tracking-wider font-bold text-rose-700">
+              Tempo perdido na agenda
+            </span>
+            <span className="text-[10px] text-rose-600/70">problema</span>
+          </div>
+          <div className="flex items-baseline gap-2 mb-0.5">
+            <span className="text-xl font-bold text-rose-900 tabular-nums">
+              {data.horas_perdidas.toFixed(1)}h
+            </span>
+            <span className="text-[11px] text-rose-700">
+              ≈ {data.dias_equivalentes_8h.toFixed(1)} dias de 8h de 1 profissional
+            </span>
+          </div>
+          <div className="text-[10px] text-rose-700/80">
+            {data.faltas_qty} faltas · {data.cancelados_qty} canceladas
+          </div>
+        </div>
+
+        {/* Bloco 2 — Aproveitamento de slots ociosos */}
+        <div className="rounded-lg border border-amber-200 bg-amber-50/50 p-3">
+          <div className="flex items-center justify-between mb-1">
+            <span className="text-[10px] uppercase tracking-wider font-bold text-amber-700">
+              Aproveitamento de slots ociosos
+            </span>
+            <span className="text-[10px] text-amber-600/70">oportunidade</span>
+          </div>
+          <div className="flex items-baseline gap-2 mb-0.5">
+            <span className={`text-xl font-bold tabular-nums ${taxaCor}`}>
+              {taxaAprov.toFixed(1)}%
+            </span>
+            <span className="text-[11px] text-amber-700">
+              {fmtNum(data.slots_recuperados_encaixe)} de {fmtNum(data.slots_perdidos)} slots vagos viraram encaixe
+            </span>
+          </div>
+          <div className="text-[10px] text-amber-700/80">
+            {data.slots_perdidos - data.slots_recuperados_encaixe} slots ainda ociosos — campanhas de waitlist/encaixe podem recuperar parte
+          </div>
+        </div>
+
+        {/* Bloco 3 — Ações pendentes */}
+        <div className="rounded-lg border border-blue-200 bg-blue-50/40 p-3">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-[10px] uppercase tracking-wider font-bold text-blue-700">
+              Ações pendentes
+            </span>
+            <span className="text-[10px] text-blue-600/70">tarefas operacionais</span>
+          </div>
+          <div className="grid grid-cols-3 gap-2">
+            {acoes.map((a) => (
+              <div key={a.label}>
+                <div className="text-lg font-bold tabular-nums text-blue-900">
+                  {fmtNum(a.qtd)}
+                </div>
+                <div className="text-[10.5px] font-semibold text-blue-800 leading-tight">
+                  {a.label}
+                </div>
+                <div className="text-[10px] text-blue-700/70 leading-tight">
+                  {a.hint}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
       </div>
-      <div className={`text-lg font-bold tabular-nums mt-0.5 ${
-        danger ? 'text-rose-900' : 'text-neutral-900'
-      }`}>
-        {value}
-      </div>
-      {hint && <div className="text-[10px] text-neutral-500">{hint}</div>}
     </div>
   )
 }

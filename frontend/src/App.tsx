@@ -12,10 +12,11 @@ import ResetPasswordPage from '@/modules/auth/ResetPasswordPage'
 import HomePage from '@/pages/HomePage'
 import DesignSystem from '@/pages/DesignSystem'
 import SyncPage from '@/modules/admin/SyncPage'
-import DashboardPage from '@/modules/dashboard/DashboardPage'
 import FinanceiroPage from '@/modules/financeiro/FinanceiroPage'
 import AnaliseFinanceiroPage from '@/modules/analise/financeiro/FinanceiroPage'
 import AnaliseComercialPage from '@/modules/analise/comercial/ComercialPage'
+import DashboardPacientesPage from '@/modules/pacientes/DashboardPacientesPage'
+import CaptacaoPage from '@/modules/pacientes/CaptacaoPage'
 import SettingsPage from '@/modules/settings/SettingsPage'
 import CompanySettingsPage from '@/modules/empresa/CompanySettingsPage'
 import PermissionsPage from '@/modules/empresa/PermissionsPage'
@@ -51,18 +52,6 @@ function App() {
                   <AppShell>
                     <RequirePermission permission="sync.run">
                       <SyncPage />
-                    </RequirePermission>
-                  </AppShell>
-                </PrivateRoute>
-              }
-            />
-            <Route
-              path="/dashboard"
-              element={
-                <PrivateRoute>
-                  <AppShell>
-                    <RequirePermission permission="dashboard.read">
-                      <DashboardPage />
                     </RequirePermission>
                   </AppShell>
                 </PrivateRoute>
@@ -111,6 +100,30 @@ function App() {
                   <AppShell>
                     <RequirePermission permission="dashboard.read">
                       <AnaliseComercialPage />
+                    </RequirePermission>
+                  </AppShell>
+                </PrivateRoute>
+              }
+            />
+            <Route
+              path="/pacientes"
+              element={
+                <PrivateRoute>
+                  <AppShell>
+                    <RequirePermission permission="dashboard.read">
+                      <DashboardPacientesPage />
+                    </RequirePermission>
+                  </AppShell>
+                </PrivateRoute>
+              }
+            />
+            <Route
+              path="/pacientes/captacao"
+              element={
+                <PrivateRoute>
+                  <AppShell>
+                    <RequirePermission permission="dashboard.read">
+                      <CaptacaoPage />
                     </RequirePermission>
                   </AppShell>
                 </PrivateRoute>

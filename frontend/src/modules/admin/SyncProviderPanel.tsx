@@ -35,6 +35,14 @@ export interface SyncProviderConfig {
   syncKpisMonth?: (year: number, month: number) => Promise<SyncJob>
   /** Delta sync — atualiza alterações recentes em todas transacionais. Opcional (só CA). */
   syncAlteracoes?: (hoursBack: number) => Promise<BatchResponse>
+  /** Sync saldos bancários (Fase 1 Show no Financeiro). Opcional, só CA. */
+  syncSaldos?: () => Promise<BatchResponse>
+  /** Entidades exibidas no bloco "Saldos bancários" (só CA). */
+  saldosEntities?: SyncEntity[]
+  /** Carga histórica completa (varre 2020+ todos meses). Só CA. */
+  syncHistorical?: () => Promise<BatchResponse>
+  /** Detalhamento de parcelas pagas via /parcelas/{id}. Só CA. */
+  syncBaixas?: () => Promise<SyncJob>
   /** Enriquece pacientes via /patient/get (BirthDate, Email, CPF, Status). Só Clinicorp. */
   syncPatientsDetails?: () => Promise<SyncJob>
   /** Mostrar botão de rebuild CORE+ANALYTICS (só Clinicorp por enquanto). */
@@ -136,10 +144,38 @@ export function SyncProviderPanel({ config }: { config: SyncProviderConfig }) {
     },
   })
 
+  const [lastSaldos, setLastSaldos] = useState<BatchResponse | null>(null)
+  const saldosMut = useMutation({
+    mutationFn: () => config.syncSaldos!(),
+    onSuccess: (data) => {
+      setLastSaldos(data)
+      invalidateAll()
+    },
+  })
+
+  const [lastHistorical, setLastHistorical] = useState<BatchResponse | null>(null)
+  const historicalMut = useMutation({
+    mutationFn: () => config.syncHistorical!(),
+    onSuccess: (data) => {
+      setLastHistorical(data)
+      invalidateAll()
+    },
+  })
+
+  const [lastBaixas, setLastBaixas] = useState<SyncJob | null>(null)
+  const baixasMut = useMutation({
+    mutationFn: () => config.syncBaixas!(),
+    onSuccess: (data) => {
+      setLastBaixas(data)
+      invalidateAll()
+    },
+  })
+
   const isAnyRunning =
     staticAllMut.isPending || txEntityMut.isPending || txMonthMut.isPending ||
     kpisMut.isPending || rebuildMut.isPending || alteracoesMut.isPending ||
-    patientsDetailsMut.isPending
+    patientsDetailsMut.isPending || saldosMut.isPending || historicalMut.isPending ||
+    baixasMut.isPending
 
   const totalStatic = config.staticEntities.reduce(
     (acc, e) => acc + (checkpointsByEntity[e]?.total_records || 0), 0)
@@ -211,6 +247,108 @@ export function SyncProviderPanel({ config }: { config: SyncProviderConfig }) {
                 {alteracoesMut.isPending ? 'Atualizando…' : 'Atualizar mudanças'}
               </button>
             </div>
+          </div>
+        </section>
+      )}
+
+      {/* Carga histórica CA — varre 2020+ pra capturar parcelas pagas
+           cujo vencimento foi em meses anteriores (problema descoberto na
+           Onda 1: filtro por vencimento perde quem paga atrasado/adiantado). */}
+      {config.syncHistorical && (
+        <section className="bg-gradient-to-r from-indigo-50 to-white border border-indigo-200 rounded-lg p-4">
+          <div className="flex items-start justify-between gap-4 flex-wrap">
+            <div className="flex-1 min-w-[260px]">
+              <h2 className="text-sm font-semibold text-neutral-900">
+                Carga histórica completa
+                <span className="ml-2 text-[10px] uppercase font-bold px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-800 align-middle">
+                  Recomendado uma vez
+                </span>
+              </h2>
+              <p className="text-xs text-neutral-600 mt-0.5">
+                Varre <strong>todas as parcelas do CA desde 2020</strong>, mês a mês — captura
+                pagamentos atrasados/adiantados que o sync mensal normal perde (ex: parcela
+                vencida em jan/24 paga em abr/26 fica fora do sync de abril). Demora ~1-2 min.
+                Depois disso, use <strong>Atualizar mudanças</strong> diariamente.
+              </p>
+              {lastHistorical && (
+                <div className="mt-2 text-[11px] text-neutral-700 flex flex-wrap gap-3">
+                  <span><strong className="text-success-text">✓ Última carga:</strong></span>
+                  <span><strong>{fmtNum(lastHistorical.total_inserted)}</strong> inseridos</span>
+                  <span><strong>{fmtNum(lastHistorical.total_updated)}</strong> atualizados</span>
+                  {lastHistorical.total_errors > 0 && (
+                    <span className="text-error-text"><strong>{lastHistorical.total_errors}</strong> erros</span>
+                  )}
+                </div>
+              )}
+              {historicalMut.isError && (
+                <div className="mt-2 text-xs text-error-text">Erro ao rodar carga histórica.</div>
+              )}
+              {historicalMut.isPending && (
+                <div className="mt-2 text-xs text-warning-text italic">
+                  ⏳ Carregando histórico — não feche a página até concluir.
+                </div>
+              )}
+            </div>
+            <button
+              onClick={() => historicalMut.mutate()}
+              disabled={isAnyRunning}
+              className="text-xs px-4 py-2 rounded bg-indigo-700 text-white hover:bg-indigo-800 disabled:opacity-50 disabled:cursor-not-allowed font-medium shadow-sm shrink-0"
+            >
+              {historicalMut.isPending ? 'Carregando…' : 'Carregar histórico'}
+            </button>
+          </div>
+        </section>
+      )}
+
+      {/* Detalhamento de baixas CA — Onda 2: pega metodo_pagamento, data
+           de pagamento real, conta destino, conciliado via /parcelas/{id}. */}
+      {config.syncBaixas && (
+        <section className="bg-gradient-to-r from-purple-50 to-white border border-purple-200 rounded-lg p-4">
+          <div className="flex items-start justify-between gap-4 flex-wrap">
+            <div className="flex-1 min-w-[260px]">
+              <h2 className="text-sm font-semibold text-neutral-900">
+                Detalhar baixas (parcelas pagas)
+                <span className="ml-2 text-[10px] uppercase font-bold px-1.5 py-0.5 rounded bg-purple-100 text-purple-800 align-middle">
+                  Onda 2 — pode demorar
+                </span>
+              </h2>
+              <p className="text-xs text-neutral-600 mt-0.5">
+                Detalha cada parcela paga via <code className="text-[11px] bg-neutral-100 px-1 rounded">/parcelas/{'{id}'}</code> pra capturar:{' '}
+                <strong>método de pagamento</strong> (PIX/Boleto/Cartão/...),{' '}
+                <strong>data real do pagamento</strong>, <strong>conta destino</strong> (em qual banco caiu) e <strong>status de conciliação</strong>.
+                1 chamada por parcela. Só processa parcelas que ainda não têm detalhe — idempotente.
+                Para clínicas grandes, 1ª carga pode levar 30-40min.
+              </p>
+              {lastBaixas && (
+                <div className="mt-2 text-[11px] text-neutral-700 flex flex-wrap gap-3">
+                  <span>
+                    <strong className={lastBaixas.status === 'success' ? 'text-success-text' : 'text-error-text'}>
+                      {lastBaixas.status === 'success' ? '✓' : '✗'} Última execução:
+                    </strong>{' '}
+                    {lastBaixas.duration_ms != null ? `${(lastBaixas.duration_ms / 1000).toFixed(1)}s` : '—'}
+                  </span>
+                  <span><strong>{fmtNum(lastBaixas.records_fetched)}</strong> parcelas detalhadas</span>
+                  {(lastBaixas.errors_count ?? 0) > 0 && (
+                    <span className="text-error-text"><strong>{fmtNum(lastBaixas.errors_count)}</strong> erros</span>
+                  )}
+                </div>
+              )}
+              {baixasMut.isError && (
+                <div className="mt-2 text-xs text-error-text">Erro ao detalhar baixas. Verifique os logs.</div>
+              )}
+              {baixasMut.isPending && (
+                <div className="mt-2 text-xs text-warning-text italic">
+                  ⏳ Detalhando — não feche a página até concluir.
+                </div>
+              )}
+            </div>
+            <button
+              onClick={() => baixasMut.mutate()}
+              disabled={isAnyRunning}
+              className="text-xs px-4 py-2 rounded bg-purple-700 text-white hover:bg-purple-800 disabled:opacity-50 disabled:cursor-not-allowed font-medium shadow-sm shrink-0"
+            >
+              {baixasMut.isPending ? 'Detalhando…' : 'Detalhar baixas'}
+            </button>
           </div>
         </section>
       )}
@@ -300,6 +438,75 @@ export function SyncProviderPanel({ config }: { config: SyncProviderConfig }) {
               {rebuildMut.isPending ? 'Reconstruindo…' : 'Reconstruir CORE + ANALYTICS'}
             </button>
           </div>
+        </section>
+      )}
+
+      {/* Saldos bancários (CA Fase 1) — snapshot em 1 clique */}
+      {config.syncSaldos && config.saldosEntities && (
+        <section className="bg-gradient-to-r from-emerald-50 to-white border border-emerald-200 rounded-lg p-4">
+          <div className="flex items-start justify-between gap-4 flex-wrap mb-3">
+            <div className="flex-1 min-w-[260px]">
+              <h2 className="text-sm font-semibold text-neutral-900">
+                Saldos bancários
+                <span className="ml-2 text-[10px] uppercase font-bold px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800 align-middle">
+                  Snapshot
+                </span>
+              </h2>
+              <p className="text-xs text-neutral-600 mt-0.5">
+                Atualiza as 3 entidades de saldo do Conta Azul numa única ação:{' '}
+                <strong>contas financeiras</strong> (lista de bancos),{' '}
+                <strong>saldos atuais</strong> (snapshot por conta, em paralelo) e{' '}
+                <strong>saldos iniciais</strong> (últimos 12 meses, mês a mês). Alimenta o card
+                "Saldo bancário" no dashboard <code className="text-[11px] bg-neutral-100 px-1 rounded">/financeiro</code>.
+              </p>
+              {lastSaldos && (
+                <div className="mt-2 text-[11px] text-neutral-700 flex flex-wrap gap-3">
+                  <span><strong className="text-success-text">✓ Última atualização:</strong></span>
+                  <span><strong>{fmtNum(lastSaldos.total_inserted)}</strong> inseridos</span>
+                  <span><strong>{fmtNum(lastSaldos.total_updated)}</strong> atualizados</span>
+                  {lastSaldos.total_errors > 0 && (
+                    <span className="text-error-text"><strong>{lastSaldos.total_errors}</strong> erros</span>
+                  )}
+                </div>
+              )}
+              {saldosMut.isError && (
+                <div className="mt-2 text-xs text-error-text">Erro ao atualizar saldos. Verifique os logs.</div>
+              )}
+            </div>
+            <button
+              onClick={() => saldosMut.mutate()}
+              disabled={isAnyRunning}
+              className="text-xs px-4 py-2 rounded bg-emerald-700 text-white hover:bg-emerald-800 disabled:opacity-50 disabled:cursor-not-allowed font-medium shadow-sm shrink-0"
+            >
+              {saldosMut.isPending ? 'Atualizando…' : 'Atualizar saldos'}
+            </button>
+          </div>
+          <table className="w-full text-sm bg-white border rounded-md overflow-hidden">
+            <thead className="bg-neutral-50 text-xs text-neutral-600">
+              <tr>
+                <th className="text-left px-4 py-2 font-medium">Entidade</th>
+                <th className="text-right px-4 py-2 font-medium">Total</th>
+                <th className="text-left px-4 py-2 font-medium">Último sync</th>
+                <th className="text-left px-4 py-2 font-medium">Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {config.saldosEntities.map((e) => {
+                const cp = checkpointsByEntity[e]
+                return (
+                  <tr key={e} className="border-t">
+                    <td className="px-4 py-2 text-neutral-800">
+                      {ENTITY_LABELS[e]}{' '}
+                      <span className="text-xs text-neutral-400 ml-1">{e}</span>
+                    </td>
+                    <td className="px-4 py-2 text-right tabular-nums text-neutral-700">{fmtNum(cp?.total_records || 0)}</td>
+                    <td className="px-4 py-2 text-neutral-500 text-xs">{fmtDate(cp?.last_synced_at || null)}</td>
+                    <td className="px-4 py-2"><StatusBadge status={cp?.status || 'idle'} /></td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
         </section>
       )}
 

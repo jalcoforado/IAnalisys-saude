@@ -9,8 +9,13 @@ Schema uniforme:
 - sync_job_id: rastreia qual execução trouxe o registro
 - UNIQUE(tenant_id, external_id) garante upsert idempotente
 
-São 8 tabelas: pessoas, produtos, servicos, vendedores, contas_receber,
-contas_pagar, categorias, centros_custo.
+São 11 tabelas: pessoas, produtos, servicos, vendedores, contas_receber,
+contas_pagar, categorias, centros_custo, contas_financeiras, saldos_atuais,
+saldos_iniciais.
+
+As 3 últimas (Fase 1 "Show no Financeiro") usam external_id mais largo
+(VARCHAR 160) porque saldos_iniciais usa chave composta artificial
+`{conta_id}|{tipo}|{data_competencia}` — UUID natural não existe.
 """
 from sqlalchemy import (
     BigInteger, Column, DateTime, ForeignKey, Index, String, UniqueConstraint, func
@@ -19,11 +24,11 @@ from sqlalchemy.dialects.mysql import JSON, CHAR
 from app.db.base import Base
 
 
-def _staging_columns():
+def _staging_columns(external_id_len: int = 64):
     return [
         Column("id", BigInteger, primary_key=True, autoincrement=True),
         Column("tenant_id", CHAR(36), ForeignKey("tenants.id"), nullable=False),
-        Column("external_id", String(64), nullable=False),
+        Column("external_id", String(external_id_len), nullable=False),
         Column("external_updated_at", DateTime, nullable=True),
         Column("raw_data", JSON, nullable=False),
         Column("synced_at", DateTime, nullable=False, server_default=func.current_timestamp()),
@@ -82,5 +87,49 @@ class StgCaCategorias(Base):
 
 class StgCaCentrosCusto(Base):
     __tablename__ = "stg_ca_centros_custo"
+    __table_args__ = _staging_table_args(__tablename__)
+    id, tenant_id, external_id, external_updated_at, raw_data, synced_at, sync_job_id = _staging_columns()
+
+
+class StgCaContasFinanceiras(Base):
+    __tablename__ = "stg_ca_contas_financeiras"
+    __table_args__ = _staging_table_args(__tablename__)
+    id, tenant_id, external_id, external_updated_at, raw_data, synced_at, sync_job_id = _staging_columns(160)
+
+
+class StgCaSaldosAtuais(Base):
+    """Snapshot do saldo atual por conta — external_id = id da conta."""
+    __tablename__ = "stg_ca_saldos_atuais"
+    __table_args__ = _staging_table_args(__tablename__)
+    id, tenant_id, external_id, external_updated_at, raw_data, synced_at, sync_job_id = _staging_columns(160)
+
+
+class StgCaSaldosIniciais(Base):
+    """Saldo inicial por conta×tipo×data_competencia.
+
+    external_id artificial = `{conta_id}|{tipo}|{data_competencia_iso}` —
+    o payload da API não traz id natural.
+    """
+    __tablename__ = "stg_ca_saldos_iniciais"
+    __table_args__ = _staging_table_args(__tablename__)
+    id, tenant_id, external_id, external_updated_at, raw_data, synced_at, sync_job_id = _staging_columns(160)
+
+
+class StgCaCategoriasDre(Base):
+    """Árvore DRE — 1 linha por raiz, raw_data guarda a subárvore inteira."""
+    __tablename__ = "stg_ca_categorias_dre"
+    __table_args__ = _staging_table_args(__tablename__)
+    id, tenant_id, external_id, external_updated_at, raw_data, synced_at, sync_job_id = _staging_columns()
+
+
+class StgCaParcelasDetalhe(Base):
+    """Detalhe completo de UMA parcela paga via /parcelas/{id}.
+
+    Pega campos ausentes em /buscar: metodo_pagamento, baixas[].data_pagamento,
+    conta_financeira destino, conciliado, evento.referencia.origem.
+
+    external_id = id da parcela (mesma chave de core_ca_eventos_financeiros).
+    """
+    __tablename__ = "stg_ca_parcelas_detalhe"
     __table_args__ = _staging_table_args(__tablename__)
     id, tenant_id, external_id, external_updated_at, raw_data, synced_at, sync_job_id = _staging_columns()

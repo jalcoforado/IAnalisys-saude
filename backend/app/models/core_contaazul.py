@@ -138,6 +138,111 @@ class CoreCaEventosFinanceiros(Base):
     qtd_centros_custo = Column(Integer, nullable=False, default=0)
 
 
+class CoreCaCategoriasDre(Base):
+    """Árvore DRE achatada. parent_external_id = pai (NULL nas raízes)."""
+    __tablename__ = "core_ca_categorias_dre"
+    __table_args__ = (
+        *_common_args(__tablename__),
+        Index("ix_core_ca_dre_parent", "tenant_id", "parent_external_id"),
+        Index("ix_core_ca_dre_root", "tenant_id", "root_external_id"),
+    )
+    id, tenant_id, external_id, is_deleted, external_updated_at, created_at, updated_at = _common_cols()
+    descricao = Column(String(255), nullable=True)
+    codigo = Column(String(50), nullable=True)
+    posicao = Column(Integer, nullable=True)
+    nivel = Column(Integer, nullable=False, default=0)
+    parent_external_id = Column(String(64), nullable=True)
+    root_external_id = Column(String(64), nullable=True)
+    indica_totalizador = Column(Boolean, nullable=True)
+    representa_soma_custo_medio = Column(Boolean, nullable=True)
+    qtd_categorias_financeiras = Column(Integer, nullable=False, default=0)
+
+
+class CoreCaDreLinks(Base):
+    """Ponte N:N entre nó DRE e categoria_financeira plana."""
+    __tablename__ = "core_ca_dre_links"
+    __table_args__ = (
+        Index("ix_core_ca_dre_links_dre", "tenant_id", "dre_external_id"),
+        Index("ix_core_ca_dre_links_categoria", "tenant_id", "categoria_external_id"),
+    )
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    tenant_id = Column(CHAR(36), ForeignKey("tenants.id"), nullable=False)
+    dre_external_id = Column(String(64), nullable=False)
+    categoria_external_id = Column(String(64), nullable=False)
+    created_at = Column(DateTime, nullable=False, server_default=func.current_timestamp())
+
+
+class CoreCaBaixas(Base):
+    """1 linha por baixa (pagamento efetivo de uma parcela).
+
+    Vem de /v1/financeiro/eventos-financeiros/parcelas/{id} → `baixas[]`.
+    Uma parcela com pagamento parcial pode ter múltiplas baixas.
+    Traz campos AUSENTES em /buscar: metodo_pagamento, data_pagamento real,
+    conta destino, conciliado.
+    """
+    __tablename__ = "core_ca_baixas"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "external_id", name="uk_core_ca_baixas_external"),
+        Index("ix_core_ca_baixas_tipo_data_pagamento", "tenant_id", "tipo", "data_pagamento"),
+        Index("ix_core_ca_baixas_metodo_data", "tenant_id", "metodo_pagamento", "data_pagamento"),
+        Index("ix_core_ca_baixas_parcela", "tenant_id", "parcela_external_id"),
+        Index("ix_core_ca_baixas_conta", "tenant_id", "conta_financeira_external_id"),
+    )
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    tenant_id = Column(CHAR(36), ForeignKey("tenants.id"), nullable=False)
+    external_id = Column(String(64), nullable=False)
+    parcela_external_id = Column(String(64), nullable=False)
+    evento_external_id = Column(String(64), nullable=True)
+    is_deleted = Column(Boolean, nullable=False, default=False)
+    created_at = Column(DateTime, nullable=False, server_default=func.current_timestamp())
+    updated_at = Column(DateTime, nullable=False,
+                        server_default=func.current_timestamp(),
+                        onupdate=func.current_timestamp())
+    tipo = Column(String(20), nullable=True)            # RECEITA | DESPESA
+    data_pagamento = Column(Date, nullable=True)
+    data_vencimento = Column(Date, nullable=True)
+    data_competencia = Column(Date, nullable=True)
+    metodo_pagamento = Column(String(60), nullable=True)
+    valor_pago = Column(Numeric(15, 2), nullable=True)
+    valor_bruto = Column(Numeric(15, 2), nullable=True)
+    valor_liquido = Column(Numeric(15, 2), nullable=True)
+    multa = Column(Numeric(15, 2), nullable=True)
+    juros = Column(Numeric(15, 2), nullable=True)
+    desconto = Column(Numeric(15, 2), nullable=True)
+    taxa = Column(Numeric(15, 2), nullable=True)
+    conta_financeira_external_id = Column(String(64), nullable=True)
+    conta_financeira_nome = Column(String(255), nullable=True)
+    conta_financeira_banco = Column(String(60), nullable=True)
+    conciliado = Column(Boolean, nullable=True)
+    baixa_agendada = Column(Boolean, nullable=True)
+    origem_referencia = Column(String(40), nullable=True)
+    nsu = Column(String(60), nullable=True)
+    pessoa_external_id = Column(String(64), nullable=True)
+
+
+class CoreCaContasFinanceiras(Base):
+    """1 linha por conta financeira (banco) — combina /v1/conta-financeira
+    com /v1/conta-financeira/{id}/saldo-atual.
+    """
+    __tablename__ = "core_ca_contas_financeiras"
+    __table_args__ = (
+        *_common_args(__tablename__),
+        Index("ix_core_ca_contas_financeiras_ativo", "tenant_id", "ativo"),
+    )
+    id, tenant_id, external_id, is_deleted, external_updated_at, created_at, updated_at = _common_cols()
+    nome = Column(String(255), nullable=True)
+    banco = Column(String(255), nullable=True)
+    codigo_banco = Column(String(20), nullable=True)
+    agencia = Column(String(50), nullable=True)
+    numero = Column(String(50), nullable=True)
+    tipo = Column(String(30), nullable=True)
+    ativo = Column(Boolean, nullable=True)
+    conta_padrao = Column(Boolean, nullable=True)
+    possui_config_boleto = Column(Boolean, nullable=True)
+    saldo_atual = Column(Numeric(15, 2), nullable=True)
+    saldo_atualizado_em = Column(DateTime, nullable=True)
+
+
 class CoreCaRateio(Base):
     __tablename__ = "core_ca_rateio"
     __table_args__ = (

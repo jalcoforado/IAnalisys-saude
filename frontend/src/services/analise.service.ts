@@ -2,6 +2,10 @@ import api from '@/services/api'
 import type {
   AnaliseComercialResponse,
   AnaliseFinanceiroResponse,
+  AnalisePacientesResponse,
+  CaptacaoOrigemResponse,
+  OrcamentoStatusResponse,
+  PacienteHistoricoResponse,
   PrazoAuditResponse,
 } from '@/types/analise'
 
@@ -14,6 +18,16 @@ export const analiseService = {
   financeiro: (year: number, month: number) =>
     api
       .get<AnaliseFinanceiroResponse>('/analise/financeiro', {
+        params: { year, month },
+      })
+      .then((r) => r.data),
+
+  // Auditoria por orçamento: 1 linha por orçamento APROVADO no mês com
+  // contratado / lançado / pago + status financeiro + parcelas embutidas.
+  // Usado pelo modal "Auditar" do card "Prazo de Recebimento".
+  financeiroOrcamentosStatus: (year: number, month: number) =>
+    api
+      .get<OrcamentoStatusResponse>('/analise/financeiro/orcamentos-status', {
         params: { year, month },
       })
       .then((r) => r.data),
@@ -61,5 +75,24 @@ export const analiseService = {
         null,
         { params: { year, month } },
       )
+      .then((r) => r.data),
+
+  pacientes: (year: number, month: number) =>
+    api
+      .get<AnalisePacientesResponse>('/analise/pacientes', {
+        params: { year, month },
+      })
+      .then((r) => r.data),
+
+  pacienteHistorico: (patientExternalId: number) =>
+    api
+      .get<PacienteHistoricoResponse>(
+        `/analise/pacientes/${patientExternalId}/historico`,
+      )
+      .then((r) => r.data),
+
+  pacientesCaptacao: () =>
+    api
+      .get<CaptacaoOrigemResponse>('/analise/pacientes/captacao')
       .then((r) => r.data),
 }

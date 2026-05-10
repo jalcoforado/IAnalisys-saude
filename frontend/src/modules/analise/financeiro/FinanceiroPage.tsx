@@ -621,12 +621,9 @@ function PrazoRecebimentoCard({
               bar: 'bg-neutral-400', bg: 'bg-neutral-50', text: 'text-neutral-600', min: 1, max: 999,
             }
             return (
-              <button
+              <div
                 key={b.label}
-                type="button"
-                onClick={() => setAuditOpen({ min: c.min, max: c.max, label: b.label })}
-                className={`${c.bg} rounded-md px-3 py-2 flex items-center gap-3 w-full text-left hover:ring-1 hover:ring-blue-300 hover:shadow-sm transition cursor-pointer`}
-                title={`Auditar parcelas — ${b.label}`}
+                className={`${c.bg} rounded-md px-3 py-2 flex items-center gap-3 w-full`}
               >
                 <div className={`w-2 h-8 rounded-sm ${c.bar} shrink-0`} />
                 <div className="flex-1 min-w-0">
@@ -639,8 +636,7 @@ function PrazoRecebimentoCard({
                   <div className={`text-[13px] font-bold ${c.text}`}>{fmtBRL(b.valor, true)}</div>
                   <div className="text-[10px] text-neutral-500">{b.pct_valor.toFixed(1)}% do total</div>
                 </div>
-                <ChevronRight size={14} className="text-neutral-400 shrink-0" />
-              </button>
+              </div>
             )
           })}
         </div>
@@ -861,8 +857,6 @@ function TopMedicosCard({ data }: { data: TopMedicoFaturamento[] }) {
               <div className="ml-7 mt-1 text-[10px] text-neutral-500 flex items-center gap-2 flex-wrap">
                 <span>{m.qtd_procedimentos} procedimentos</span>
                 <span className="text-neutral-400">·</span>
-                <span>{m.qtd_orcamentos} orçamentos</span>
-                <span className="text-neutral-400">·</span>
                 <span>ticket {fmtBRL(m.ticket_medio_procedimento, true)}/proc</span>
               </div>
             </li>
@@ -979,7 +973,7 @@ function TopCategoriasCard({ data }: { data: TopCategoriaFaturamento[] }) {
                 )}
               </div>
               <div className="text-[10px] text-neutral-500 mt-0.5">
-                {c.qtd_aprovados} aprovados · ticket {fmtBRL(c.ticket_medio, true)}
+                {c.qtd_procs} procedimentos · ticket {fmtBRL(c.ticket_medio, true)}/proc
               </div>
             </li>
           ))}

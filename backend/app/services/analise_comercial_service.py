@@ -75,6 +75,8 @@ class _ComercialAgg:
     encaixe_qty: int
     retorno_pendente_qty: int
     remarcar_qty: int
+    waitlist_qty: int                       # has_waitlist=1
+    minutos_perdidos: int                   # SUM duration_minutes em faltas+cancel
     # Cruzados com financeiro (orçamentos do mesmo mês)
     aprovados_qty: int                      # COUNT DISTINCT orçamentos aprovados no mês
     aprovados_amount: float
@@ -99,7 +101,9 @@ async def _aggregate_month(
                 COUNT(DISTINCT professional_external_id) AS profs,
                 SUM(CASE WHEN has_encaixe=1 THEN 1 ELSE 0 END) AS encaixe,
                 SUM(CASE WHEN has_retorno_pendente=1 THEN 1 ELSE 0 END) AS retorno_p,
-                SUM(CASE WHEN has_remarcar=1 THEN 1 ELSE 0 END) AS remarcar
+                SUM(CASE WHEN has_remarcar=1 THEN 1 ELSE 0 END) AS remarcar,
+                SUM(CASE WHEN has_waitlist=1 THEN 1 ELSE 0 END) AS waitlist,
+                SUM(CASE WHEN is_falta=1 OR is_canceled=1 THEN COALESCE(duration_minutes,0) ELSE 0 END) AS min_perdidos
             FROM fato_agenda
             WHERE tenant_id=:tid AND year_month_key=:ym
         """),
@@ -161,6 +165,8 @@ async def _aggregate_month(
         encaixe_qty=int(ag.encaixe or 0),
         retorno_pendente_qty=int(ag.retorno_p or 0),
         remarcar_qty=int(ag.remarcar or 0),
+        waitlist_qty=int(ag.waitlist or 0),
+        minutos_perdidos=int(ag.min_perdidos or 0),
         aprovados_qty=int(orc.aprov_qty or 0),
         aprovados_amount=float(orc.aprov_amt or 0),
         recebido=recebido,
@@ -188,7 +194,9 @@ async def _aggregate_last_12(
                 COUNT(DISTINCT professional_external_id) AS profs,
                 SUM(CASE WHEN has_encaixe=1 THEN 1 ELSE 0 END) AS encaixe,
                 SUM(CASE WHEN has_retorno_pendente=1 THEN 1 ELSE 0 END) AS retorno_p,
-                SUM(CASE WHEN has_remarcar=1 THEN 1 ELSE 0 END) AS remarcar
+                SUM(CASE WHEN has_remarcar=1 THEN 1 ELSE 0 END) AS remarcar,
+                SUM(CASE WHEN has_waitlist=1 THEN 1 ELSE 0 END) AS waitlist,
+                SUM(CASE WHEN is_falta=1 OR is_canceled=1 THEN COALESCE(duration_minutes,0) ELSE 0 END) AS min_perdidos
             FROM fato_agenda
             WHERE tenant_id=:tid AND year_month_key IN :keys
             GROUP BY year_month_key
@@ -259,6 +267,8 @@ async def _aggregate_last_12(
             encaixe_qty=int(ag.encaixe) if ag else 0,
             retorno_pendente_qty=int(ag.retorno_p) if ag else 0,
             remarcar_qty=int(ag.remarcar) if ag else 0,
+            waitlist_qty=int(ag.waitlist) if ag else 0,
+            minutos_perdidos=int(ag.min_perdidos) if ag else 0,
             aprovados_qty=int(orc.aprov_qty) if orc else 0,
             aprovados_amount=float(orc.aprov_amt) if orc else 0.0,
             recebido=fin_by_ym.get(ym, 0.0),
@@ -449,7 +459,12 @@ async def _top_procedimentos(
 async def _top_especialidades(
     db: AsyncSession, tenant_id: str, ym: str, top_n: int = 8,
 ) -> List[TopEspecialidadeDemanda]:
-    """Especialidades por volume de procedimentos (executados ou orçados aprovados)."""
+    """Especialidades por volume de procedimentos EXECUTADOS no mês.
+
+    Mesma fonte do Top Procedimentos (executed=1) — universo coerente:
+    mundo "execução clínica", não "orçamento aprovado". Faturamento aqui
+    é o valor de tabela dos procedimentos executados (não distribuído).
+    """
     q = await db.execute(
         text("""
             SELECT
@@ -457,14 +472,12 @@ async def _top_especialidades(
                 COUNT(*) AS qtd,
                 COALESCE(SUM(COALESCE(ep.final_amount, ep.amount, 0)), 0) AS fat
             FROM core_estimate_procedures ep
-            INNER JOIN fato_orcamentos o
-                ON o.tenant_id = ep.tenant_id
-               AND ep.treatment_external_id = CAST(o.external_id AS UNSIGNED)
             LEFT JOIN core_specialties s
                 ON s.tenant_id = ep.tenant_id
                AND CAST(s.external_id AS UNSIGNED) = ep.specialty_id
-            WHERE o.tenant_id=:tid AND o.year_month_key=:ym
-              AND o.is_approved=1 AND ep.is_deleted=0
+            WHERE ep.tenant_id=:tid
+              AND ep.is_deleted=0 AND ep.executed=1
+              AND DATE_FORMAT(ep.external_updated_at, '%Y-%m') = :ym
             GROUP BY especialidade
             ORDER BY qtd DESC
             LIMIT :lim
@@ -534,6 +547,7 @@ async def _top_profs_consultas(
             professional_external_id=int(r.pid),
             nome=r.nome or f"Prof. #{r.pid}",
             qtd_consultas=exec_qty,
+            qtd_faltas=falt_qty,
             qtd_canceladas=int(r.canceladas or 0),
             absenteismo_pct=round(falt_qty / denom_abs * 100, 1) if denom_abs else 0.0,
             pacientes_distintos=int(r.pacientes or 0),
@@ -550,16 +564,23 @@ async def _mix_categorias_consulta(
     db: AsyncSession, tenant_id: str, ym: str, ym_prev: str,
     progress: Optional[float] = None, top_n: int = 10,
 ) -> List[MixCategoriaConsulta]:
-    """Distribuição de consultas por categoria (ex: consulta, retorno, manutenção)."""
-    # Mix por categoria — base = consultas EFETIVAS (CHECKOUT). Faltas e
-    # cancelamentos não entram no mix porque a categoria do que NÃO aconteceu
-    # não dá leitura útil sobre demanda real.
+    """Distribuição de consultas por GRUPO semântico de categoria.
+
+    Usa `category_group` (heurística por substring no builder) em vez do
+    `category_description` cru — o catálogo Clinicorp tem ~80 categorias
+    com nomes inconsistentes (CONSULTA vs Consulta, CICATRIZADOR x4 com
+    cores diferentes), e agrupar em buckets semânticos dá leitura
+    estratégica: "59% da agenda é continuação de tratamento, 10% é
+    consulta inicial". Cobre 100% das efetivas (sem cauda longa).
+
+    Base = consultas EFETIVAS (CHECKOUT). Cancelamentos/faltas não entram
+    porque a categoria do que NÃO aconteceu não diz nada sobre demanda real.
+    """
     cur_q = await db.execute(
         text("""
             SELECT
-                COALESCE(NULLIF(category_description, ''), 'Sem categoria') AS categoria,
-                COUNT(*) AS qtd,
-                SUM(is_falta) AS faltas
+                COALESCE(category_group, 'outro') AS categoria,
+                COUNT(*) AS qtd
             FROM fato_agenda
             WHERE tenant_id=:tid AND year_month_key=:ym AND is_efetiva=1
             GROUP BY categoria
@@ -574,7 +595,7 @@ async def _mix_categorias_consulta(
     prev_q = await db.execute(
         text("""
             SELECT
-                COALESCE(NULLIF(category_description, ''), 'Sem categoria') AS categoria,
+                COALESCE(category_group, 'outro') AS categoria,
                 COUNT(*) AS qtd
             FROM fato_agenda
             WHERE tenant_id=:tid AND year_month_key=:ym AND is_efetiva=1
@@ -590,10 +611,10 @@ async def _mix_categorias_consulta(
         qtd = int(r.qtd or 0)
         compare_qty = (qtd / progress) if is_partial else qtd
         out.append(MixCategoriaConsulta(
-            categoria=r.categoria,
+            categoria=r.categoria,                    # chave canônica do grupo
             qtd=qtd,
             pct=round(qtd / total * 100, 1),
-            canceladas=0,                 # categoria das efetivas — sem faltas/cancel aqui
+            canceladas=0,                             # mix das efetivas — sem cancel aqui
             absenteismo_pct=0.0,
             mom_pct=_delta_pct(compare_qty, prev_by_cat.get(r.categoria)),
         ))
@@ -603,20 +624,31 @@ async def _mix_categorias_consulta(
 # ── Operacional ─────────────────────────────────────────────────
 
 
-def _build_operacional(
-    cur: _ComercialAgg, ticket_medio_consulta: float,
-) -> OperacionalComercial:
-    perda_estimada = cur.consultas_canceladas * ticket_medio_consulta
-    encaixe_pct = (
-        cur.encaixe_qty / cur.consultas_total * 100
-    ) if cur.consultas_total else 0.0
+def _build_operacional(cur: _ComercialAgg) -> OperacionalComercial:
+    """Reformulado em 3 blocos (problema/oportunidade/ações).
+
+    Bloco 1 — Tempo perdido: faltas + canceladas em horas (mais palpável que R$).
+    Bloco 2 — Aproveitamento: encaixes feitos sobre slots ociosos.
+    Bloco 3 — Ações pendentes: contadores das tags do Clinicorp.
+    """
+    horas_perdidas = round(cur.minutos_perdidos / 60, 1)
+    dias_8h = round(horas_perdidas / 8, 1)
+    slots_perdidos = cur.consultas_faltas + cur.consultas_canceladas
+    taxa_aprov = (cur.encaixe_qty / slots_perdidos * 100) if slots_perdidos else 0.0
     return OperacionalComercial(
-        encaixe_qty=cur.encaixe_qty,
-        encaixe_pct=round(encaixe_pct, 1),
-        retorno_pendente_qty=cur.retorno_pendente_qty,
-        remarcar_qty=cur.remarcar_qty,
+        # Bloco 1
+        horas_perdidas=horas_perdidas,
+        dias_equivalentes_8h=dias_8h,
+        faltas_qty=cur.consultas_faltas,
         cancelados_qty=cur.consultas_canceladas,
-        cancelados_amount_estimado=round(perda_estimada, 2),
+        # Bloco 2
+        slots_perdidos=slots_perdidos,
+        slots_recuperados_encaixe=cur.encaixe_qty,
+        taxa_aproveitamento_pct=round(taxa_aprov, 1),
+        # Bloco 3
+        remarcar_qty=cur.remarcar_qty,
+        retorno_pendente_qty=cur.retorno_pendente_qty,
+        waitlist_qty=cur.waitlist_qty,
     )
 
 
@@ -867,15 +899,12 @@ async def get_analise_comercial(
     cur = series[-1]
     progress = _month_progress(year, month)
 
-    # Ticket médio consulta atual (pra alimentar operacional)
-    ticket_medio = (cur.recebido / cur.consultas_efetivas) if cur.consultas_efetivas else 0.0
-
     funil = await _funil_comercial(db, tenant_id, ym, ym_prev)
     top_procs = await _top_procedimentos(db, tenant_id, ym)
     top_esp = await _top_especialidades(db, tenant_id, ym)
     top_profs = await _top_profs_consultas(db, tenant_id, ym, cur.consultas_efetivas)
     mix_cat = await _mix_categorias_consulta(db, tenant_id, ym, ym_prev, progress=progress)
-    operacional = _build_operacional(cur, ticket_medio)
+    operacional = _build_operacional(cur)
 
     consultas_kpi = _build_consultas_card(series, year=year, month=month, progress=progress)
     abs_kpi = _build_absenteismo_card(series, year=year, month=month, progress=progress)

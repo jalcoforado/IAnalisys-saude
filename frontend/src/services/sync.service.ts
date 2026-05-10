@@ -55,6 +55,15 @@ export const syncService = {
       .post<BatchResponse>('/sync/contaazul/alteracoes', { hours_back: hoursBack })
       .then((r) => r.data),
 
+  contaazulSaldos: () =>
+    api.post<BatchResponse>('/sync/contaazul/saldos').then((r) => r.data),
+
+  contaazulHistorical: () =>
+    api.post<BatchResponse>('/sync/contaazul/historical').then((r) => r.data),
+
+  contaazulBaixas: () =>
+    api.post<SyncJob>('/sync/contaazul/baixas').then((r) => r.data),
+
   // ── Read (com filtro source opcional) ────────────────────────
   jobs: (limit = 30, entity?: SyncEntity, year?: number, source?: SyncSource) =>
     api

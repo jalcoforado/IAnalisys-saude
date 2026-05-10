@@ -5,7 +5,6 @@ from app.api.v1.routes import sync
 from app.api.v1.routes import contaazul
 from app.api.v1.routes import transform
 from app.api.v1.routes import analytics
-from app.api.v1.routes import dashboard
 from app.api.v1.routes import financeiro
 from app.api.v1.routes import analise
 from app.api.v1.routes import home
@@ -21,7 +20,6 @@ api_router.include_router(sync.router)
 api_router.include_router(contaazul.router)
 api_router.include_router(transform.router)
 api_router.include_router(analytics.router)
-api_router.include_router(dashboard.router)
 api_router.include_router(financeiro.router)
 api_router.include_router(analise.router)
 api_router.include_router(home.router)

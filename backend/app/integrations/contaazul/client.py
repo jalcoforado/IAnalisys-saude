@@ -267,6 +267,82 @@ class ContaAzulClient:
             params["tipo"] = tipo
         return await self._get("/v1/categorias", params)
 
+    # ── Detalhamento de parcelas (Onda 2 Show no Financeiro) ─────────
+
+    async def get_parcela_detalhe(self, parcela_id: str) -> dict:
+        """Detalhe completo de UMA parcela — campos AUSENTES no /buscar:
+        `metodo_pagamento`, `baixas[].data_pagamento`, `conta_financeira`,
+        `conciliado`, `evento.referencia.origem`, `nsu`.
+
+        Retorno: payload sem wrapper (objeto único). 1 chamada por parcela.
+        Use com `asyncio.gather` + semaphore baixo (3-4) pra evitar 429.
+        """
+        return await self._get(f"/v1/financeiro/eventos-financeiros/parcelas/{parcela_id}")
+
+    # ── DRE estruturada (Fase 2 Show no Financeiro) ──────────────────
+
+    async def list_categorias_dre(self) -> dict:
+        """Árvore DRE — 16 raízes hierárquicas com `subitens` recursivo
+        + `categorias_financeiras[]` nas folhas (vinculam às categorias planas
+        em /v1/categorias).
+
+        Retorno: {"itens": [...]}.
+        Item: id, descricao, codigo, posicao, indica_totalizador,
+        representa_soma_custo_medio, subitens[], categorias_financeiras[].
+        Sem paginação aparente (16 raízes Parente cabem numa chamada).
+        """
+        return await self._get("/v1/financeiro/categorias-dre")
+
+    # ── Contas financeiras / saldos (Fase 1 Show no Financeiro) ──────
+
+    async def list_contas_financeiras(self) -> dict:
+        """Lista contas financeiras (bancos) cadastradas.
+
+        Retorno: {"itens_totais", "itens": [...]}.
+        Item: id, banco, codigo_banco, nome, ativo, tipo (CORRENTE|APLICACAO),
+        conta_padrao, possui_config_boleto_bancario, agencia, numero.
+
+        Sem paginação visível — Parente devolve 36 contas em chamada única
+        (smoke-test 2026-05-09).
+        """
+        return await self._get("/v1/conta-financeira")
+
+    async def get_saldo_atual(self, conta_id: str) -> dict:
+        """Snapshot do saldo atual de UMA conta.
+
+        Retorno: {"saldo_atual": <number>} — wrapper diferente do resto da API
+        (não é lista). Pode retornar negativo (aplicação BB Parente = -9,59).
+        """
+        return await self._get(f"/v1/conta-financeira/{conta_id}/saldo-atual")
+
+    async def list_saldos_iniciais(
+        self,
+        *,
+        data_inicio: str,
+        data_fim: str,
+        tamanho_pagina: int = 500,
+        pagina: int = 1,
+    ) -> dict:
+        """Saldos iniciais por conta×tipo×data_competencia no período.
+
+        🔥 PEGADINHA: datetime ISO **SEM Z** — usar `2026-04-01T00:00:00`.
+        Com `Z` retorna 400 explicando o formato esperado.
+
+        Retorno: {"itens_totais", "itens": [...]}.
+        Item: tipo (RECEITA|DESPESA), id_conta_financeira, data_competencia,
+        saldo_inicial.
+        """
+        params: dict[str, Any] = {
+            "data_inicio": data_inicio,
+            "data_fim": data_fim,
+            "tamanho_pagina": tamanho_pagina,
+            "pagina": pagina,
+        }
+        return await self._get(
+            "/v1/financeiro/eventos-financeiros/saldo-inicial",
+            params,
+        )
+
     async def list_centros_custo(
         self,
         *,

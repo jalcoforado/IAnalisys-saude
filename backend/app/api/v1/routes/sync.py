@@ -237,6 +237,72 @@ async def sync_contaazul_transactional(
     return SyncJobResponse.model_validate(job)
 
 
+@router.post("/contaazul/historical", response_model=TransactionalSyncResponse, status_code=200)
+async def sync_contaazul_historical(
+    current_user: UserMe = Depends(requires("sync.run")),
+    db: AsyncSession = Depends(get_db),
+) -> TransactionalSyncResponse:
+    """Carga histórica COMPLETA — varre desde 2020 até hoje, mês a mês,
+    cobrindo TODAS as parcelas (a receber + a pagar).
+
+    Necessário porque o `/buscar` do CA não filtra por `data_pagamento` —
+    parcelas pagas em abr/26 com vencimento em jan/24 ficam invisíveis no
+    sync mensal normal. Roda em ~1min pra Parente.
+
+    Idempotente — pode rodar quantas vezes quiser. Após a primeira carga,
+    use a sync delta (`/contaazul/alteracoes`) pra updates incrementais.
+    """
+    tenant_id = _require_tenant(current_user)
+    jobs = await ca_sync.sync_historical_contaazul(db, tenant_id)
+    return TransactionalSyncResponse(
+        jobs=[SyncJobResponse.model_validate(j) for j in jobs],
+        total_inserted=sum(j.records_inserted or 0 for j in jobs),
+        total_updated=sum(j.records_updated or 0 for j in jobs),
+        total_errors=sum(j.errors_count or 0 for j in jobs),
+    )
+
+
+@router.post("/contaazul/baixas", response_model=SyncJobResponse, status_code=200)
+async def sync_contaazul_baixas(
+    current_user: UserMe = Depends(requires("sync.run")),
+    db: AsyncSession = Depends(get_db),
+) -> SyncJobResponse:
+    """Detalha parcelas pagas via /parcelas/{id} pra capturar:
+    metodo_pagamento, data_pagamento real, conta_destino, conciliado.
+
+    Idempotente — só processa parcelas pagas que ainda não têm detalhe
+    em staging. 1 chamada por parcela, semaphore=3 + retry 429. Para
+    Parente (~5500 parcelas pagas), 1ª carga ~30-40min.
+    """
+    tenant_id = _require_tenant(current_user)
+    job = await ca_sync.sync_baixas_parcelas(db, tenant_id, only_missing=True)
+    return SyncJobResponse.model_validate(job)
+
+
+@router.post("/contaazul/saldos", response_model=TransactionalSyncResponse, status_code=200)
+async def sync_contaazul_saldos(
+    current_user: UserMe = Depends(requires("sync.run")),
+    db: AsyncSession = Depends(get_db),
+) -> TransactionalSyncResponse:
+    """Sync dos saldos bancários (Fase 1 Show no Financeiro):
+
+    - contas_financeiras (lista de bancos)
+    - saldos_atuais (snapshot por conta, em paralelo via asyncio.gather)
+    - saldos_iniciais (últimos 12 meses)
+
+    Roda os 3 jobs em sequência. Saldo atual usa concorrência limitada
+    (semaphore=8) pra não saturar o gateway CA.
+    """
+    tenant_id = _require_tenant(current_user)
+    jobs = await ca_sync.sync_saldos_bancarios(db, tenant_id)
+    return TransactionalSyncResponse(
+        jobs=[SyncJobResponse.model_validate(j) for j in jobs],
+        total_inserted=sum(j.records_inserted or 0 for j in jobs),
+        total_updated=sum(j.records_updated or 0 for j in jobs),
+        total_errors=sum(j.errors_count or 0 for j in jobs),
+    )
+
+
 @router.post("/contaazul/alteracoes", response_model=TransactionalSyncResponse, status_code=200)
 async def sync_contaazul_alteracoes(
     payload: DeltaSyncRequest,

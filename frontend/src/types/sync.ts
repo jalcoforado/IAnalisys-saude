@@ -29,6 +29,12 @@ export type SyncEntity =
   // Conta Azul — transacionais
   | 'contas_receber'
   | 'contas_pagar'
+  // Conta Azul — saldos bancários (Fase 1 Show no Financeiro)
+  | 'contas_financeiras'
+  | 'saldos_atuais'
+  | 'saldos_iniciais'
+  // Conta Azul — DRE (Fase 2 Show no Financeiro)
+  | 'categorias_dre'
 
 export const STATIC_ENTITIES: SyncEntity[] = [
   'business',
@@ -57,6 +63,7 @@ export const CA_STATIC_ENTITIES: SyncEntity[] = [
   'vendedores',
   'categorias',
   'centros_custo',
+  'categorias_dre',
 ]
 
 export const CA_TRANSACTIONAL_ENTITIES: SyncEntity[] = [
@@ -89,7 +96,17 @@ export const ENTITY_LABELS: Record<SyncEntity, string> = {
   centros_custo: 'Centros de Custo',
   contas_receber: 'Contas a Receber',
   contas_pagar: 'Contas a Pagar',
+  contas_financeiras: 'Contas financeiras (bancos)',
+  saldos_atuais: 'Saldos atuais',
+  saldos_iniciais: 'Saldos iniciais (12m)',
+  categorias_dre: 'Plano DRE (estrutura)',
 }
+
+export const CA_SALDOS_ENTITIES: SyncEntity[] = [
+  'contas_financeiras',
+  'saldos_atuais',
+  'saldos_iniciais',
+]
 
 export type SyncStatus = 'pending' | 'running' | 'success' | 'error' | 'idle'
 

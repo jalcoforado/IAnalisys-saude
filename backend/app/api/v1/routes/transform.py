@@ -36,6 +36,8 @@ from app.transformations.clinicorp_to_core import (
 from app.transformations.contaazul_to_core import (
     transform_all as transform_all_ca,
     transform_all_static as transform_all_static_ca,
+    transform_baixas as transform_baixas_ca,
+    transform_contas_financeiras as transform_contas_financeiras_ca,
     transform_eventos_financeiros as transform_eventos_ca,
 )
 
@@ -140,6 +142,30 @@ async def transform_contaazul_eventos(
     Pré-requisito: rodar /transform/contaazul/static antes."""
     tenant_id = _require_tenant(current_user)
     result = await transform_eventos_ca(db, tenant_id)
+    return _to_item(result)
+
+
+@router.post("/contaazul/baixas", response_model=TransformResultItem, status_code=200)
+async def transform_contaazul_baixas(
+    current_user: UserMe = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> TransformResultItem:
+    """Promove `stg_ca_parcelas_detalhe` em `core_ca_baixas` (1 linha por
+    baixa — uma parcela com pagamento parcial pode ter N baixas)."""
+    tenant_id = _require_tenant(current_user)
+    result = await transform_baixas_ca(db, tenant_id)
+    return _to_item(result)
+
+
+@router.post("/contaazul/saldos", response_model=TransformResultItem, status_code=200)
+async def transform_contaazul_saldos(
+    current_user: UserMe = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> TransformResultItem:
+    """Promove `stg_ca_contas_financeiras` + `stg_ca_saldos_atuais` em
+    `core_ca_contas_financeiras` (1 linha por conta com saldo incluso)."""
+    tenant_id = _require_tenant(current_user)
+    result = await transform_contas_financeiras_ca(db, tenant_id)
     return _to_item(result)
 
 

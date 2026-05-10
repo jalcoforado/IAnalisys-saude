@@ -11,6 +11,7 @@ import {
   Sparkles,
   Stethoscope,
   Users,
+  UserPlus,
 } from 'lucide-react'
 
 export interface MenuItem {
@@ -47,17 +48,17 @@ export const MAIN_MENU: MenuItem[] = [
     children: [
       { label: 'Financeiro', icon: DollarSign, path: '/analise/financeiro', permission: 'dashboard.read' },
       { label: 'Comercial', icon: BarChart3, path: '/analise/comercial', permission: 'dashboard.read' },
-      { label: 'Pacientes', icon: Users, comingSoon: true, permission: 'dashboard.read' },
       { label: 'Fluxo de Caixa', icon: DollarSign, path: '/financeiro', permission: 'financeiro.read' },
-      // Preservado temporariamente até os 3 dashs novos cobrirem 100%
-      { label: 'Visão Consolidada (legado)', icon: BarChart3, path: '/dashboard', permission: 'dashboard.read' },
     ],
   },
   {
     label: 'Pacientes',
     icon: Users,
-    comingSoon: true,
-    permission: 'pacientes.read',
+    permission: 'dashboard.read',
+    children: [
+      { label: 'Dashboard', icon: BarChart3, path: '/pacientes', permission: 'dashboard.read' },
+      { label: 'Captação & Origem', icon: UserPlus, path: '/pacientes/captacao', permission: 'dashboard.read' },
+    ],
   },
   {
     label: 'Agenda',

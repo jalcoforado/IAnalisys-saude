@@ -5,6 +5,7 @@ Estratégia: cada KPI traz MoM/YoY/sparkline/insight prontos do backend.
 Frontend não calcula nada — só renderiza. Permite reuso do componente
 KpiCard em todos os dashs (Financeiro/Comercial/Pacientes).
 """
+from datetime import date, datetime
 from typing import List, Literal, Optional
 
 from pydantic import BaseModel
@@ -161,9 +162,9 @@ class TopCategoriaFaturamento(BaseModel):
     """Categoria de procedimento ranqueada por faturamento aprovado."""
     categoria: str                    # nome do procedure_expertise_name
     faturamento: float
-    qtd_aprovados: int
+    qtd_procs: int                    # nº de procedimentos aprovados desta categoria
     pct_total: float
-    ticket_medio: float
+    ticket_medio: float               # faturamento / qtd_procs
     mom_pct: Optional[float] = None   # variação dessa categoria mês anterior
 
 
@@ -301,6 +302,77 @@ class PrazoAuditResponse(BaseModel):
     limit: int
 
 
+# ── Auditoria por ORÇAMENTO (status financeiro) ─────────────────
+
+
+class OrcamentoParcela(BaseModel):
+    """1 parcela detalhada — embutida em OrcamentoStatusItem.
+
+    Campos `is_confirmed`/`is_received`/`is_conferida` espelham as 4 fases
+    do ciclo de pagamento Clinicorp (ver memória `reference_clinicorp_payment_phases`):
+        Fase 1 — Lançada (linha existe)
+        Fase 2 — Confirmada (operadora aprovou)
+        Fase 3 — Recebida (dinheiro caiu na conta)
+        Fase 4 — Conferida (financeiro conciliou com extrato)
+
+    A API REST só retorna pagamentos que chegaram à Fase 4, então `is_conferida`
+    tende a ser True em ~100% dos casos — mas o campo fica como referência
+    visual da taxonomia.
+    """
+    payment_external_id: int
+    payment_header_external_id: Optional[int] = None
+    installment_number: Optional[int] = None
+    installments_count: Optional[int] = None
+    amount: float
+    due_date: Optional[str] = None        # YYYY-MM-DD
+    received_date: Optional[str] = None   # YYYY-MM-DD ou None se não pago
+    payment_form: Optional[str] = None
+    is_confirmed: bool                     # Fase 2 — operadora aprovou
+    is_received: bool                      # Fase 3 — dinheiro caiu
+    is_conferida: bool                     # Fase 4 — financeiro conciliou
+    is_vencida: bool                       # !is_received AND due_date < hoje
+
+
+class OrcamentoStatusItem(BaseModel):
+    """1 orçamento aprovado com status financeiro consolidado.
+
+    Status distingue 5 estados pra capturar a pegadinha do Clinicorp gerar
+    plano de pagamento em partes (entrada lançada, resto fica pra depois):
+
+    - sem_parcelas: Clinicorp ainda não lançou nenhuma parcela
+    - nao_pago: tem parcelas, mas zero recebido
+    - parcial: recebeu algo, há pendentes/vencidas
+    - pago_lancado: 100% do lançado pago, MAS lançado < contratado (falta Clinicorp lançar mais)
+    - pago_integral: cobertura total — pago == lançado == contratado
+    """
+    treatment_external_id: int
+    patient_name: Optional[str] = None
+    professional_name: Optional[str] = None
+    estimate_date: Optional[str] = None
+    contratado: float                # core_estimates.amount (header)
+    lancado: float                   # SUM amount das parcelas geradas
+    pago: float                      # SUM amount WHERE is_received=1
+    parcelas_qty: int                # total de parcelas geradas (= len(parcelas))
+    parcelas_pagas_qty: int          # is_received=1
+    parcelas_pendentes_qty: int      # is_received=0 (inclui vencidas)
+    parcelas_vencidas_qty: int       # is_received=0 AND due_date < hoje
+    pct_pago_contratado: float       # pago / contratado * 100 (visão comercial real)
+    pct_pago_lancado: float          # pago / lancado * 100 (visão do plano efetivo)
+    status: str
+    parcelas: List[OrcamentoParcela]
+
+
+class OrcamentoStatusResponse(BaseModel):
+    period: PeriodInfo
+    items: List[OrcamentoStatusItem]
+    # Contagens por status — pro frontend mostrar tabs/badges sem recomputar
+    contagens: dict[str, int]
+    # Totais agregados (R$ contratado / lançado / pago do conjunto inteiro)
+    totais_contratado: float
+    totais_lancado: float
+    totais_pago: float
+
+
 class DescontosSection(BaseModel):
     """Resumo de descontos concedidos sobre orçamentos APROVADOS no mês.
 
@@ -432,13 +504,14 @@ class TopEspecialidadeDemanda(BaseModel):
 
 
 class TopProfissionalConsultas(BaseModel):
-    """Profissional ranqueado por volume de consultas executadas."""
+    """Profissional ranqueado por volume de consultas atendidas (CHECKOUT)."""
     professional_external_id: int
     nome: str
-    qtd_consultas: int                      # is_canceled=0
+    qtd_consultas: int                      # is_efetiva=1 (CHECKOUT)
+    qtd_faltas: int                         # is_falta=1 (MISSED)
     qtd_canceladas: int                     # is_canceled=1
-    absenteismo_pct: float
-    pacientes_distintos: int
+    absenteismo_pct: float                  # faltas / (efetivas + faltas)
+    pacientes_distintos: int                # distintos com is_efetiva=1
     ocupacao_pct: Optional[float] = None    # qtd / capacidade P95 estimada
     pct_volume: float                       # % do volume total da clínica
 
@@ -454,13 +527,31 @@ class MixCategoriaConsulta(BaseModel):
 
 
 class OperacionalComercial(BaseModel):
-    """Métricas operacionais auxiliares — encaixe, retornos, perdas."""
-    encaixe_qty: int                        # has_encaixe=1
-    encaixe_pct: float                      # encaixe / total
-    retorno_pendente_qty: int               # has_retorno_pendente=1
+    """Operacional reformulado em 3 blocos: problema → oportunidade → ações.
+
+    Bloco 1 — Tempo perdido: horas das faltas + canceladas (mais palpável que R$).
+    Bloco 2 — Aproveitamento de slots ociosos: % de encaixes sobre slots perdidos.
+    Bloco 3 — Ações pendentes: contadores das tags operacionais do Clinicorp.
+
+    Removido `cancelados_amount_estimado` (multiplicação artificial por ticket
+    médio de consulta — métrica que não existe mais e que assumia que cada
+    cancelamento valeria um atendimento cheio).
+    """
+    # Bloco 1 — Tempo perdido
+    horas_perdidas: float                   # SUM duration_minutes em faltas+cancel / 60
+    dias_equivalentes_8h: float             # horas_perdidas / 8 (1 dia útil de 1 prof)
+    faltas_qty: int                         # is_falta=1 (separado pra mostrar composição)
+    cancelados_qty: int                     # is_canceled=1
+
+    # Bloco 2 — Aproveitamento de slots ociosos
+    slots_perdidos: int                     # faltas + cancelados (quantos slots ficaram vazios)
+    slots_recuperados_encaixe: int          # has_encaixe=1 (= encaixe_qty)
+    taxa_aproveitamento_pct: float          # encaixe / slots_perdidos * 100
+
+    # Bloco 3 — Ações pendentes (tags Clinicorp)
     remarcar_qty: int                       # has_remarcar=1
-    cancelados_qty: int
-    cancelados_amount_estimado: float       # cancelados × ticket médio (perda potencial)
+    retorno_pendente_qty: int               # has_retorno_pendente=1
+    waitlist_qty: int                       # has_waitlist=1
 
 
 class SaudeAgendaSection(BaseModel):
@@ -522,3 +613,228 @@ class AnaliseComercialResponse(BaseModel):
     operacional: OperacionalComercial
 
     evolution: List[ComercialEvolutionPoint]   # 12 meses
+
+
+# ── Pacientes — /analise/pacientes ──────────────────────────────
+
+
+class PacientesKpis(BaseModel):
+    """4 KPIs principais — foco em retenção e oportunidade comercial.
+
+    Pergunta-guia: "quem eu deveria estar ligando?"
+    """
+    pacientes_ativos: KpiCard           # is_active=1 (visita < 90d) — base viva
+    taxa_recorrencia_pct: KpiCard       # % dos atendidos no mês que já eram base anterior
+    ltv_medio: KpiCard                  # SUM pagamentos / pacientes ativos
+    em_risco_qty: KpiCard               # is_inverse — bucket 90-180d (alvo de campanha)
+
+
+class SaudeBaseSection(BaseModel):
+    """Decomposição da base de pacientes por status de retenção.
+
+    Buckets espelham a heurística do legado (curva de churn):
+    - ativo: visita < 90d
+    - em_risco: 90-180d sem visita
+    - inativo: 180-365d sem visita
+    - perdido: > 365d sem visita
+    - sem_visita: never_seen (cadastrado mas nunca atendido)
+    """
+    total: int                          # tamanho da base inteira
+    ativo_qty: int
+    em_risco_qty: int
+    inativo_qty: int
+    perdido_qty: int
+    sem_visita_qty: int
+    ativo_pct: float
+    em_risco_pct: float
+    inativo_pct: float
+    perdido_pct: float
+    sem_visita_pct: float
+
+
+class CurvaAbcItem(BaseModel):
+    """1 classe da curva ABC de Pareto sobre LTV."""
+    classe: str                         # 'A' | 'B' | 'C'
+    qtd_pacientes: int
+    faturamento: float                  # LTV total dessa classe
+    pct_pacientes: float
+    pct_faturamento: float
+
+
+class NovosRecorrentesSection(BaseModel):
+    """Novos vs Recorrentes no mês — enriquecido com R$ aprovado e ticket.
+
+    Diferente do legado que mostrava só qty: aqui inclui R$ aprovado em
+    orçamentos por grupo + ticket médio aprovado, pra responder "novos
+    chegam mais lucrativos que recorrentes ou o contrário?".
+    """
+    total: int                          # pacientes únicos com is_efetiva no mês
+    novos_qty: int                      # first_seen_at no mês
+    recorrentes_qty: int                # first_seen_at < início do mês
+    novos_amount_aprovado: float        # SUM ce.amount aprovado pelos novos no mês
+    recorrentes_amount_aprovado: float  # idem dos recorrentes
+    novos_ticket_medio: float           # amount / qty
+    recorrentes_ticket_medio: float
+
+
+class TopLtvPaciente(BaseModel):
+    """Paciente entre os top 10 por LTV. Enriquecido com status de retenção."""
+    external_id: int
+    name: Optional[str] = None
+    ltv: float                          # SUM amount is_received=1
+    total_payments: int
+    days_since_last_seen: Optional[int] = None
+    bucket: str                         # ativo|em_risco|inativo|perdido|sem_visita
+    qtd_consultas_total: int            # total_appointments
+
+
+class ParaResgatarPaciente(BaseModel):
+    """Paciente em risco/inativo com LTV alto — alvo prioritário de campanha."""
+    external_id: int
+    name: Optional[str] = None
+    ltv: float
+    days_since_last_seen: int
+    bucket: str                         # em_risco | inativo
+    mobile_phone: Optional[str] = None  # pra recepção ligar
+
+
+class NovoPacienteMes(BaseModel):
+    """Paciente que veio pela primeira vez no mês selecionado."""
+    external_id: int
+    name: Optional[str] = None
+    first_seen_at: datetime
+    professional_name: Optional[str] = None  # quem atendeu primeiro
+    teve_orcamento: bool                # gerou pelo menos 1 orçamento no mês
+    aprovou: bool                       # aprovou pelo menos 1 orçamento no mês
+    valor_aprovado: float               # SUM ce.amount aprovado no mês
+
+
+class OrcamentoPendentePaciente(BaseModel):
+    """Orçamento gerado nos últimos 60 dias e ainda não aprovado/rejeitado.
+
+    Status pendentes na Clinicorp: FOLLOWUP (em decisão) e OPEN (aberto).
+    Janela ancorada em hoje — independente do filtro de mês do dashboard,
+    porque é lista de ação imediata.
+    """
+    treatment_external_id: int          # id do orçamento (pra abrir na UI)
+    patient_external_id: int
+    patient_name: Optional[str] = None
+    professional_name: Optional[str] = None  # quem registrou
+    estimate_date: datetime
+    days_ago: int                       # hoje - estimate_date
+    amount: float
+    status: str                         # FOLLOWUP | OPEN
+    mobile_phone: Optional[str] = None  # pra recepção ligar
+
+
+class PacientesEvolutionPoint(BaseModel):
+    """1 ponto da evolution chart 12m — pacientes únicos por mês."""
+    year_month_key: str
+    label: str
+    novos: int
+    recorrentes: int
+
+
+# ── Histórico do paciente (drawer drill-down) ───────────────────
+
+
+class PacienteHistoricoConsulta(BaseModel):
+    """1 linha do histórico de consultas no drawer."""
+    appointment_external_id: int
+    date: datetime
+    professional_name: Optional[str] = None
+    category: Optional[str] = None             # category_description original
+    desfecho: str                              # efetiva | falta | cancelada | indefinida | outro
+
+
+class PacienteHistoricoOrcamento(BaseModel):
+    """1 linha do histórico de orçamentos no drawer."""
+    treatment_external_id: int
+    estimate_date: datetime
+    professional_name: Optional[str] = None
+    amount: float
+    status: str                                # APPROVED | FOLLOWUP | OPEN | REJECTED
+
+
+class PacienteDetalhe(BaseModel):
+    """Cabeçalho do paciente no drawer."""
+    external_id: int
+    name: Optional[str] = None
+    mobile_phone: Optional[str] = None
+    email: Optional[str] = None
+    gender: Optional[str] = None               # M | F
+    birth_date: Optional[date] = None
+    age: Optional[int] = None                  # calculada hoje - birth_date
+    bucket: str                                # ativo | em_risco | inativo | perdido | sem_visita
+    days_since_last_seen: Optional[int] = None
+    first_seen_at: Optional[datetime] = None
+    last_seen_at: Optional[datetime] = None
+
+
+class PacienteMetricas(BaseModel):
+    """Síntese numérica do paciente (vida toda)."""
+    ltv: float                                 # SUM amount is_received=1
+    qtd_consultas: int                         # total_appointments
+    qtd_consultas_efetivas: int                # COUNT is_efetiva=1
+    qtd_orcamentos: int                        # total_estimates
+    qtd_orcamentos_aprovados: int              # COUNT status=APPROVED
+    qtd_pagamentos: int                        # total_payments
+    ticket_medio_orcamento: float              # SUM(amount)/qtd entre aprovados
+    valor_orcado_pendente: float               # SUM amount FOLLOWUP+OPEN
+
+
+class PacienteHistoricoResponse(BaseModel):
+    """Resposta de GET /analise/pacientes/{pid}/historico."""
+    paciente: PacienteDetalhe
+    metricas: PacienteMetricas
+    consultas: List[PacienteHistoricoConsulta]   # top 20 desc
+    orcamentos: List[PacienteHistoricoOrcamento] # top 10 desc
+
+
+# ── Captação & Origem (Frente A — HowDidMeet) ──────────────────
+
+
+class CaptacaoOrigemItem(BaseModel):
+    """1 canal de origem agrupado (Facebook/Instagram/Google/Indicado/Outros/...)."""
+    canal: str                                # 'Facebook' | 'Instagram' | 'Google' | 'Indicação' | 'Outros' | etc.
+    qtd_consultas: int                        # consultas com este canal
+    qtd_pacientes: int                        # pacientes distintos atribuídos a este canal
+    pct: float                                # qtd_consultas / total preenchido
+
+
+class IndicacaoNominal(BaseModel):
+    """Quem indicou (texto livre IndicationSource agrupado)."""
+    nome_indicador: str
+    qtd_consultas: int
+    qtd_pacientes: int
+
+
+class CaptacaoOrigemResponse(BaseModel):
+    """Resposta de GET /analise/pacientes/captacao.
+
+    Snapshot global (vida toda da clínica). Sem filtro de mês — preenchimento
+    é tão raro (~0,1%) que cortar por período eliminaria a base.
+    """
+    total_consultas: int                      # total de appointments
+    total_com_origem: int                     # com how_did_meet preenchido
+    pct_preenchimento: float                  # total_com_origem / total_consultas * 100
+    canais: List[CaptacaoOrigemItem]          # distribuição dos preenchidos
+    indicacoes_nominais: List[IndicacaoNominal]  # top "Indicado por <nome>"
+
+
+class AnalisePacientesResponse(BaseModel):
+    """Resposta de GET /analise/pacientes?year=Y&month=M."""
+    period: PeriodInfo
+    previous: PeriodInfo
+    yoy: PeriodInfo
+
+    kpis: PacientesKpis
+    saude_base: SaudeBaseSection
+    curva_abc: List[CurvaAbcItem]
+    novos_recorrentes: NovosRecorrentesSection
+    top_ltv: List[TopLtvPaciente]
+    para_resgatar: List[ParaResgatarPaciente]
+    orcamentos_pendentes: List[OrcamentoPendentePaciente]
+    novos_do_mes: List[NovoPacienteMes]
+
+    evolution: List[PacientesEvolutionPoint]   # 12 meses

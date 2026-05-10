@@ -92,7 +92,7 @@ export interface TopMedicoFaturamento {
 export interface TopCategoriaFaturamento {
   categoria: string
   faturamento: number
-  qtd_aprovados: number
+  qtd_procs: number
   pct_total: number
   ticket_medio: number
   mom_pct: number | null
@@ -197,6 +197,58 @@ export interface PrazoAuditResponse {
   limit: number
 }
 
+// ── Auditoria por orçamento (status financeiro) ────────────────
+
+export interface OrcamentoParcela {
+  payment_external_id: number
+  payment_header_external_id: number | null
+  installment_number: number | null
+  installments_count: number | null
+  amount: number
+  due_date: string | null
+  received_date: string | null
+  payment_form: string | null
+  // Fases do ciclo de pagamento Clinicorp (1=Lançada/sempre · 2=Confirmada · 3=Recebida · 4=Conferida)
+  is_confirmed: boolean
+  is_received: boolean
+  is_conferida: boolean
+  is_vencida: boolean
+}
+
+export type OrcamentoStatus =
+  | 'sem_parcelas'
+  | 'nao_pago'
+  | 'parcial'
+  | 'pago_lancado'
+  | 'pago_integral'
+
+export interface OrcamentoStatusItem {
+  treatment_external_id: number
+  patient_name: string | null
+  professional_name: string | null
+  estimate_date: string | null
+  contratado: number
+  lancado: number
+  pago: number
+  parcelas_qty: number
+  parcelas_pagas_qty: number
+  parcelas_pendentes_qty: number
+  parcelas_vencidas_qty: number
+  pct_pago_contratado: number
+  pct_pago_lancado: number
+  status: OrcamentoStatus
+  parcelas: OrcamentoParcela[]
+}
+
+export interface OrcamentoStatusResponse {
+  period: PeriodInfo
+  items: OrcamentoStatusItem[]
+  contagens: Record<OrcamentoStatus, number>
+  totais_contratado: number
+  totais_lancado: number
+  totais_pago: number
+}
+
 export interface DescontosSection {
   qtd_orcamentos_aprovados: number
   qtd_procs_aprovados: number
@@ -285,9 +337,10 @@ export interface TopEspecialidadeDemanda {
 export interface TopProfissionalConsultas {
   professional_external_id: number
   nome: string
-  qtd_consultas: number
-  qtd_canceladas: number
-  absenteismo_pct: number
+  qtd_consultas: number          // is_efetiva=1
+  qtd_faltas: number             // is_falta=1 (MISSED)
+  qtd_canceladas: number         // is_canceled=1
+  absenteismo_pct: number        // faltas / (efetivas + faltas)
   pacientes_distintos: number
   ocupacao_pct: number | null
   pct_volume: number
@@ -303,12 +356,19 @@ export interface MixCategoriaConsulta {
 }
 
 export interface OperacionalComercial {
-  encaixe_qty: number
-  encaixe_pct: number
-  retorno_pendente_qty: number
-  remarcar_qty: number
+  // Bloco 1 — Tempo perdido
+  horas_perdidas: number
+  dias_equivalentes_8h: number
+  faltas_qty: number
   cancelados_qty: number
-  cancelados_amount_estimado: number
+  // Bloco 2 — Aproveitamento de slots ociosos
+  slots_perdidos: number
+  slots_recuperados_encaixe: number
+  taxa_aproveitamento_pct: number
+  // Bloco 3 — Ações pendentes (tags Clinicorp)
+  remarcar_qty: number
+  retorno_pendente_qty: number
+  waitlist_qty: number
 }
 
 export interface SaudeAgendaSection {
@@ -349,4 +409,181 @@ export interface AnaliseComercialResponse {
   mix_categorias: MixCategoriaConsulta[]
   operacional: OperacionalComercial
   evolution: ComercialEvolutionPoint[]
+}
+
+// ── Pacientes ─────────────────────────────────────────────────
+
+export interface PacientesKpis {
+  pacientes_ativos: KpiCard         // visita < 90d
+  taxa_recorrencia_pct: KpiCard     // % atendidos no mês que já eram base
+  ltv_medio: KpiCard                // SUM pagamentos / pacientes ativos
+  em_risco_qty: KpiCard             // is_inverse — bucket 90-180d
+}
+
+export interface SaudeBaseSection {
+  total: number
+  ativo_qty: number
+  em_risco_qty: number
+  inativo_qty: number
+  perdido_qty: number
+  sem_visita_qty: number
+  ativo_pct: number
+  em_risco_pct: number
+  inativo_pct: number
+  perdido_pct: number
+  sem_visita_pct: number
+}
+
+export interface CurvaAbcItem {
+  classe: string                    // 'A' | 'B' | 'C'
+  qtd_pacientes: number
+  faturamento: number
+  pct_pacientes: number
+  pct_faturamento: number
+}
+
+export interface NovosRecorrentesSection {
+  total: number
+  novos_qty: number
+  recorrentes_qty: number
+  novos_amount_aprovado: number
+  recorrentes_amount_aprovado: number
+  novos_ticket_medio: number
+  recorrentes_ticket_medio: number
+}
+
+export interface TopLtvPaciente {
+  external_id: number
+  name: string | null
+  ltv: number
+  total_payments: number
+  days_since_last_seen: number | null
+  bucket: string                    // ativo|em_risco|inativo|perdido|sem_visita
+  qtd_consultas_total: number
+}
+
+export interface ParaResgatarPaciente {
+  external_id: number
+  name: string | null
+  ltv: number
+  days_since_last_seen: number
+  bucket: string                    // em_risco | inativo
+  mobile_phone: string | null
+}
+
+export interface NovoPacienteMes {
+  external_id: number
+  name: string | null
+  first_seen_at: string             // ISO
+  professional_name: string | null
+  teve_orcamento: boolean
+  aprovou: boolean
+  valor_aprovado: number
+}
+
+export interface OrcamentoPendentePaciente {
+  treatment_external_id: number
+  patient_external_id: number
+  patient_name: string | null
+  professional_name: string | null
+  estimate_date: string             // ISO
+  days_ago: number
+  amount: number
+  status: string                    // FOLLOWUP | OPEN
+  mobile_phone: string | null
+}
+
+export interface PacientesEvolutionPoint {
+  year_month_key: string
+  label: string
+  novos: number
+  recorrentes: number
+}
+
+// ── Histórico do paciente (drawer drill-down) ────────────────
+
+export interface PacienteHistoricoConsulta {
+  appointment_external_id: number
+  date: string                          // ISO
+  professional_name: string | null
+  category: string | null
+  desfecho: 'efetiva' | 'falta' | 'cancelada' | 'indefinida' | 'outro'
+}
+
+export interface PacienteHistoricoOrcamento {
+  treatment_external_id: number
+  estimate_date: string                 // ISO
+  professional_name: string | null
+  amount: number
+  status: string                        // APPROVED | FOLLOWUP | OPEN | REJECTED
+}
+
+export interface PacienteDetalhe {
+  external_id: number
+  name: string | null
+  mobile_phone: string | null
+  email: string | null
+  gender: string | null                 // 'M' | 'F'
+  birth_date: string | null             // ISO date
+  age: number | null
+  bucket: string                        // ativo|em_risco|inativo|perdido|sem_visita
+  days_since_last_seen: number | null
+  first_seen_at: string | null
+  last_seen_at: string | null
+}
+
+export interface PacienteMetricas {
+  ltv: number
+  qtd_consultas: number
+  qtd_consultas_efetivas: number
+  qtd_orcamentos: number
+  qtd_orcamentos_aprovados: number
+  qtd_pagamentos: number
+  ticket_medio_orcamento: number
+  valor_orcado_pendente: number
+}
+
+export interface PacienteHistoricoResponse {
+  paciente: PacienteDetalhe
+  metricas: PacienteMetricas
+  consultas: PacienteHistoricoConsulta[]
+  orcamentos: PacienteHistoricoOrcamento[]
+}
+
+// ── Captação & Origem (Frente A — HowDidMeet) ────────────────
+
+export interface CaptacaoOrigemItem {
+  canal: string                       // 'Facebook' | 'Instagram' | 'Google' | 'Indicação' | 'Outros'
+  qtd_consultas: number
+  qtd_pacientes: number
+  pct: number                         // % do total preenchido
+}
+
+export interface IndicacaoNominal {
+  nome_indicador: string
+  qtd_consultas: number
+  qtd_pacientes: number
+}
+
+export interface CaptacaoOrigemResponse {
+  total_consultas: number
+  total_com_origem: number
+  pct_preenchimento: number
+  canais: CaptacaoOrigemItem[]
+  indicacoes_nominais: IndicacaoNominal[]
+}
+
+export interface AnalisePacientesResponse {
+  period: PeriodInfo
+  previous: PeriodInfo
+  yoy: PeriodInfo
+  kpis: PacientesKpis
+  saude_base: SaudeBaseSection
+  curva_abc: CurvaAbcItem[]
+  novos_recorrentes: NovosRecorrentesSection
+  top_ltv: TopLtvPaciente[]
+  para_resgatar: ParaResgatarPaciente[]
+  orcamentos_pendentes: OrcamentoPendentePaciente[]
+  novos_do_mes: NovoPacienteMes[]
+  evolution: PacientesEvolutionPoint[]
 }

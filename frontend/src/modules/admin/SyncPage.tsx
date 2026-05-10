@@ -12,6 +12,7 @@ import {
   TRANSACTIONAL_ENTITIES,
   CA_STATIC_ENTITIES,
   CA_TRANSACTIONAL_ENTITIES,
+  CA_SALDOS_ENTITIES,
   type SyncEntity,
   type SyncSource,
 } from '@/types/sync'
@@ -34,11 +35,15 @@ const CONTAAZUL_CONFIG: SyncProviderConfig = {
   source: 'contaazul',
   staticEntities: CA_STATIC_ENTITIES,
   heatmapRows: CA_TRANSACTIONAL_ENTITIES,
+  saldosEntities: CA_SALDOS_ENTITIES,
   syncAllStatic: () => syncService.contaazulStatic(),
   syncMonth: (year, month) => syncService.contaazulFinancial(year, month),
   syncEntityMonth: (entity, year, month) =>
     syncService.contaazulTransactional(entity, year, month),
   syncAlteracoes: (hoursBack) => syncService.contaazulAlteracoes(hoursBack),
+  syncSaldos: () => syncService.contaazulSaldos(),
+  syncHistorical: () => syncService.contaazulHistorical(),
+  syncBaixas: () => syncService.contaazulBaixas(),
   // Sem kpisMonth — Conta Azul não tem agregado pré-calculado
   // showRebuildPipeline: true — o rebuild é global (cobre CC + CA), faz
   // sentido aparecer nas duas abas pra quem entra direto no CA encontrar.
@@ -47,7 +52,7 @@ const CONTAAZUL_CONFIG: SyncProviderConfig = {
 
 const TABS: { key: SyncSource; label: string; subtitle: string; config: SyncProviderConfig }[] = [
   { key: 'clinicorp', label: 'Clinicorp', subtitle: 'agenda · pacientes · receitas · profissionais', config: CLINICORP_CONFIG },
-  { key: 'contaazul', label: 'Conta Azul', subtitle: 'pessoas · produtos · serviços · categorias · centros de custo · financeiro', config: CONTAAZUL_CONFIG },
+  { key: 'contaazul', label: 'Conta Azul', subtitle: 'pessoas · produtos · serviços · categorias · centros de custo · financeiro · saldos bancários', config: CONTAAZUL_CONFIG },
 ]
 
 

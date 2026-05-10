@@ -186,9 +186,70 @@ Todas têm: `id BIGINT PK`, `tenant_id`, `external_id`, `external_updated_at`, `
 
 ---
 
-### FASE 4 — Pipeline de dados (Conta Azul) 🟡 (4a/4b/4c ✅ done · 4d/4e/4f pendentes)
+### FASE 4 — Pipeline de dados (Conta Azul) 🟢 (4a-4f ✅ · Show no Financeiro Fases 1+2 + Ondas 1+2 ✅ entregues 2026-05-09)
 
 **Objetivo:** Dados financeiros reais entram no banco, separados do Clinicorp. Conta Azul é fonte canônica do realizado bancário (entradas + saídas + categorias). Clinicorp continua como fonte canônica do vínculo paciente↔consulta↔valor.
+
+#### 🚀 Plano "Show no Financeiro" — 4 fases (definido 2026-05-09)
+
+Após exploração de 7 endpoints CA prioritários (catálogo completo em `docs/11_CONTAAZUL_ENDPOINTS_CATALOG.md` — atualizado com payloads reais, formatos de parâmetro descobertos e pegadinhas):
+
+**Fase 1 — Saldo Bancário** ✅ entregue 2026-05-09
+- [x] Migration 0029 — 3 staging (`stg_ca_contas_financeiras`, `stg_ca_saldos_atuais`, `stg_ca_saldos_iniciais`) + 1 core (`core_ca_contas_financeiras`)
+- [x] Cliente CA: `list_contas_financeiras`, `get_saldo_atual`, `list_saldos_iniciais`
+- [x] Sync `sync_saldos_bancarios` — 3 jobs encadeados; saldo atual em paralelo via `asyncio.gather` (semaphore=4 + retry no 429)
+- [x] Saldo inicial em **chamadas mensais** — API CA limita janela em 365 dias (descoberto no smoke; 13 meses dão 400)
+- [x] Promo `transform_contas_financeiras` — junta staging contas + saldos atuais em core
+- [x] Endpoint `POST /sync/contaazul/saldos` + `POST /transform/contaazul/saldos`
+- [x] `/financeiro/overview` enriquecido com bloco `saldos_bancarios` (total + breakdown por conta)
+- [x] Card "Saldo bancário" no topo do dashboard `/financeiro` (hero + lista de contas com tipo/banco)
+- **Smoke Parente (10 contas reais):** saldo total ativas = -R$ 85.241,90 (negativo puxado pelo "COFRE PARENTE ODONTOLOGIA"); 17 saldos iniciais 12m sincronizados
+
+**Fase 2 — DRE Estruturada** ✅ entregue 2026-05-09
+- [x] Migration 0030 — `stg_ca_categorias_dre` + `core_ca_categorias_dre` (achatado, com nivel/parent/root) + `core_ca_dre_links` (N:N DRE↔categoria_financeira)
+- [x] Cliente CA: `list_categorias_dre`
+- [x] Sync registrado como `categorias_dre` em STATIC_ENTITIES (1 chamada)
+- [x] Promo `transform_categorias_dre` — recursiva, achata `subitens[]` em N rows com pai/nivel; popula links N:N (delete + insert idempotente)
+- [x] `/financeiro/overview` ganha bloco `dre` com 8 grupos raiz que têm código (totalizadores sem código são linhas calculadas, omitidos)
+- [x] Card "DRE estruturada" no dashboard — colapsável, barras horizontais, drill subgrupos
+- [x] Tela `/admin/sync` lista `categorias_dre` em Cadastros estáticos CA
+- [x] Página `/financeiro` reformulada no padrão `PageContainer + PageHeader + PageFooter + PeriodSelector` (gap=6, eyebrow CONTA AZUL)
+- **Smoke Parente abr/26:** 16 raízes → 32 nós, 120 links, R$ 229k classificados (98%) · R$ 2k não classificados (1%)
+- **Observação:** Parente classifica receitas em "07.1 Entradas Não Operacionais" (R$ 24k) em vez de "01 Receitas Operacionais" — config do CA dela, código está correto.
+
+**Onda 1 — Saldo bancário fix + Scope banner + Histórico** ✅ entregue 2026-05-09
+- [x] `_is_banco_real()` filtra CAIXINHA / NAO_BANCO (cofres contábeis) do total bancário — saldo real Parente passou de **-R$ 85k → +R$ 188k** (cofre PARENTE ODONTOLOGIA tinha -R$ 234k contábil distorcendo)
+- [x] `SaldosBancariosBlock` separa `saldo_bancos` vs `saldo_caixinhas` + qtd
+- [x] Card "Saldo bancário" virou hero + drawer pra caixinhas/inativas
+- [x] `ScopeBanner` no topo do `/financeiro` explica que receitas via PIX/cartão (Clinicorp) não passam pelo CA — direciona pra `/analise/financeiro`
+- [x] `sync_historical_contaazul(year_start=2020)` varre todos os meses 2020+ pras 2 transacionais — botão "Carga histórica completa" em `/admin/sync` (Onda 1, indigo)
+
+**Onda 2 — Detalhar baixas + Encargos + Métodos pagamento** ✅ entregue 2026-05-09
+- [x] Migration 0031 — `stg_ca_parcelas_detalhe` + `core_ca_baixas` (data_pagamento real, método, conta destino, conciliado, juros/multa/desconto)
+- [x] Cliente CA: `get_parcela_detalhe(parcela_id)` (`/v1/financeiro/contas-pagar-receber/parcelas/{id}`)
+- [x] `sync_baixas_parcelas(only_missing=True)` itera parcelas pagas em `core_ca_parcelas` que ainda não têm baixa em `core_ca_baixas`; semaphore=3 + retry 429
+- [x] Promo `transform_baixas` explode `baixas[]` (uma parcela pode ter N baixas)
+- [x] Botão "Detalhar baixas — Onda 2" em `/admin/sync` (purple, badge "pode demorar")
+- [x] `/financeiro/overview` ganhou bloco `metodos_pagamento` (PIX/Boleto/Cartão/...) + `conciliacao` (% reconciliado + top contas destino)
+- [x] **Encargos:** `FinanceiroKpis.encargos_entradas/saidas` somam `juros + multa - desconto` de `core_ca_baixas` filtrando por `data_vencimento` (alinha com `fato_caixa.year_month_key`); `FinanceiroPage` mostra footer `+ R$ X em juros/multa · R$ Y c/ encargos` nos KpiCards Saídas/Entradas quando `|encargos| > 0`. `valor_pago_rateado` da `fato_caixa` continua "limpo" (sem encargos) pra preservar coluna estável; encargos são contabilizados separados.
+
+**Validação contra PDFs do Conta Azul (abr/26)** ✅ 2026-05-09
+- **Saídas pagas:** PDF R$ 233.146 = `fato_caixa.saidas` R$ 231.874 + encargos R$ 1.272 (juros + multa só vindos de `/parcelas/{id}`) — fechou em **R$ 0,00**
+- **A pagar (em aberto vencendo no mês):** PDF 134 parcelas R$ 73.246,74 ≈ IAnalisys 134 parcelas distintas R$ 73.246,93 — diferença **R$ 0,19** (arredondamento)
+- Todas as 134 do PDF estão "Atrasado" — `is_vencido=1` casa 100%
+- **Não temos:** coluna "Conta bancária" (origem prevista do pagamento) por parcela. Disponível em `parcela.conta_financeira_id` se quiser futuro card "previsão de saída por banco".
+
+**Fase 3 — Transferências**
+- Sync `/v1/financeiro/transferencias` (12 em abr/26 Parente)
+- Separa transferências internas das receitas/despesas — corrige distorção do fluxo
+
+**Fase 4 — Vendas detalhadas + Match CC↔CA** (= PR-16 do roadmap antigo)
+- Sync `/v1/venda/busca` + itens
+- Match orçamento CC aprovado ↔ venda CA registrada → coluna "Match CA" no drill-down
+
+#### Pendência crítica de modelagem (ainda não resolvida)
+
+⚠️ **Alinhamento de data em `fato_caixa`** — Pedro precisa conferir no ERP CA qual campo de data o dashboard nativo usa antes de mudar nossa modelagem (ver memória `project_fato_caixa_data_alignment.md`). Bloqueia análises temporais futuras corretas.
 
 #### OAuth e conexão ✅
 
@@ -310,10 +371,14 @@ Sessão de ~6h após pause/compact descobriu/corrigiu múltiplos bugs e adiciono
 - Card clicável + ícone `↗` cinza claro no canto superior direito (sem poluir UX existente)
 - Smoke-test Out/2025: faturamento R$ 336.492,56 / 716 linhas, consultas 946, pacientes ativos 1.941, conversão 58,32%, absenteísmo 8,07% — todos auditados ✅
 
-**Etapa 2** ⏸ stand-by (re-design pendente) — feedback do Pedro: *"queria mesmo um relatório para servir de auditoria"*
-- Drawer atual atende spot-check rápido durante navegação, mas Pedro tem em mente algo mais próximo de **relatório auditável** (provavelmente exportável CSV/PDF, agrupamentos hierárquicos, totais por categoria/profissional, printável pra evidência)
-- Não plugar drill-down nos cards restantes (Pipeline, Inadimplência, Funil, Top profs/cats, LTV) até alinhar formato com Pedro
-- Endpoint backend já cobre todas as 6 queries auditáveis — o que muda é a apresentação no front
+**Etapa 2** ✅ (resolvida via Sub-PR 20 — entregue 2026-05-09)
+
+Substituída pelos drill-downs específicos dos 3 dashs segmentados, que cobrem auditoria com qualidade superior à proposta original:
+- `/analise/financeiro` — modal "Auditar" no card Prazos (250 orçamentos, 5 status, parcelas com 4 fases Clinicorp expansíveis), card Custo de Adquirência com decomposição por forma
+- `/analise/comercial` — Saúde da agenda (5 desfechos), tooltips ricos no Funil/Conversão/Evolução
+- `/analise/pacientes` — Para Resgatar (top 15 LTV em risco com telefone), Orçamentos em decisão (top 20 FOLLOWUP/OPEN), Top LTV, Novos do mês com status
+
+O dashboard executivo legado foi extinto (Sub-PR 20e), e com ele o drawer da Etapa 1.
 
 **Sub-PR 16 (NOVO): Match Clinicorp ↔ CA dentro do drill-down** (~2-3d, depois de 15)
 
@@ -616,10 +681,38 @@ Decomposição abr/26: 691 efetivas + 75 faltas + 87 canceladas + 94 indefinidas
 
 Memória de referência: `project_agenda_status_flags.md`.
 
-#### Sub-PR 20d — `/analise/pacientes` ⏳ (próximo)
+#### Sub-PR 20d — `/analise/pacientes` ✅ (entregue 2026-05-09)
 
 Foco: retenção e oportunidade — descobrir QUEM remarcar, resgatar, fidelizar.
 Pergunta-guia: "quem eu deveria estar ligando?"
+
+**Entregue (Parente abr/26):**
+- 4 KPIs: Pacientes ativos (1.140 — visita <90d) · Recorrência (86,4%) · LTV médio (R$ 3.142) · Em risco (841, `is_inverse`)
+- Saúde da base (5 buckets: ativo/em risco/inativo/perdido/sem visita)
+- Curva ABC sobre LTV (Pareto: A 80% / B 15% / C 5%)
+- Novos × Recorrentes ENRIQUECIDO (R$ aprovado + ticket por grupo) — insight: novos chegam com ticket 2x maior em Parente
+- Evolution 12m (barras empilhadas novos × recorrentes)
+- ⚡ **Para Resgatar** — top 15 LTV em 90-365d (em risco/inativo) com telefone — diferencial estratégico
+- ⚡ **Orçamentos em decisão** — top 20 FOLLOWUP/OPEN nos últimos 60d (janela ancorada em hoje, ignora filtro de mês)
+- Top LTV (10 maiores) + Novos do mês (20 com status orçamento)
+- Banner "Mês em andamento" padronizado (sky/CalendarClock) em todos os 3 dashs
+
+**Pegadinha resolvida**: KPI "Pacientes ativos" usa `days_since_last_seen < 90` (não `is_active=1` que retorna 1986 — inclui 90-180d). Bate com bucket "Ativo".
+
+**Performance**: TOTAL endpoint = 270ms após migration `0027_pacientes_perf_indexes` (era 48s antes — falta de índice em `fato_financeiro(patient_external_id)` + GROUP BY antes de LIMIT no `_top_ltv`).
+
+**Drill-down do paciente** ✅ (entregue 2026-05-09):
+- Endpoint `GET /analise/pacientes/{pid}/historico` (~8ms — 4 queries leves)
+- Drawer slide-in lateral 60% à direita (ESC fecha)
+- Header: nome + bucket + telefone + email + gênero + idade
+- 4 mini-métricas: LTV · Consultas (efetivas) · Orçamentos (aprovados) · Pendente em decisão
+- Rastros: 1ª visita · última visita · ticket médio
+- Top 20 consultas (data · profissional · categoria · desfecho colorido com 5 estados)
+- Top 10 orçamentos (data · profissional · valor · status colorido)
+- Nomes clicáveis nos 4 cards (Para Resgatar · Orçamentos em decisão · Top LTV · Novos do mês), aparência de texto comum com hover:underline (sem cor de link)
+
+**Pendente para futuro (não bloqueante):**
+- Módulo de mídia social / nichos (Frente A: HowDidMeet · Frente B: personas · Frente C: ROI por canal)
 
 **KPIs principais (5)**: Pacientes ativos · LTV médio · Taxa de recorrência · Novos no mês · Pacientes em risco
 
@@ -652,9 +745,12 @@ Pergunta-guia: "quem eu deveria estar ligando?"
 *Frente C — ROI por canal (futuro, depende da Frente A pegar tração)*
 - Quando preenchimento de `HowDidMeet` chegar a >40%, montar dashboard de "Canal → R$ aprovado / R$ pago / consultas" pra calcular CAC implícito por canal e comparar com gasto de ads (input manual ou integração futura com Meta Ads API).
 
-#### Sub-PR 20e — Extinção do dashboard executivo legado ⏳
+#### Sub-PR 20e — Extinção do dashboard executivo legado ✅ (entregue 2026-05-09)
 
-Após 20d, redirecionar `/dashboard` → `/analise` (página de cards levando aos 3 dashs) e remover componentes legados.
+Removido após 20d:
+- Frontend: `modules/dashboard/`, `services/dashboard.service.ts`, item de menu "Visão Consolidada (legado)", rota `/dashboard` em `App.tsx`
+- Backend: `routes/dashboard.py`, `services/dashboard_service.py`, `services/dashboard_drilldown_service.py`, `schemas/dashboard_drilldown.py` + include_router
+- Mantido: `schemas/dashboard.py` e `types/dashboard.ts` reduzidos só ao `PeriodInfo` (usado por Fluxo de Caixa). Pode ser movido para `common.py/.ts` em limpeza futura.
 
 ---
 

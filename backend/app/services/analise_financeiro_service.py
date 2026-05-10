@@ -27,6 +27,9 @@ from app.schemas.analise import (
     KpiCard,
     MixPagamentoEnriched,
     PeriodInfo,
+    OrcamentoParcela,
+    OrcamentoStatusItem,
+    OrcamentoStatusResponse,
     PrazoAuditItem,
     PrazoAuditResponse,
     PrazoBucket,
@@ -400,24 +403,23 @@ async def _funil_orcamentos(
     cur = await _aggregate_month(db, tenant_id, ym)
     prev_aggr = await _aggregate_month(db, tenant_id, ym_prev)
 
-    # Pagos: orçamentos cujo paciente teve algum pagamento dentro do mesmo mês.
-    # Aproximação razoável até termos mapping orçamento↔pagamento (PR futuro).
+    # Pagos: orçamentos APROVADOS no mês com parcelas em core_payments
+    # (mapping real treatment↔payment). pagos_amount = soma das parcelas
+    # ligadas a esses orçamentos (caixa Fase 4 — ver reference_clinicorp_payment_phases).
     pagos_q = await db.execute(
         text("""
             SELECT
-                COUNT(DISTINCT o.external_id) AS pagos_qty,
-                COALESCE(SUM(o.amount), 0) AS pagos_amount
-            FROM fato_orcamentos o
-            WHERE o.tenant_id = :tid
-              AND o.year_month_key = :ym
-              AND o.is_approved = 1
-              AND EXISTS (
-                  SELECT 1 FROM fato_financeiro f
-                  WHERE f.tenant_id = o.tenant_id
-                    AND f.patient_external_id = o.patient_external_id
-                    AND f.is_received = 1
-                    AND f.year_month_key = :ym
-              )
+                COUNT(DISTINCT ce.external_id) AS pagos_qty,
+                COALESCE(SUM(cp.amount), 0)    AS pagos_amount
+            FROM core_estimates ce
+            INNER JOIN core_payments cp
+                ON cp.tenant_id = ce.tenant_id
+               AND cp.treatment_external_id = ce.external_id
+               AND cp.is_deleted = 0
+               AND cp.is_canceled = 0
+            WHERE ce.tenant_id = :tid
+              AND ce.status = 'APPROVED'
+              AND DATE_FORMAT(ce.estimate_date, '%Y-%m') = :ym
         """),
         {"tid": tenant_id, "ym": ym},
     )
@@ -694,7 +696,7 @@ async def _top_categorias_faturamento(
             )
             SELECT
                 categoria,
-                COUNT(DISTINCT orc_id) AS qtd_aprovados,
+                COUNT(*)               AS qtd_procs,
                 COALESCE(SUM(share), 0) AS fat
             FROM proc_share
             GROUP BY categoria
@@ -742,12 +744,12 @@ async def _top_categorias_faturamento(
     out: List[TopCategoriaFaturamento] = []
     for r in cur_rows:
         fat = float(r.fat or 0)
-        qtd = int(r.qtd_aprovados or 0)
+        qtd = int(r.qtd_procs or 0)
         compare_fat = (fat / progress) if is_partial else fat
         out.append(TopCategoriaFaturamento(
             categoria=r.categoria,
             faturamento=round(fat, 2),
-            qtd_aprovados=qtd,
+            qtd_procs=qtd,
             pct_total=round(fat / total * 100, 1),
             ticket_medio=round(fat / qtd, 2) if qtd else 0.0,
             mom_pct=_delta_pct(compare_fat, prev_by_cat.get(r.categoria)),
@@ -1650,6 +1652,178 @@ async def get_prazos_audit(
         total_count=total,
         returned_count=len(items),
         limit=limit,
+    )
+
+
+# ── Auditoria por ORÇAMENTO (status financeiro) ─────────────────
+
+
+# Tolerância pra comparações float em Reais — diferenças menores que 1 centavo
+# entram como "igual" (acumulação de parcelas vs header pode arredondar).
+_R_EPS = 0.01
+
+
+def _classify_orcamento(contratado: float, lancado: float, pago: float, parcelas_qty: int) -> str:
+    """5 estados de status pra capturar a pegadinha do plano parcial Clinicorp.
+
+    pago_integral exige cobertura total (pago = lancado = contratado, com tolerância);
+    pago_lancado é a situação "100% do plano efetivo pago, mas Clinicorp ainda
+    não lançou as demais parcelas" (header > soma_parcelas).
+    """
+    if parcelas_qty == 0:
+        return "sem_parcelas"
+    if pago < _R_EPS:
+        return "nao_pago"
+    if pago + _R_EPS < lancado:
+        return "parcial"
+    # pago >= lancado (com tolerância)
+    if lancado + _R_EPS < contratado:
+        return "pago_lancado"
+    return "pago_integral"
+
+
+async def get_orcamentos_status(
+    db: AsyncSession, tenant_id: str, year: int, month: int,
+) -> OrcamentoStatusResponse:
+    """Lista os orçamentos APROVADOS no mês com status financeiro consolidado.
+
+    Cardinalidade: 1 linha por orçamento (= treatment_external_id) com parcelas
+    embutidas. Pra abr/26 são ~250 linhas + ~1500 parcelas no payload.
+
+    Status segue 5 estados — ver docstring de `OrcamentoStatusItem`. As métricas
+    `pago` e `parcelas_pagas_qty` usam `is_received=1` (só pagamentos confirmados).
+    """
+    ym = _ym_key(year, month)
+
+    # Query 1 — orçamentos aprovados com agregados de parcelas
+    sql_orcs = """
+        SELECT
+            ce.external_id AS treatment_external_id,
+            COALESCE(MAX(cp.patient_name), MAX(ce.patient_name)) AS patient_name,
+            MAX(ce.professional_name) AS professional_name,
+            DATE_FORMAT(MAX(ce.estimate_date), '%Y-%m-%d') AS estimate_date,
+            MAX(ce.amount) AS contratado,
+            COALESCE(SUM(cp.amount), 0) AS lancado,
+            COALESCE(SUM(CASE WHEN cp.is_received=1 THEN cp.amount ELSE 0 END), 0) AS pago,
+            SUM(CASE WHEN cp.id IS NOT NULL THEN 1 ELSE 0 END) AS parcelas_qty,
+            SUM(CASE WHEN cp.is_received=1 THEN 1 ELSE 0 END) AS pagas_qty,
+            SUM(CASE WHEN cp.id IS NOT NULL AND cp.is_received=0 THEN 1 ELSE 0 END) AS pendentes_qty,
+            SUM(CASE WHEN cp.is_received=0 AND cp.due_date IS NOT NULL AND cp.due_date < CURDATE() THEN 1 ELSE 0 END) AS vencidas_qty
+        FROM core_estimates ce
+        LEFT JOIN core_payments cp
+            ON cp.tenant_id = ce.tenant_id
+           AND cp.treatment_external_id = ce.external_id
+           AND cp.is_deleted = 0
+           AND cp.is_canceled = 0
+        WHERE ce.tenant_id = :tid
+          AND ce.is_deleted = 0
+          AND ce.status = 'APPROVED'
+          AND DATE_FORMAT(ce.estimate_date, '%Y-%m') = :ym
+        GROUP BY ce.external_id
+        ORDER BY MAX(ce.estimate_date) DESC, patient_name
+    """
+    orcs_rows = (await db.execute(text(sql_orcs), {"tid": tenant_id, "ym": ym})).all()
+
+    if not orcs_rows:
+        return OrcamentoStatusResponse(
+            period=_period(year, month), items=[],
+            contagens={}, totais_contratado=0.0, totais_lancado=0.0, totais_pago=0.0,
+        )
+
+    treatment_ids = [int(r.treatment_external_id) for r in orcs_rows]
+
+    # Query 2 — todas as parcelas dos orçamentos acima (1 query batch)
+    sql_parcelas = """
+        SELECT
+            cp.id AS payment_external_id,
+            cp.treatment_external_id,
+            cp.payment_header_external_id,
+            cp.installment_number,
+            cp.installments_count,
+            cp.amount,
+            DATE_FORMAT(cp.due_date, '%Y-%m-%d') AS due_date,
+            DATE_FORMAT(cp.received_date, '%Y-%m-%d') AS received_date,
+            cp.payment_form,
+            cp.is_confirmed,
+            cp.is_received,
+            -- Fase 4 (Conferência) — Clinicorp marca via check_out_date OU post_date
+            (cp.check_out_date IS NOT NULL OR cp.post_date IS NOT NULL) AS is_conferida,
+            (cp.is_received = 0 AND cp.due_date IS NOT NULL AND cp.due_date < CURDATE()) AS is_vencida
+        FROM core_payments cp
+        WHERE cp.tenant_id = :tid
+          AND cp.is_deleted = 0
+          AND cp.is_canceled = 0
+          AND cp.treatment_external_id IN :tids
+        ORDER BY cp.treatment_external_id,
+                 cp.payment_header_external_id,
+                 cp.installment_number
+    """
+    parcelas_rows = (await db.execute(
+        text(sql_parcelas), {"tid": tenant_id, "tids": tuple(treatment_ids)},
+    )).all()
+
+    # Agrupa parcelas por treatment_external_id
+    parcelas_by_tid: dict[int, list[OrcamentoParcela]] = {}
+    for p in parcelas_rows:
+        tid = int(p.treatment_external_id) if p.treatment_external_id else 0
+        parcelas_by_tid.setdefault(tid, []).append(OrcamentoParcela(
+            payment_external_id=int(p.payment_external_id),
+            payment_header_external_id=int(p.payment_header_external_id) if p.payment_header_external_id else None,
+            installment_number=int(p.installment_number) if p.installment_number is not None else None,
+            installments_count=int(p.installments_count) if p.installments_count is not None else None,
+            amount=float(p.amount or 0),
+            due_date=p.due_date,
+            received_date=p.received_date,
+            payment_form=p.payment_form,
+            is_confirmed=bool(p.is_confirmed),
+            is_received=bool(p.is_received),
+            is_conferida=bool(p.is_conferida),
+            is_vencida=bool(p.is_vencida),
+        ))
+
+    # Constroi os items + agregados
+    items: list[OrcamentoStatusItem] = []
+    contagens = {"sem_parcelas": 0, "nao_pago": 0, "parcial": 0, "pago_lancado": 0, "pago_integral": 0}
+    tot_contratado = tot_lancado = tot_pago = 0.0
+
+    for r in orcs_rows:
+        tid = int(r.treatment_external_id)
+        contratado = float(r.contratado or 0)
+        lancado = float(r.lancado or 0)
+        pago = float(r.pago or 0)
+        parcelas_qty = int(r.parcelas_qty or 0)
+        status = _classify_orcamento(contratado, lancado, pago, parcelas_qty)
+
+        contagens[status] = contagens.get(status, 0) + 1
+        tot_contratado += contratado
+        tot_lancado += lancado
+        tot_pago += pago
+
+        items.append(OrcamentoStatusItem(
+            treatment_external_id=tid,
+            patient_name=r.patient_name,
+            professional_name=r.professional_name,
+            estimate_date=r.estimate_date,
+            contratado=round(contratado, 2),
+            lancado=round(lancado, 2),
+            pago=round(pago, 2),
+            parcelas_qty=parcelas_qty,
+            parcelas_pagas_qty=int(r.pagas_qty or 0),
+            parcelas_pendentes_qty=int(r.pendentes_qty or 0),
+            parcelas_vencidas_qty=int(r.vencidas_qty or 0),
+            pct_pago_contratado=round(pago / contratado * 100, 1) if contratado else 0.0,
+            pct_pago_lancado=round(pago / lancado * 100, 1) if lancado else 0.0,
+            status=status,
+            parcelas=parcelas_by_tid.get(tid, []),
+        ))
+
+    return OrcamentoStatusResponse(
+        period=_period(year, month),
+        items=items,
+        contagens=contagens,
+        totais_contratado=round(tot_contratado, 2),
+        totais_lancado=round(tot_lancado, 2),
+        totais_pago=round(tot_pago, 2),
     )
 
 

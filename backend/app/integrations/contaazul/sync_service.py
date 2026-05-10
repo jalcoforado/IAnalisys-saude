@@ -16,11 +16,12 @@ Transacionais (por mês de vencimento): contas_receber, contas_pagar.
 """
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Iterable
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import bindparam, delete, func, select, text
 from sqlalchemy.dialects.mysql import insert as mysql_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -29,11 +30,16 @@ from app.integrations.contaazul.oauth import refresh_access_token, ContaAzulOAut
 from app.models.contaazul_token import ContaAzulToken
 from app.models.staging_contaazul import (
     StgCaCategorias,
+    StgCaCategoriasDre,
     StgCaCentrosCusto,
+    StgCaContasFinanceiras,
     StgCaContasPagar,
     StgCaContasReceber,
+    StgCaParcelasDetalhe,
     StgCaPessoas,
     StgCaProdutos,
+    StgCaSaldosAtuais,
+    StgCaSaldosIniciais,
     StgCaServicos,
     StgCaVendedores,
 )
@@ -122,12 +128,13 @@ class EntitySpec:
 
 
 STATIC_ENTITIES: tuple[EntitySpec, ...] = (
-    EntitySpec("pessoas",       StgCaPessoas,      "id", "data_alteracao",      "items", paginate=True),
-    EntitySpec("produtos",      StgCaProdutos,     "id", "ultima_atualizacao",  "items", paginate=True),
-    EntitySpec("servicos",      StgCaServicos,     "id", None,                  "itens", paginate=False),
-    EntitySpec("vendedores",    StgCaVendedores,   "id", None,                  "",      paginate=False),
-    EntitySpec("categorias",    StgCaCategorias,   "id", None,                  "itens", paginate=True),
-    EntitySpec("centros_custo", StgCaCentrosCusto, "id", None,                  "itens", paginate=True),
+    EntitySpec("pessoas",        StgCaPessoas,       "id", "data_alteracao",      "items", paginate=True),
+    EntitySpec("produtos",       StgCaProdutos,      "id", "ultima_atualizacao",  "items", paginate=True),
+    EntitySpec("servicos",       StgCaServicos,      "id", None,                  "itens", paginate=False),
+    EntitySpec("vendedores",     StgCaVendedores,    "id", None,                  "",      paginate=False),
+    EntitySpec("categorias",     StgCaCategorias,    "id", None,                  "itens", paginate=True),
+    EntitySpec("centros_custo",  StgCaCentrosCusto,  "id", None,                  "itens", paginate=True),
+    EntitySpec("categorias_dre", StgCaCategoriasDre, "id", None,                  "itens", paginate=False),
 )
 
 
@@ -137,8 +144,26 @@ TRANSACTIONAL_ENTITIES: tuple[EntitySpec, ...] = (
 )
 
 
+# Saldos bancários (Fase 1) — não usam o orquestrador genérico mas precisam
+# estar no registry pra `_update_checkpoint` poder contar staging.
+SALDOS_ENTITIES: tuple[EntitySpec, ...] = (
+    EntitySpec("contas_financeiras", StgCaContasFinanceiras, "id", None, "itens", paginate=False),
+    EntitySpec("saldos_atuais",      StgCaSaldosAtuais,      "id", None, "",      paginate=False),
+    EntitySpec("saldos_iniciais",    StgCaSaldosIniciais,    "id", None, "itens", paginate=True),
+)
+
+# Detalhamento de parcelas (Onda 2) — não usa o orquestrador genérico
+# (1 chamada por parcela em vez de paginação), mas precisa estar no registry
+# pra `_update_checkpoint` poder contar staging.
+DETAIL_ENTITIES: tuple[EntitySpec, ...] = (
+    EntitySpec("parcelas_detalhe", StgCaParcelasDetalhe, "id", None, "", paginate=False),
+)
+
+
 _ALL_ENTITIES_BY_NAME: dict[str, EntitySpec] = {
-    s.name: s for s in (*STATIC_ENTITIES, *TRANSACTIONAL_ENTITIES)
+    s.name: s for s in (
+        *STATIC_ENTITIES, *TRANSACTIONAL_ENTITIES, *SALDOS_ENTITIES, *DETAIL_ENTITIES,
+    )
 }
 
 
@@ -239,11 +264,13 @@ async def _paginate_static(
     Aprendido via loop infinito de 237k chamadas duplicadas.
     """
     if not spec.paginate:
-        # Servicos, vendedores: chamada única
+        # Servicos, vendedores, categorias_dre: chamada única
         if spec.name == "servicos":
             payload = await client.list_servicos()
         elif spec.name == "vendedores":
             payload = await client.list_vendedores()
+        elif spec.name == "categorias_dre":
+            payload = await client.list_categorias_dre()
         else:
             raise ValueError(f"Entidade '{spec.name}' não tem fetch sem paginação configurado.")
         return _extract_records(payload, spec.items_key)
@@ -465,6 +492,204 @@ _DELTA_VENCIMENTO_DE = date(2010, 1, 1)
 _DELTA_VENCIMENTO_ATE = date(2050, 12, 31)
 
 
+async def sync_historical_contaazul(
+    db: AsyncSession, tenant_id: str,
+    *,
+    year_start: int = 2020,
+) -> list[SyncJob]:
+    """Carga histórica COMPLETA de contas a receber/pagar do CA — pega TUDO
+    desde `year_start` até hoje, em janelas mensais por `data_vencimento`.
+
+    Diferente do sync mensal normal (que pega 1 mês de cada vez), este faz
+    uma varredura completa pra cobrir parcelas pagas com vencimento em
+    qualquer mês — necessário porque o `/buscar` não filtra por
+    `data_pagamento`. Idempotente — pode rodar quantas vezes quiser.
+
+    Usado no diagnóstico Onda 1: apenas R$ 92 de receita paga em abr/26
+    aparece quando filtramos vencimento=abril, mas R$ 2.5M acumulados
+    quando varremos todo o histórico.
+
+    Custa ~12×N_anos chamadas (Parente histórico = ~72 chamadas, ~1min).
+    """
+    today = date.today()
+    jobs: list[SyncJob] = []
+    client: ContaAzulClient | None = None
+
+    try:
+        client = await _get_authenticated_client(db, tenant_id)
+        for spec in TRANSACTIONAL_ENTITIES:
+            # 1 SyncJob por entidade cobrindo a faixa toda
+            period_from = date(year_start, 1, 1)
+            period_to = date(today.year, 12, 31)
+            job = await _start_job(
+                db, tenant_id, spec.name,
+                period_from=period_from, period_to=period_to,
+            )
+            try:
+                # Itera ano-a-ano, mês-a-mês — janela CA aceita até 365d
+                # mas mensal é mais granular (resilência a falhas)
+                all_records: list[dict] = []
+                y = year_start
+                while y <= today.year:
+                    last_month = today.month if y == today.year else 12
+                    for m in range(1, last_month + 1):
+                        from_d, to_d = _period_bounds_full_month(y, m)
+                        records = await _paginate_transactional(
+                            client, spec, from_d, to_d,
+                        )
+                        all_records.extend(records)
+                    y += 1
+
+                fetched, inserted, updated = await _upsert_records(
+                    db, spec.model, tenant_id, job.id,
+                    all_records, spec.pk_field, spec.updated_at_field,
+                )
+                await _finish_job(db, job, fetched, inserted, updated)
+            except ContaAzulError as exc:
+                await _finish_job(db, job, 0, 0, 0, errors_count=1, error_message=str(exc))
+            except Exception as exc:  # noqa: BLE001
+                await _finish_job(db, job, 0, 0, 0, errors_count=1, error_message=f"{type(exc).__name__}: {exc}")
+
+            await _update_checkpoint(
+                db, tenant_id, spec.name, job,
+                period_from=period_from, period_to=period_to,
+            )
+            await db.commit()
+            await db.refresh(job)
+            jobs.append(job)
+    finally:
+        if client is not None:
+            await client.aclose()
+
+    return jobs
+
+
+# ── Detalhamento de parcelas (Onda 2) ──────────────────────────
+
+# Concorrência conservadora pro endpoint /parcelas/{id} — testado 2026-05-10:
+# semaphore=3 + retry 429 dá vazão estável sem spike de erros.
+_PARCELA_DETALHE_CONCURRENCY = 3
+
+
+async def _fetch_parcela_detalhe_safe(
+    client: ContaAzulClient,
+    parcela_id: str,
+    sem: asyncio.Semaphore,
+) -> tuple[str, dict | None, str | None]:
+    """Detalha 1 parcela com 1 retry no 429."""
+    async with sem:
+        for attempt in (1, 2):
+            try:
+                payload = await client.get_parcela_detalhe(parcela_id)
+                return (parcela_id, payload, None)
+            except ContaAzulError as exc:
+                if attempt == 1 and "Rate limit" in str(exc):
+                    await asyncio.sleep(3.0)
+                    continue
+                return (parcela_id, None, str(exc))
+            except Exception as exc:  # noqa: BLE001
+                return (parcela_id, None, f"{type(exc).__name__}: {exc}")
+        return (parcela_id, None, "esgotou retries de rate limit")
+
+
+async def sync_baixas_parcelas(
+    db: AsyncSession,
+    tenant_id: str,
+    *,
+    only_missing: bool = True,
+    max_parcelas: int | None = None,
+) -> SyncJob:
+    """Sync detalhamento de parcelas pagas via /parcelas/{id}.
+
+    Estratégia:
+      1. Lista parcelas pagas (status ACQUITTED/PARTIAL) das stagings de
+         contas_receber + contas_pagar
+      2. Se `only_missing`, filtra as que ainda não têm detalhe em
+         stg_ca_parcelas_detalhe (idempotência, retomada de carga)
+      3. Detalha em paralelo com semaphore=3 + retry 429
+      4. Salva raw_data em stg_ca_parcelas_detalhe (1 row por parcela)
+
+    Custo: 1 chamada por parcela. Para Parente (~5500 pagas históricas),
+    primeira carga ~30-40min. Subsequentes só processam novas.
+    """
+    job = await _start_job(db, tenant_id, "parcelas_detalhe")
+    client: ContaAzulClient | None = None
+
+    try:
+        # 1. Lista parcelas pagas a detalhar — receber + pagar com ACQUITTED/PARTIAL
+        q_pagas = await db.execute(text("""
+            SELECT external_id FROM stg_ca_contas_receber
+            WHERE tenant_id = :tid
+              AND raw_data->>'$.status' IN ('ACQUITTED', 'PARTIAL')
+            UNION
+            SELECT external_id FROM stg_ca_contas_pagar
+            WHERE tenant_id = :tid
+              AND raw_data->>'$.status' IN ('ACQUITTED', 'PARTIAL')
+        """), {"tid": tenant_id})
+        pagas_ids = [row[0] for row in q_pagas.all()]
+
+        # 2. Filtra missing
+        if only_missing and pagas_ids:
+            q_existing = await db.execute(text("""
+                SELECT external_id FROM stg_ca_parcelas_detalhe
+                WHERE tenant_id = :tid AND external_id IN :ids
+            """).bindparams(bindparam("ids", expanding=True)),
+                {"tid": tenant_id, "ids": pagas_ids})
+            existing = {row[0] for row in q_existing.all()}
+            to_fetch = [p for p in pagas_ids if p not in existing]
+        else:
+            to_fetch = pagas_ids
+
+        if max_parcelas is not None:
+            to_fetch = to_fetch[:max_parcelas]
+
+        if not to_fetch:
+            await _finish_job(db, job, 0, 0, 0)
+            await _update_checkpoint(db, tenant_id, "parcelas_detalhe", job)
+            await db.commit()
+            await db.refresh(job)
+            return job
+
+        # 3. Detalha em paralelo
+        client = await _get_authenticated_client(db, tenant_id)
+        sem = asyncio.Semaphore(_PARCELA_DETALHE_CONCURRENCY)
+        results = await asyncio.gather(*[
+            _fetch_parcela_detalhe_safe(client, pid, sem) for pid in to_fetch
+        ])
+
+        # 4. Upsert raw em staging
+        records: list[dict] = []
+        errors: list[str] = []
+        for pid, payload, err in results:
+            if err is not None or payload is None:
+                errors.append(f"{pid[:12]}…: {err}")
+                continue
+            payload["id"] = pid  # garantir pra _upsert_records
+            records.append(payload)
+
+        fetched, inserted, updated = await _upsert_records(
+            db, StgCaParcelasDetalhe, tenant_id, job.id,
+            records, "id", None,
+        )
+        await _finish_job(
+            db, job, fetched, inserted, updated,
+            errors_count=len(errors),
+            error_message="; ".join(errors[:5]) if errors else None,
+        )
+    except ContaAzulError as exc:
+        await _finish_job(db, job, 0, 0, 0, errors_count=1, error_message=str(exc))
+    except Exception as exc:  # noqa: BLE001
+        await _finish_job(db, job, 0, 0, 0, errors_count=1, error_message=f"{type(exc).__name__}: {exc}")
+    finally:
+        if client is not None:
+            await client.aclose()
+
+    await _update_checkpoint(db, tenant_id, "parcelas_detalhe", job)
+    await db.commit()
+    await db.refresh(job)
+    return job
+
+
 async def sync_alteracoes_recentes(
     db: AsyncSession, tenant_id: str, hours_back: int = 24,
 ) -> list[SyncJob]:
@@ -522,4 +747,190 @@ async def sync_alteracoes_recentes(
         await db.commit()
         await db.refresh(job)
         jobs.append(job)
+    return jobs
+
+
+# ── Saldos bancários (Fase 1 Show no Financeiro) ──────────────────
+
+# Concorrência conservadora: ~10-36 contas × ~200ms cada.
+# Semaphore=4 já paraleliza bem (~1s) sem disparar rate limit do CA
+# (com 8 deu 429 em 1 de 10 contas no smoke 2026-05-09).
+_SALDO_ATUAL_CONCURRENCY = 4
+
+
+async def _fetch_saldo_atual_safe(
+    client: ContaAzulClient,
+    conta_id: str,
+    sem: asyncio.Semaphore,
+) -> tuple[str, dict | None, str | None]:
+    """Pega o saldo de UMA conta com 1 retry no 429 (rate limit).
+
+    Retorna (conta_id, payload, erro_msg).
+    """
+    async with sem:
+        for attempt in (1, 2):
+            try:
+                payload = await client.get_saldo_atual(conta_id)
+                return (conta_id, payload, None)
+            except ContaAzulError as exc:
+                if attempt == 1 and "Rate limit" in str(exc):
+                    await asyncio.sleep(3.0)
+                    continue
+                return (conta_id, None, str(exc))
+            except Exception as exc:  # noqa: BLE001
+                return (conta_id, None, f"{type(exc).__name__}: {exc}")
+        return (conta_id, None, "esgotou retries de rate limit")
+
+
+async def sync_saldos_bancarios(
+    db: AsyncSession,
+    tenant_id: str,
+    *,
+    saldos_iniciais_meses: int = 12,
+) -> list[SyncJob]:
+    """Sincroniza contas financeiras + saldos atuais + saldos iniciais.
+
+    3 jobs encadeados:
+      1. contas_financeiras (1 chamada)
+      2. saldos_atuais (N chamadas paralelas, 1 por conta — asyncio.gather)
+      3. saldos_iniciais (1 chamada por mês de janela, default últimos 12m)
+
+    Os 3 jobs ficam em sync_jobs com entity próprio pra rastreio.
+    """
+    jobs: list[SyncJob] = []
+    client: ContaAzulClient | None = None
+    try:
+        client = await _get_authenticated_client(db, tenant_id)
+
+        # ── 1. contas_financeiras ────────────────────────────────
+        job1 = await _start_job(db, tenant_id, "contas_financeiras")
+        try:
+            payload = await client.list_contas_financeiras()
+            records = _extract_records(payload, "itens")
+            fetched, inserted, updated = await _upsert_records(
+                db, StgCaContasFinanceiras, tenant_id, job1.id,
+                records, "id", None,
+            )
+            await _finish_job(db, job1, fetched, inserted, updated)
+        except ContaAzulError as exc:
+            await _finish_job(db, job1, 0, 0, 0, errors_count=1, error_message=str(exc))
+            await _update_checkpoint(db, tenant_id, "contas_financeiras", job1)  # type: ignore[arg-type]
+            await db.commit()
+            jobs.append(job1)
+            return jobs
+        await _update_checkpoint(db, tenant_id, "contas_financeiras", job1)
+        await db.commit()
+        await db.refresh(job1)
+        jobs.append(job1)
+
+        # IDs das contas pra puxar saldo atual em paralelo
+        conta_ids = [str(r["id"]) for r in records if r.get("id")]
+
+        # ── 2. saldos_atuais (paralelo) ──────────────────────────
+        job2 = await _start_job(db, tenant_id, "saldos_atuais")
+        try:
+            sem = asyncio.Semaphore(_SALDO_ATUAL_CONCURRENCY)
+            results = await asyncio.gather(*[
+                _fetch_saldo_atual_safe(client, cid, sem) for cid in conta_ids
+            ])
+            now_iso = _now()
+            saldo_records: list[dict] = []
+            errors: list[str] = []
+            for cid, payload, err in results:
+                if err is not None or payload is None:
+                    errors.append(f"{cid}: {err}")
+                    continue
+                # Inflar payload com conta_id pra rastrear na promo
+                saldo_records.append({
+                    "id": cid,
+                    "id_conta_financeira": cid,
+                    "saldo_atual": payload.get("saldo_atual"),
+                    "consultado_em": now_iso.isoformat(),
+                })
+            fetched, inserted, updated = await _upsert_records(
+                db, StgCaSaldosAtuais, tenant_id, job2.id,
+                saldo_records, "id", None,
+            )
+            await _finish_job(
+                db, job2, fetched, inserted, updated,
+                errors_count=len(errors),
+                error_message="; ".join(errors[:5]) if errors else None,
+            )
+        except ContaAzulError as exc:
+            await _finish_job(db, job2, 0, 0, 0, errors_count=1, error_message=str(exc))
+        except Exception as exc:  # noqa: BLE001
+            await _finish_job(db, job2, 0, 0, 0, errors_count=1, error_message=f"{type(exc).__name__}: {exc}")
+        await _update_checkpoint(db, tenant_id, "saldos_atuais", job2)
+        await db.commit()
+        await db.refresh(job2)
+        jobs.append(job2)
+
+        # ── 3. saldos_iniciais ───────────────────────────────────
+        # API CA limita a janela em 365 dias por chamada — então fazemos
+        # uma chamada POR MÊS dos últimos N meses. Datetime SEM Z (pegadinha
+        # CA confirmada 2026-05-09).
+        today = date.today()
+        # Lista de (year, month) dos últimos N meses, mais recente primeiro
+        meses: list[tuple[int, int]] = []
+        y, m = today.year, today.month
+        for _ in range(saldos_iniciais_meses):
+            meses.append((y, m))
+            y, m = (y - 1, 12) if m == 1 else (y, m - 1)
+        meses.reverse()
+        period_from = date(meses[0][0], meses[0][1], 1)
+        ult_y, ult_m = meses[-1]
+        period_to = date(ult_y + 1, 1, 1) if ult_m == 12 else date(ult_y, ult_m + 1, 1)
+
+        job3 = await _start_job(
+            db, tenant_id, "saldos_iniciais",
+            period_from=period_from, period_to=period_to,
+        )
+        try:
+            all_records: list[dict] = []
+            for yy, mm in meses:
+                mes_inicio = date(yy, mm, 1)
+                mes_fim = date(yy + 1, 1, 1) if mm == 12 else date(yy, mm + 1, 1)
+                data_inicio = f"{mes_inicio.isoformat()}T00:00:00"
+                data_fim = f"{mes_fim.isoformat()}T00:00:00"
+                pagina = 1
+                page_size = 500
+                while True:
+                    payload_si = await client.list_saldos_iniciais(
+                        data_inicio=data_inicio, data_fim=data_fim,
+                        tamanho_pagina=page_size, pagina=pagina,
+                    )
+                    page_records = _extract_records(payload_si, "itens")
+                    all_records.extend(page_records)
+                    if len(page_records) < page_size:
+                        break
+                    pagina += 1
+
+            # external_id artificial (chave composta)
+            for r in all_records:
+                conta = r.get("id_conta_financeira") or ""
+                tipo = r.get("tipo") or ""
+                dc = r.get("data_competencia") or ""
+                # Trunca em 160 (limite do schema). Componentes são curtos.
+                r["id"] = f"{conta}|{tipo}|{dc}"[:160]
+
+            fetched, inserted, updated = await _upsert_records(
+                db, StgCaSaldosIniciais, tenant_id, job3.id,
+                all_records, "id", None,
+            )
+            await _finish_job(db, job3, fetched, inserted, updated)
+        except ContaAzulError as exc:
+            await _finish_job(db, job3, 0, 0, 0, errors_count=1, error_message=str(exc))
+        except Exception as exc:  # noqa: BLE001
+            await _finish_job(db, job3, 0, 0, 0, errors_count=1, error_message=f"{type(exc).__name__}: {exc}")
+        await _update_checkpoint(
+            db, tenant_id, "saldos_iniciais", job3,
+            period_from=period_from, period_to=period_to,
+        )
+        await db.commit()
+        await db.refresh(job3)
+        jobs.append(job3)
+    finally:
+        if client is not None:
+            await client.aclose()
+
     return jobs

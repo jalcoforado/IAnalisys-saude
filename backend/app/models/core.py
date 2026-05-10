@@ -264,6 +264,9 @@ class CoreAppointments(Base):
     created_external_at = Column(DateTime, nullable=True)
     created_external_user_id = Column(BigInteger, nullable=True)
     created_external_user_name = Column(String(255), nullable=True)
+    # Origem do paciente (HowDidMeet / IndicationSource do payload Clinicorp)
+    how_did_meet = Column(String(100), nullable=True)
+    indication_source = Column(String(255), nullable=True)
 
 
 class CoreEstimates(Base):

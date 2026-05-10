@@ -346,6 +346,10 @@ def map_appointments(raw: dict) -> dict:
         "created_external_at": _parse_dt(raw.get("CreateDate")),
         "created_external_user_id": _int(raw.get("CreateUserId")),
         "created_external_user_name": _str(raw.get("CreateUserName"), 255),
+        # Origem do paciente (Frente A — captura). Preenchimento atual ~0,1%
+        # mas dados são ricos quando preenchem (Facebook, Instagram, Indicação).
+        "how_did_meet": _str(raw.get("HowDidMeet"), 100),
+        "indication_source": _str(raw.get("IndicationSource"), 255),
     }
 
 
