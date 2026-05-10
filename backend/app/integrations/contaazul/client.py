@@ -343,6 +343,35 @@ class ContaAzulClient:
             params,
         )
 
+    async def list_transferencias(
+        self,
+        *,
+        data_inicio: str,
+        data_fim: str,
+        tamanho_pagina: int = 200,
+        pagina: int = 1,
+    ) -> dict:
+        """Transferências entre contas financeiras (PIX entre bancos, aplicação ↔
+        corrente, etc.). NÃO são receita nem despesa — movimentação interna.
+
+        Retorno: {"itens_totais", "itens": [...]}.
+        Item: id, descricao, valor, data,
+              origem{conta_financeira{id,nome,instituicao_bancaria},
+                     composicao_valor{valor_bruto,juros,multa,valor_liquido,desconto,taxa},
+                     data},
+              destino{...mesmo formato...}.
+
+        ⚠ data_inicio + data_fim **obrigatórios** (datetime ISO; com ou sem Z funciona).
+        Volume Parente: ~12/mês.
+        """
+        params: dict[str, Any] = {
+            "data_inicio": data_inicio,
+            "data_fim": data_fim,
+            "tamanho_pagina": tamanho_pagina,
+            "pagina": pagina,
+        }
+        return await self._get("/v1/financeiro/transferencias", params)
+
     async def list_centros_custo(
         self,
         *,

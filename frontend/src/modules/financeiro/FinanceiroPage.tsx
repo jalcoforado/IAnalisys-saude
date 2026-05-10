@@ -22,6 +22,7 @@ import {
 import {
   AlertTriangle,
   ArrowDownRight,
+  ArrowRightLeft,
   ArrowUpRight,
   BarChart3,
   Building2,
@@ -58,6 +59,7 @@ import type {
   MetodosPagamentoBlock,
   SaldosBancariosBlock,
   StatusMixItem,
+  TransferenciasBlock,
 } from '@/types/financeiro'
 
 // ── Helpers ───────────────────────────────────────────────────
@@ -147,7 +149,7 @@ export default function FinanceiroPage() {
 // ── Body ──────────────────────────────────────────────────────
 
 function Body({ data }: { data: FinanceiroOverviewResponse }) {
-  const { kpis, kpis_previous, saldos_bancarios, dre, metodos_pagamento, conciliacao, top_receitas, top_despesas, centros_custo, status_mix, evolution, period } = data
+  const { kpis, kpis_previous, saldos_bancarios, dre, metodos_pagamento, conciliacao, transferencias, top_receitas, top_despesas, centros_custo, status_mix, evolution, period } = data
 
   const entradasMoM = _delta(kpis.entradas, kpis_previous.entradas)
   const saidasMoM = _delta(kpis.saidas, kpis_previous.saidas)
@@ -252,6 +254,9 @@ function Body({ data }: { data: FinanceiroOverviewResponse }) {
         <MetodosPagamentoCard data={metodos_pagamento} periodLabel={period.label_pt} />
         <ConciliacaoCard data={conciliacao} periodLabel={period.label_pt} />
       </div>
+
+      {/* Transferências internas (Fase 3) */}
+      <TransferenciasCard data={transferencias} periodLabel={period.label_pt} />
 
       {/* Evolução 12 meses + Status mix */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
@@ -759,6 +764,88 @@ function ConciliacaoCard({
               </ul>
             </>
           )}
+        </>
+      )}
+    </div>
+  )
+}
+
+// ── Transferências internas (Fase 3) ──────────────────────────
+
+function TransferenciasCard({
+  data, periodLabel,
+}: { data: TransferenciasBlock; periodLabel: string }) {
+  const max = Math.max(...data.fluxos.map(f => f.valor_total), 1)
+  return (
+    <div className="bg-white border border-neutral-200 rounded-xl p-4 shadow-sm">
+      <div className="flex items-center gap-2 mb-1">
+        <ArrowRightLeft size={14} className="text-neutral-600" />
+        <span className="text-[11px] uppercase tracking-wider font-bold text-neutral-500">
+          Transferências internas
+        </span>
+        <span className="ml-auto text-[10px] text-neutral-400">{periodLabel}</span>
+      </div>
+      <div className="text-[10px] text-neutral-400 mb-3">
+        movimentação entre contas — não conta como receita/despesa
+      </div>
+
+      {data.qtd === 0 ? (
+        <div className="text-sm text-neutral-400 py-6 text-center">Sem transferências no período.</div>
+      ) : (
+        <>
+          {/* Mini hero do volume total */}
+          <div className="rounded-lg border border-neutral-100 bg-neutral-50/50 p-3 mb-3">
+            <div className="flex items-baseline justify-between gap-3">
+              <div>
+                <div className="text-[10px] uppercase tracking-wider font-bold text-neutral-500">
+                  Volume movido internamente
+                </div>
+                <div className="text-2xl font-bold tabular-nums text-neutral-900">
+                  {fmtBRL(data.valor_total)}
+                </div>
+              </div>
+              <div className="text-right text-[11px] text-neutral-600">
+                <div className="tabular-nums">
+                  <strong>{fmtNum(data.qtd)}</strong> transferências
+                </div>
+                <div className="text-neutral-400">
+                  {data.qtd_contas_origem} origens · {data.qtd_contas_destino} destinos
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Top fluxos */}
+          <div className="text-[10px] uppercase tracking-wider font-bold text-neutral-500 mb-2">
+            Principais fluxos (origem → destino)
+          </div>
+          <ul className="space-y-2">
+            {data.fluxos.slice(0, 6).map((f, i) => (
+              <li key={`${f.origem_external_id}-${f.destino_external_id}-${i}`} className="flex items-center gap-3">
+                <span className="w-2 h-6 rounded-sm bg-indigo-400 shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-baseline justify-between gap-2 mb-1">
+                    <span className="text-[12px] text-neutral-700 truncate" title={`${f.origem_nome} → ${f.destino_nome}`}>
+                      <span className="font-medium">{f.origem_nome}</span>
+                      <ArrowRightLeft size={10} className="inline mx-1.5 text-neutral-400" />
+                      <span className="font-medium">{f.destino_nome}</span>
+                    </span>
+                    <span className="text-[12px] font-bold tabular-nums text-neutral-900 shrink-0">
+                      {fmtBRL(f.valor_total, true)}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="flex-1 h-1 bg-neutral-100 rounded-full overflow-hidden">
+                      <div className="h-full bg-indigo-400 rounded-full" style={{ width: `${(f.valor_total / max) * 100}%` }} />
+                    </div>
+                    <span className="text-[10px] text-neutral-400 tabular-nums w-10 text-right">
+                      {fmtNum(f.qtd)}×
+                    </span>
+                  </div>
+                </div>
+              </li>
+            ))}
+          </ul>
         </>
       )}
     </div>

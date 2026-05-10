@@ -122,6 +122,25 @@ export interface ConciliacaoBlock {
   contas_destino: ContaDestinoItem[]
 }
 
+export interface TransferenciaFluxoItem {
+  origem_external_id: string | null
+  origem_nome: string
+  origem_banco: string | null
+  destino_external_id: string | null
+  destino_nome: string
+  destino_banco: string | null
+  qtd: number
+  valor_total: number
+}
+
+export interface TransferenciasBlock {
+  qtd: number
+  valor_total: number
+  qtd_contas_origem: number
+  qtd_contas_destino: number
+  fluxos: TransferenciaFluxoItem[]
+}
+
 export interface FinanceiroOverviewResponse {
   period: PeriodInfo
   previous: PeriodInfo
@@ -131,6 +150,7 @@ export interface FinanceiroOverviewResponse {
   dre: DreBlock
   metodos_pagamento: MetodosPagamentoBlock
   conciliacao: ConciliacaoBlock
+  transferencias: TransferenciasBlock
   top_receitas: CategoriaItem[]
   top_despesas: CategoriaItem[]
   centros_custo: CentroCustoItem[]

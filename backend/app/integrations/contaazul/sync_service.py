@@ -41,6 +41,7 @@ from app.models.staging_contaazul import (
     StgCaSaldosAtuais,
     StgCaSaldosIniciais,
     StgCaServicos,
+    StgCaTransferencias,
     StgCaVendedores,
 )
 from app.models.sync_checkpoint import SyncCheckpoint
@@ -159,10 +160,17 @@ DETAIL_ENTITIES: tuple[EntitySpec, ...] = (
     EntitySpec("parcelas_detalhe", StgCaParcelasDetalhe, "id", None, "", paginate=False),
 )
 
+# Transferências internas (Fase 3) — endpoint próprio /v1/financeiro/transferencias
+# com data_inicio/data_fim ISO datetime. Sync por mês, similar a contas_receber/pagar.
+TRANSFERENCIAS_ENTITIES: tuple[EntitySpec, ...] = (
+    EntitySpec("transferencias", StgCaTransferencias, "id", None, "itens", paginate=True),
+)
+
 
 _ALL_ENTITIES_BY_NAME: dict[str, EntitySpec] = {
     s.name: s for s in (
-        *STATIC_ENTITIES, *TRANSACTIONAL_ENTITIES, *SALDOS_ENTITIES, *DETAIL_ENTITIES,
+        *STATIC_ENTITIES, *TRANSACTIONAL_ENTITIES, *SALDOS_ENTITIES,
+        *DETAIL_ENTITIES, *TRANSFERENCIAS_ENTITIES,
     )
 }
 
@@ -481,6 +489,62 @@ async def sync_transactional_batch(
     for spec in specs:
         jobs.append(await sync_transactional_entity(db, tenant_id, spec, year, month))
     return jobs
+
+
+# ── Transferências (Fase 3 Show no Financeiro) ─────────────────
+
+async def sync_transferencias_batch(
+    db: AsyncSession, tenant_id: str, year: int, month: int,
+) -> SyncJob:
+    """Sync transferências internas no mês (1 chamada paginada).
+
+    `/v1/financeiro/transferencias` exige data_inicio + data_fim como
+    **date simples (YYYY-MM-DD)** — NÃO aceita datetime ISO (testado
+    2026-05-10: datetime retorna 400 "formato do parâmetro inválido").
+    Volume Parente: ~12/mês. Idempotente.
+    """
+    spec = TRANSFERENCIAS_ENTITIES[0]
+    from_date, to_date = _period_bounds_full_month(year, month)
+    job = await _start_job(db, tenant_id, spec.name,
+                           period_from=from_date, period_to=to_date)
+    client: ContaAzulClient | None = None
+    try:
+        client = await _get_authenticated_client(db, tenant_id)
+        all_records: list[dict] = []
+        pagina = 1
+        page_size = 100
+        while True:
+            payload = await client.list_transferencias(
+                data_inicio=from_date.isoformat(),
+                data_fim=to_date.isoformat(),
+                tamanho_pagina=page_size,
+                pagina=pagina,
+            )
+            records = _extract_records(payload, spec.items_key)
+            all_records.extend(records)
+            if len(records) < page_size:
+                break
+            pagina += 1
+
+        fetched, inserted, updated = await _upsert_records(
+            db, spec.model, tenant_id, job.id,
+            all_records, spec.pk_field, spec.updated_at_field,
+        )
+        await _finish_job(db, job, fetched, inserted, updated)
+    except ContaAzulError as exc:
+        await _finish_job(db, job, 0, 0, 0, errors_count=1, error_message=str(exc))
+    except Exception as exc:  # noqa: BLE001
+        await _finish_job(db, job, 0, 0, 0, errors_count=1,
+                          error_message=f"{type(exc).__name__}: {exc}")
+    finally:
+        if client is not None:
+            await client.aclose()
+
+    await _update_checkpoint(db, tenant_id, spec.name, job,
+                             period_from=from_date, period_to=to_date)
+    await db.commit()
+    await db.refresh(job)
+    return job
 
 
 # ── Delta sync — usa filtro `data_alteracao_de/ate` na busca normal ────

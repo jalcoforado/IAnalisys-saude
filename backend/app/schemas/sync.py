@@ -71,6 +71,20 @@ class DeltaSyncRequest(BaseModel):
     hours_back: int = Field(24, ge=1, le=720)
 
 
+class FullSyncResponse(BaseModel):
+    """Resposta do orquestrador POST /sync/contaazul/full.
+
+    Agrega resultados de: estáticos, saldos bancários, transacional do mês,
+    transferências do mês, detalhar baixas, rebuild CORE+ANALYTICS.
+    """
+    jobs: list[SyncJobResponse]
+    total_inserted: int
+    total_updated: int
+    total_errors: int
+    duration_ms: int
+    rebuild_done: bool
+
+
 class CheckpointResponse(BaseModel):
     tenant_id: str
     source: str

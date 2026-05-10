@@ -36,6 +36,8 @@ from app.schemas.financeiro import (
     MetodosPagamentoBlock,
     SaldosBancariosBlock,
     StatusMixItem,
+    TransferenciaFluxoItem,
+    TransferenciasBlock,
 )
 
 _MONTH_NAMES_PT_FULL = (
@@ -544,6 +546,75 @@ async def _dre_block(db: AsyncSession, tenant_id: str, ym: str) -> DreBlock:
     )
 
 
+# ── Transferências internas (Fase 3 Show no Financeiro) ─────────
+
+async def _transferencias(
+    db: AsyncSession, tenant_id: str, ym: str,
+) -> TransferenciasBlock:
+    """Movimentação interna entre contas no mês — não conta como receita/despesa.
+
+    Lê core_ca_transferencias agrupado por (origem, destino) pra montar
+    top fluxos. Usado pelo card "Transferências internas" em /financeiro.
+    """
+    # 1. Totais agregados
+    q_tot = await db.execute(
+        text("""
+            SELECT
+                COUNT(*) AS qtd,
+                COALESCE(SUM(valor), 0) AS valor_total,
+                COUNT(DISTINCT origem_conta_external_id) AS qtd_origem,
+                COUNT(DISTINCT destino_conta_external_id) AS qtd_destino
+            FROM core_ca_transferencias
+            WHERE tenant_id = :tid AND is_deleted = 0
+              AND DATE_FORMAT(data, '%Y-%m') = :ym
+        """),
+        {"tid": tenant_id, "ym": ym},
+    )
+    r = q_tot.one()
+    qtd = int(r.qtd or 0)
+    valor_total = round(float(r.valor_total or 0), 2)
+
+    # 2. Top fluxos (origem → destino)
+    q_flx = await db.execute(
+        text("""
+            SELECT
+                origem_conta_external_id, MAX(origem_conta_nome) AS origem_nome,
+                MAX(origem_conta_banco) AS origem_banco,
+                destino_conta_external_id, MAX(destino_conta_nome) AS destino_nome,
+                MAX(destino_conta_banco) AS destino_banco,
+                COUNT(*) AS qtd, COALESCE(SUM(valor),0) AS total
+            FROM core_ca_transferencias
+            WHERE tenant_id = :tid AND is_deleted = 0
+              AND DATE_FORMAT(data, '%Y-%m') = :ym
+            GROUP BY origem_conta_external_id, destino_conta_external_id
+            ORDER BY total DESC
+            LIMIT 8
+        """),
+        {"tid": tenant_id, "ym": ym},
+    )
+    fluxos = [
+        TransferenciaFluxoItem(
+            origem_external_id=row.origem_conta_external_id,
+            origem_nome=row.origem_nome or "(sem nome)",
+            origem_banco=row.origem_banco,
+            destino_external_id=row.destino_conta_external_id,
+            destino_nome=row.destino_nome or "(sem nome)",
+            destino_banco=row.destino_banco,
+            qtd=int(row.qtd or 0),
+            valor_total=round(float(row.total or 0), 2),
+        )
+        for row in q_flx.all()
+    ]
+
+    return TransferenciasBlock(
+        qtd=qtd,
+        valor_total=valor_total,
+        qtd_contas_origem=int(r.qtd_origem or 0),
+        qtd_contas_destino=int(r.qtd_destino or 0),
+        fluxos=fluxos,
+    )
+
+
 # ── Saldos bancários (Fase 1 Show no Financeiro) ────────────────
 
 def _is_banco_real(tipo: str | None, banco: str | None) -> bool:
@@ -640,6 +711,7 @@ async def get_financeiro_overview(
     dre = await _dre_block(db, tenant_id, ym)
     metodos_pag = await _metodos_pagamento(db, tenant_id, ym)
     conciliacao = await _conciliacao(db, tenant_id, ym)
+    transferencias = await _transferencias(db, tenant_id, ym)
     top_rec = await _top_categorias(db, tenant_id, ym, "RECEITA")
     top_desp = await _top_categorias(db, tenant_id, ym, "DESPESA")
     cc = await _centros_custo(db, tenant_id, ym)
@@ -655,6 +727,7 @@ async def get_financeiro_overview(
         dre=dre,
         metodos_pagamento=metodos_pag,
         conciliacao=conciliacao,
+        transferencias=transferencias,
         top_receitas=top_rec,
         top_despesas=top_desp,
         centros_custo=cc,

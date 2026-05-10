@@ -104,7 +104,7 @@
 | `/v1/financeiro/eventos-financeiros/{id_evento}/parcelas` | GET | 🔵 | Listar parcelas de um evento (já vêm inline na busca) |
 | `/v1/financeiro/eventos-financeiros/alteracoes` | GET | 🟢 | **DELTA SYNC** ⭐ — IDs alterados em período. **Economiza muita cota em produção** (vs sync full mensal) |
 | `/v1/financeiro/eventos-financeiros/saldo-inicial` | GET | 🟡 explorado 2026-05-09 | Saldos iniciais por conta+período. Campos: `tipo (RECEITA/DESPESA), id_conta_financeira, data_competencia, saldo_inicial`. **Exige datetime SEM Z**: `2026-04-01T00:00:00` |
-| `/v1/financeiro/transferencias` | GET | 🟡 explorado 2026-05-09 | Transferências entre contas (12 em abr/26 Parente). Campos: `id, descricao, valor, data, origem{conta_financeira{id,nome}, composicao_valor{...}}, destino{...}`. **`data_inicio` + `data_fim` obrigatórios** |
+| `/v1/financeiro/transferencias` | GET | 🟢 implementado 2026-05-10 | Transferências entre contas (12 em abr/26 Parente, R$ 193k). Campos: `id, descricao, valor, data, origem{conta_financeira, composicao_valor{...}}, destino{...}`. **`data_inicio` + `data_fim` obrigatórios em date simples `YYYY-MM-DD`** — datetime retorna 400 (descoberto 2026-05-10) |
 | Criar evento receber/pagar | POST | ⚪ | — |
 | Atualizar parcela | PATCH | ⚪ | — |
 

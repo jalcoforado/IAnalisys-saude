@@ -43,6 +43,7 @@ from app.models.core_contaazul import (
     CoreCaProdutos,
     CoreCaRateio,
     CoreCaServicos,
+    CoreCaTransferencias,
     CoreCaVendedores,
 )
 from app.models.staging_contaazul import (
@@ -57,6 +58,7 @@ from app.models.staging_contaazul import (
     StgCaProdutos,
     StgCaSaldosAtuais,
     StgCaServicos,
+    StgCaTransferencias,
     StgCaVendedores,
 )
 
@@ -579,6 +581,95 @@ async def transform_baixas(
     return TransformResult("baixas", len(rows), inserted, updated, errors)
 
 
+# ── Transferências internas (Fase 3) ─────────────────────────────
+
+def _transferencia_row(raw: dict, tenant_id: str) -> dict | None:
+    """Mapeia 1 transferência de stg_ca_transferencias.raw_data em core row.
+
+    Composição (taxa/juros/...) vem da `origem` (lado que envia) — destino
+    espelha os mesmos números na prática. external_id = id da transferência.
+    """
+    transf_id = _str(raw.get("id"), 64)
+    if not transf_id:
+        return None
+
+    origem = raw.get("origem") or {}
+    destino = raw.get("destino") or {}
+    origem_conta = origem.get("conta_financeira") or {}
+    destino_conta = destino.get("conta_financeira") or {}
+    composicao = origem.get("composicao_valor") or {}
+
+    return {
+        "tenant_id": tenant_id,
+        "external_id": transf_id,
+        "is_deleted": False,
+        "data": _parse_date(raw.get("data") or origem.get("data")),
+        "descricao": _str(raw.get("descricao"), 500),
+        "valor": _decimal(raw.get("valor")) or Decimal("0"),
+        "origem_conta_external_id": _str(origem_conta.get("id"), 64),
+        "origem_conta_nome": _str(origem_conta.get("nome"), 255),
+        "origem_conta_banco": _str(
+            origem_conta.get("instituicao_bancaria") or origem_conta.get("banco"), 60),
+        "destino_conta_external_id": _str(destino_conta.get("id"), 64),
+        "destino_conta_nome": _str(destino_conta.get("nome"), 255),
+        "destino_conta_banco": _str(
+            destino_conta.get("instituicao_bancaria") or destino_conta.get("banco"), 60),
+        "valor_bruto": _decimal(composicao.get("valor_bruto")),
+        "valor_liquido": _decimal(composicao.get("valor_liquido")),
+        "juros": _decimal(composicao.get("juros")),
+        "multa": _decimal(composicao.get("multa")),
+        "desconto": _decimal(composicao.get("desconto")),
+        "taxa": _decimal(composicao.get("taxa")),
+    }
+
+
+async def transform_transferencias(
+    db: AsyncSession, tenant_id: str,
+) -> TransformResult:
+    """Promove `stg_ca_transferencias` em `core_ca_transferencias`.
+
+    1 linha por transferência. Idempotente via UNIQUE(tenant_id, external_id).
+    """
+    rows = await _read_staging(db, StgCaTransferencias, tenant_id)
+    if not rows:
+        return TransformResult("transferencias", 0, 0, 0, 0)
+
+    core_rows: list[dict] = []
+    errors = 0
+    for _ext_id, raw, _ in rows:
+        try:
+            row = _transferencia_row(raw, tenant_id)
+            if row is not None and row.get("data") is not None:
+                core_rows.append(row)
+        except Exception:
+            errors += 1
+            continue
+
+    if not core_rows:
+        return TransformResult("transferencias", len(rows), 0, 0, errors)
+
+    existing = await _existing_external_ids(
+        db, CoreCaTransferencias, tenant_id, (r["external_id"] for r in core_rows),
+    )
+
+    skip = {"tenant_id", "external_id", "created_at"}
+    updatable = [k for k in core_rows[0].keys() if k not in skip]
+
+    BATCH = 500
+    for i in range(0, len(core_rows), BATCH):
+        chunk = core_rows[i:i + BATCH]
+        stmt = mysql_insert(CoreCaTransferencias).values(chunk)
+        stmt = stmt.on_duplicate_key_update(
+            **{k: getattr(stmt.inserted, k) for k in updatable}
+        )
+        await db.execute(stmt)
+    await db.commit()
+
+    inserted = sum(1 for r in core_rows if r["external_id"] not in existing)
+    updated = len(core_rows) - inserted
+    return TransformResult("transferencias", len(rows), inserted, updated, errors)
+
+
 # ── Saldos bancários (Fase 1) — promo dedicada que junta 2 stagings ─
 
 async def transform_contas_financeiras(
@@ -927,4 +1018,5 @@ async def transform_all(
     results.append(await transform_eventos_financeiros(db, tenant_id))
     results.append(await transform_contas_financeiras(db, tenant_id))
     results.append(await transform_baixas(db, tenant_id))
+    results.append(await transform_transferencias(db, tenant_id))
     return results

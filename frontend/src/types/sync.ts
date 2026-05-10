@@ -35,6 +35,9 @@ export type SyncEntity =
   | 'saldos_iniciais'
   // Conta Azul — DRE (Fase 2 Show no Financeiro)
   | 'categorias_dre'
+  // Conta Azul — Onda 2 + Fase 3
+  | 'parcelas_detalhe'
+  | 'transferencias'
 
 export const STATIC_ENTITIES: SyncEntity[] = [
   'business',
@@ -69,6 +72,7 @@ export const CA_STATIC_ENTITIES: SyncEntity[] = [
 export const CA_TRANSACTIONAL_ENTITIES: SyncEntity[] = [
   'contas_receber',
   'contas_pagar',
+  'transferencias',
 ]
 
 export const ENTITY_LABELS: Record<SyncEntity, string> = {
@@ -100,6 +104,8 @@ export const ENTITY_LABELS: Record<SyncEntity, string> = {
   saldos_atuais: 'Saldos atuais',
   saldos_iniciais: 'Saldos iniciais (12m)',
   categorias_dre: 'Plano DRE (estrutura)',
+  parcelas_detalhe: 'Detalhamento de baixas',
+  transferencias: 'Transferências entre contas',
 }
 
 export const CA_SALDOS_ENTITIES: SyncEntity[] = [
@@ -146,4 +152,9 @@ export interface BatchResponse {
   total_inserted: number
   total_updated: number
   total_errors: number
+}
+
+export interface FullSyncResponse extends BatchResponse {
+  duration_ms: number
+  rebuild_done: boolean
 }

@@ -247,9 +247,9 @@ Após exploração de 7 endpoints CA prioritários (catálogo completo em `docs/
 - Sync `/v1/venda/busca` + itens
 - Match orçamento CC aprovado ↔ venda CA registrada → coluna "Match CA" no drill-down
 
-#### Pendência crítica de modelagem (ainda não resolvida)
+#### Alinhamento de data em `fato_caixa` ✅ confirmado 2026-05-10
 
-⚠️ **Alinhamento de data em `fato_caixa`** — Pedro precisa conferir no ERP CA qual campo de data o dashboard nativo usa antes de mudar nossa modelagem (ver memória `project_fato_caixa_data_alignment.md`). Bloqueia análises temporais futuras corretas.
+`year_month_key` em `data_vencimento` é a forma correta. Validado contra 2 PDFs nativos do CA (abr/26): Saídas R$ 0 gap, A pagar R$ 0,19 (arredondamento). Onda 2 confirmou que 98% das parcelas pagas em DESPESA caem no próprio mês de vencimento — trocar pra `data_pagamento` mudaria <2%. Ver memória `project_fato_caixa_data_alignment.md`.
 
 #### OAuth e conexão ✅
 
@@ -355,11 +355,10 @@ Sessão de ~6h após pause/compact descobriu/corrigiu múltiplos bugs e adiciono
 - Backend: `GET /financeiro/overview?year&month` em `financeiro_service.py` com 5 funções agregadoras
 - Sem drill-down (PR-15 Etapa 2 stand-by — Pedro quer re-design pra "relatório auditável")
 
-**⚠ Pendência: alinhamento de data ainda não confirmado**
-- `fato_caixa` agrupa por `data_vencimento` (year_month_key). Out/2025 (passado) deu números corretos (R$ 797k entradas pagas) mas Mar-Mai/2026 (futuro) mostraram entradas baixas (R$ 166, R$ 92, R$ 0) porque CA não retorna `data_pagamento` na parcela
-- Pedro vai conferir no ERP CA qual campo de data o dashboard nativo usa antes de mudar nossa modelagem
-- Se CA usar `data_competencia` no nativo: trocar `date_key` em `build_fato_caixa` (coluna já materializada)
-- Se usar data de liquidação via endpoint separado (`/v1/extrato`?): pesquisar no catálogo, pode exigir novo sync
+**Alinhamento de data ✅ confirmado 2026-05-10**
+- `fato_caixa.year_month_key` em `data_vencimento` é a forma correta — bate com o relatório nativo do CA (PDFs abr/26 fecharam em R$ 0 / R$ 0,19 de gap)
+- A queixa original ("entradas baixas em Mar-Mai/26") era escopo, não modelagem: receitas Parente vão via Clinicorp, não passam pelo CA. Resolvido com `ScopeBanner` no `/financeiro`.
+- Onda 2 trouxe `data_pagamento` real em `core_ca_baixas` — 98% paga no próprio mês de vencimento, mudança seria irrelevante.
 - Bug correlato corrigido durante smoke-test: `_status_mix` esbarrava no `ONLY_FULL_GROUP_BY` (MySQL strict) — encapsulado em subquery
 
 **Sub-PR 15: Drill-down auditável dos KPIs**

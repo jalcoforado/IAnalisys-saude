@@ -39,6 +39,7 @@ from app.transformations.contaazul_to_core import (
     transform_baixas as transform_baixas_ca,
     transform_contas_financeiras as transform_contas_financeiras_ca,
     transform_eventos_financeiros as transform_eventos_ca,
+    transform_transferencias as transform_transferencias_ca,
 )
 
 router = APIRouter(prefix="/transform", tags=["transform"])
@@ -154,6 +155,18 @@ async def transform_contaazul_baixas(
     baixa — uma parcela com pagamento parcial pode ter N baixas)."""
     tenant_id = _require_tenant(current_user)
     result = await transform_baixas_ca(db, tenant_id)
+    return _to_item(result)
+
+
+@router.post("/contaazul/transferencias", response_model=TransformResultItem, status_code=200)
+async def transform_contaazul_transferencias(
+    current_user: UserMe = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> TransformResultItem:
+    """Promove `stg_ca_transferencias` em `core_ca_transferencias` (1 linha
+    por transferência interna entre contas)."""
+    tenant_id = _require_tenant(current_user)
+    result = await transform_transferencias_ca(db, tenant_id)
     return _to_item(result)
 
 

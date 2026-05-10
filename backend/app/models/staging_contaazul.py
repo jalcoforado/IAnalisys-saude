@@ -133,3 +133,14 @@ class StgCaParcelasDetalhe(Base):
     __tablename__ = "stg_ca_parcelas_detalhe"
     __table_args__ = _staging_table_args(__tablename__)
     id, tenant_id, external_id, external_updated_at, raw_data, synced_at, sync_job_id = _staging_columns()
+
+
+class StgCaTransferencias(Base):
+    """Transferências entre contas financeiras (Fase 3 Show no Financeiro).
+
+    Movimentação interna — não é receita nem despesa. external_id = id da
+    transferência. raw_data tem origem/destino com composicao_valor.
+    """
+    __tablename__ = "stg_ca_transferencias"
+    __table_args__ = _staging_table_args(__tablename__)
+    id, tenant_id, external_id, external_updated_at, raw_data, synced_at, sync_job_id = _staging_columns()

@@ -29,12 +29,18 @@ from app.integrations.clinicorp.sync_service import (
     TRANSACTIONAL_ENTITIES,
 )
 from app.integrations.contaazul import sync_service as ca_sync
+from app.transformations.contaazul_to_core import transform_all as transform_all_ca
+from app.transformations.core_to_analytics import build_all_analytics
+from app.transformations.core_to_analytics_contaazul import (
+    build_all_analytics_ca,
+)
 from app.models.sync_checkpoint import SyncCheckpoint
 from app.models.sync_job import SyncJob
 from app.schemas.auth import UserMe
 from app.schemas.sync import (
     CheckpointResponse,
     DeltaSyncRequest,
+    FullSyncResponse,
     KpisMonthlyRequest,
     StaticSyncResponse,
     SyncJobResponse,
@@ -197,12 +203,19 @@ async def sync_contaazul_financial(
     current_user: UserMe = Depends(requires("sync.run")),
     db: AsyncSession = Depends(get_db),
 ) -> TransactionalSyncResponse:
-    """Sync de contas a receber + contas a pagar do mês indicado."""
+    """Sync das 3 transacionais do mês: contas a receber + contas a pagar
+    + transferências internas.
+    """
     tenant_id = _require_tenant(current_user)
     try:
         jobs = await ca_sync.sync_transactional_batch(
             db, tenant_id, payload.year, payload.month,
         )
+        # Transferências são entidade separada (endpoint dedicado), mas
+        # entram no mesmo "click no mês" pra o usuário ter tudo do mês.
+        jobs.append(await ca_sync.sync_transferencias_batch(
+            db, tenant_id, payload.year, payload.month,
+        ))
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
@@ -260,6 +273,26 @@ async def sync_contaazul_historical(
         total_updated=sum(j.records_updated or 0 for j in jobs),
         total_errors=sum(j.errors_count or 0 for j in jobs),
     )
+
+
+@router.post("/contaazul/transferencias", response_model=SyncJobResponse, status_code=200)
+async def sync_contaazul_transferencias(
+    payload: KpisMonthlyRequest,
+    current_user: UserMe = Depends(requires("sync.run")),
+    db: AsyncSession = Depends(get_db),
+) -> SyncJobResponse:
+    """Sync transferências internas (Fase 3 Show no Financeiro) do mês.
+
+    Volume Parente: ~12/mês. 1 chamada paginada à API.
+    """
+    tenant_id = _require_tenant(current_user)
+    try:
+        job = await ca_sync.sync_transferencias_batch(
+            db, tenant_id, payload.year, payload.month,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return SyncJobResponse.model_validate(job)
 
 
 @router.post("/contaazul/baixas", response_model=SyncJobResponse, status_code=200)
@@ -329,6 +362,72 @@ async def sync_contaazul_alteracoes(
         total_inserted=sum(j.records_inserted or 0 for j in jobs),
         total_updated=sum(j.records_updated or 0 for j in jobs),
         total_errors=sum(j.errors_count or 0 for j in jobs),
+    )
+
+
+@router.post("/contaazul/full", response_model=FullSyncResponse, status_code=200)
+async def sync_contaazul_full(
+    payload: KpisMonthlyRequest,
+    current_user: UserMe = Depends(requires("sync.run")),
+    db: AsyncSession = Depends(get_db),
+) -> FullSyncResponse:
+    """Orquestrador completo CA pra UM mês: roda tudo em sequência.
+
+    Sequência:
+      1. Cadastros estáticos (7: pessoas, produtos, servicos, vendedores,
+         categorias, centros_custo, categorias_dre)
+      2. Saldos bancários (contas + saldos atuais + saldos iniciais 12m)
+      3. Transacional do mês (contas a receber + a pagar)
+      4. Transferências do mês
+      5. Detalhar baixas pendentes (idempotente, only_missing)
+      6. Rebuild CORE+ANALYTICS (transform CA + dims + fatos)
+
+    Substitui ~6 cliques manuais. Tempo Parente: ~2-5 min (sem 1ª carga
+    de baixas — essa fica em botão dedicado avançado).
+    """
+    tenant_id = _require_tenant(current_user)
+    started = datetime.now(timezone.utc).replace(tzinfo=None)
+    jobs: list[SyncJob] = []
+
+    try:
+        # 1. Estáticos
+        jobs.extend(await ca_sync.sync_all_static(db, tenant_id))
+        # 2. Saldos
+        jobs.extend(await ca_sync.sync_saldos_bancarios(db, tenant_id))
+        # 3. Transacional do mês
+        jobs.extend(await ca_sync.sync_transactional_batch(
+            db, tenant_id, payload.year, payload.month,
+        ))
+        # 4. Transferências do mês
+        jobs.append(await ca_sync.sync_transferencias_batch(
+            db, tenant_id, payload.year, payload.month,
+        ))
+        # 5. Detalhar baixas pendentes (idempotente)
+        jobs.append(await ca_sync.sync_baixas_parcelas(
+            db, tenant_id, only_missing=True,
+        ))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    # 6. Rebuild CORE+ANALYTICS — best effort, não derruba a resposta se falhar
+    rebuild_done = True
+    try:
+        await transform_all_ca(db, tenant_id)
+        await build_all_analytics(db, tenant_id)
+        await build_all_analytics_ca(db, tenant_id)
+    except Exception:  # noqa: BLE001
+        rebuild_done = False
+
+    finished = datetime.now(timezone.utc).replace(tzinfo=None)
+    duration_ms = int((finished - started).total_seconds() * 1000)
+
+    return FullSyncResponse(
+        jobs=[SyncJobResponse.model_validate(j) for j in jobs],
+        total_inserted=sum(j.records_inserted or 0 for j in jobs),
+        total_updated=sum(j.records_updated or 0 for j in jobs),
+        total_errors=sum(j.errors_count or 0 for j in jobs),
+        duration_ms=duration_ms,
+        rebuild_done=rebuild_done,
     )
 
 

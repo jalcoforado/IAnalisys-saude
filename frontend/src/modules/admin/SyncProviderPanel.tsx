@@ -7,6 +7,7 @@ import {
   ENTITY_LABELS,
   type BatchResponse,
   type Checkpoint,
+  type FullSyncResponse,
   type SyncEntity,
   type SyncJob,
   type SyncSource,
@@ -43,6 +44,9 @@ export interface SyncProviderConfig {
   syncHistorical?: () => Promise<BatchResponse>
   /** Detalhamento de parcelas pagas via /parcelas/{id}. Só CA. */
   syncBaixas?: () => Promise<SyncJob>
+  /** Orquestrador completo CA pra UM mês: estáticos → saldos → transacional
+   * → transferências → detalhar baixas → rebuild. Só CA. */
+  syncFull?: (year: number, month: number) => Promise<FullSyncResponse>
   /** Enriquece pacientes via /patient/get (BirthDate, Email, CPF, Status). Só Clinicorp. */
   syncPatientsDetails?: () => Promise<SyncJob>
   /** Mostrar botão de rebuild CORE+ANALYTICS (só Clinicorp por enquanto). */
@@ -171,11 +175,25 @@ export function SyncProviderPanel({ config }: { config: SyncProviderConfig }) {
     },
   })
 
+  // Orquestrador completo (Fase 3 centralização) — substitui ~6 cliques manuais
+  const [fullMonth, setFullMonth] = useState({
+    year: today.getFullYear(),
+    month: today.getMonth() + 1,
+  })
+  const [lastFull, setLastFull] = useState<FullSyncResponse | null>(null)
+  const fullMut = useMutation({
+    mutationFn: () => config.syncFull!(fullMonth.year, fullMonth.month),
+    onSuccess: (data) => {
+      setLastFull(data)
+      invalidateAll()
+    },
+  })
+
   const isAnyRunning =
     staticAllMut.isPending || txEntityMut.isPending || txMonthMut.isPending ||
     kpisMut.isPending || rebuildMut.isPending || alteracoesMut.isPending ||
     patientsDetailsMut.isPending || saldosMut.isPending || historicalMut.isPending ||
-    baixasMut.isPending
+    baixasMut.isPending || fullMut.isPending
 
   const totalStatic = config.staticEntities.reduce(
     (acc, e) => acc + (checkpointsByEntity[e]?.total_records || 0), 0)
@@ -192,6 +210,76 @@ export function SyncProviderPanel({ config }: { config: SyncProviderConfig }) {
         </div>
       </div>
 
+      {/* Hero: Sincronização rápida (Fase 3 centralização) — orquestra
+           tudo do mês em 1 clique. Visível só quando config tem syncFull. */}
+      {config.syncFull && (
+        <section className="bg-gradient-to-r from-primary-700 to-primary-900 rounded-xl p-5 text-white shadow-md">
+          <div className="flex items-start justify-between gap-4 flex-wrap">
+            <div className="flex-1 min-w-[260px]">
+              <h2 className="text-base font-bold flex items-center gap-2">
+                Sincronizar Conta Azul
+                <span className="text-[10px] uppercase font-bold px-1.5 py-0.5 rounded bg-white/20 text-white align-middle">
+                  Recomendado
+                </span>
+              </h2>
+              <p className="text-xs text-white/80 mt-1 leading-snug">
+                Roda <strong>tudo</strong> que o dashboard precisa em sequência:
+                cadastros, saldos bancários, contas a receber/pagar, transferências,
+                detalhamento de baixas pendentes e rebuild CORE+ANALYTICS. ~2-5 min.
+              </p>
+              {lastFull && (
+                <div className="mt-2 text-[11px] text-white/90 flex flex-wrap gap-3">
+                  <span><strong>✓ Última execução:</strong> {(lastFull.duration_ms / 1000).toFixed(1)}s</span>
+                  <span><strong>{fmtNum(lastFull.total_inserted)}</strong> inseridos</span>
+                  <span><strong>{fmtNum(lastFull.total_updated)}</strong> atualizados</span>
+                  {lastFull.total_errors > 0 && (
+                    <span className="text-rose-200"><strong>{lastFull.total_errors}</strong> erros</span>
+                  )}
+                  <span className={lastFull.rebuild_done ? '' : 'text-amber-200'}>
+                    rebuild {lastFull.rebuild_done ? '✓' : '⚠ falhou'}
+                  </span>
+                </div>
+              )}
+              {fullMut.isError && (
+                <div className="mt-2 text-xs text-rose-200">Erro na sincronização. Verifique os logs.</div>
+              )}
+              {fullMut.isPending && (
+                <div className="mt-2 text-xs text-white/90 italic">
+                  ⏳ Sincronizando — não feche a página até concluir.
+                </div>
+              )}
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <select
+                value={fullMonth.year}
+                onChange={(e) => setFullMonth({ ...fullMonth, year: parseInt(e.target.value, 10) })}
+                disabled={isAnyRunning}
+                className="text-xs border-0 rounded px-2 py-2 bg-white/15 text-white"
+              >
+                {yearOptions.map((y) => <option key={y} value={y} className="text-neutral-900">{y}</option>)}
+              </select>
+              <select
+                value={fullMonth.month}
+                onChange={(e) => setFullMonth({ ...fullMonth, month: parseInt(e.target.value, 10) })}
+                disabled={isAnyRunning}
+                className="text-xs border-0 rounded px-2 py-2 bg-white/15 text-white"
+              >
+                {MONTHS_SHORT.map((m, i) => (
+                  <option key={i} value={i + 1} className="text-neutral-900">{m}</option>
+                ))}
+              </select>
+              <button
+                onClick={() => fullMut.mutate()}
+                disabled={isAnyRunning}
+                className="text-xs px-5 py-2 rounded bg-white text-primary-800 hover:bg-white/90 disabled:opacity-50 disabled:cursor-not-allowed font-bold shadow-sm"
+              >
+                {fullMut.isPending ? 'Sincronizando…' : 'Sincronizar'}
+              </button>
+            </div>
+          </div>
+        </section>
+      )}
+
       {/* Status overview */}
       <section className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <KpiCard label="Cadastros estáticos" value={fmtNum(totalStatic)} sub={`${config.staticEntities.length} entidades`} />
@@ -199,6 +287,8 @@ export function SyncProviderPanel({ config }: { config: SyncProviderConfig }) {
         <KpiCard label="Último sync" value={fmtDate(lastSyncAt || null)} sub="qualquer entidade" />
         <KpiCard label="Em execução" value={isAnyRunning ? 'Sim' : 'Não'} sub={isAnyRunning ? 'aguarde…' : 'pronto'} accent={isAnyRunning ? 'warning' : 'success'} />
       </section>
+
+      <AdvancedActions collapsed={!!config.syncFull}>
 
       {/* Delta sync (só CA por hora) */}
       {config.syncAlteracoes && (
@@ -441,6 +531,8 @@ export function SyncProviderPanel({ config }: { config: SyncProviderConfig }) {
         </section>
       )}
 
+      </AdvancedActions>
+
       {/* Saldos bancários (CA Fase 1) — snapshot em 1 clique */}
       {config.syncSaldos && config.saldosEntities && (
         <section className="bg-gradient-to-r from-emerald-50 to-white border border-emerald-200 rounded-lg p-4">
@@ -680,6 +772,32 @@ export function SyncProviderPanel({ config }: { config: SyncProviderConfig }) {
 
 
 // ─── helpers visuais ─────────────────────────────────────────────
+
+// Wrapper que colapsa as ações avançadas atrás de um <details> quando o
+// painel tem um orquestrador `syncFull` (caso CA). Pra Clinicorp, que ainda
+// não tem orquestrador, mantém tudo expandido.
+function AdvancedActions({ collapsed, children }: {
+  collapsed: boolean; children: React.ReactNode
+}) {
+  if (!collapsed) return <>{children}</>
+  return (
+    <details className="bg-white border border-neutral-200 rounded-lg group">
+      <summary className="px-4 py-3 cursor-pointer text-sm font-semibold text-neutral-700 hover:bg-neutral-50 select-none flex items-center justify-between list-none">
+        <span className="flex items-center gap-2">
+          <span className="text-[10px] uppercase tracking-wide font-bold text-neutral-500 px-2 py-0.5 rounded bg-neutral-100">
+            Avançado
+          </span>
+          ações individuais · delta · histórico · pipeline
+        </span>
+        <span className="text-neutral-400 text-xs group-open:rotate-180 transition-transform">▼</span>
+      </summary>
+      <div className="p-4 space-y-4 border-t border-neutral-100">
+        {children}
+      </div>
+    </details>
+  )
+}
+
 
 function KpiCard({ label, value, sub, accent = 'neutral' }: {
   label: string; value: string; sub?: string; accent?: 'neutral' | 'warning' | 'success'

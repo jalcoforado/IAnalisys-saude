@@ -243,6 +243,45 @@ class CoreCaContasFinanceiras(Base):
     saldo_atualizado_em = Column(DateTime, nullable=True)
 
 
+class CoreCaTransferencias(Base):
+    """1 linha por transferência entre contas (Fase 3 Show no Financeiro).
+
+    Vem de /v1/financeiro/transferencias. Achatado: composição (taxa/juros/...)
+    vem da `origem` (lado que envia). NÃO entra em fato_caixa — é movimentação
+    interna, não receita/despesa.
+    """
+    __tablename__ = "core_ca_transferencias"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "external_id", name="uk_core_ca_transferencias_external"),
+        Index("ix_core_ca_transferencias_data", "tenant_id", "data"),
+        Index("ix_core_ca_transferencias_origem", "tenant_id", "origem_conta_external_id"),
+        Index("ix_core_ca_transferencias_destino", "tenant_id", "destino_conta_external_id"),
+    )
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    tenant_id = Column(CHAR(36), ForeignKey("tenants.id"), nullable=False)
+    external_id = Column(String(64), nullable=False)
+    is_deleted = Column(Boolean, nullable=False, default=False)
+    created_at = Column(DateTime, nullable=False, server_default=func.current_timestamp())
+    updated_at = Column(DateTime, nullable=False,
+                        server_default=func.current_timestamp(),
+                        onupdate=func.current_timestamp())
+    data = Column(Date, nullable=False)
+    descricao = Column(String(500), nullable=True)
+    valor = Column(Numeric(15, 2), nullable=False, default=0)
+    origem_conta_external_id = Column(String(64), nullable=True)
+    origem_conta_nome = Column(String(255), nullable=True)
+    origem_conta_banco = Column(String(60), nullable=True)
+    destino_conta_external_id = Column(String(64), nullable=True)
+    destino_conta_nome = Column(String(255), nullable=True)
+    destino_conta_banco = Column(String(60), nullable=True)
+    valor_bruto = Column(Numeric(15, 2), nullable=True)
+    valor_liquido = Column(Numeric(15, 2), nullable=True)
+    juros = Column(Numeric(15, 2), nullable=True)
+    multa = Column(Numeric(15, 2), nullable=True)
+    desconto = Column(Numeric(15, 2), nullable=True)
+    taxa = Column(Numeric(15, 2), nullable=True)
+
+
 class CoreCaRateio(Base):
     __tablename__ = "core_ca_rateio"
     __table_args__ = (

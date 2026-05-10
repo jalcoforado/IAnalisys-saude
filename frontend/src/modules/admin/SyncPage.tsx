@@ -38,16 +38,22 @@ const CONTAAZUL_CONFIG: SyncProviderConfig = {
   saldosEntities: CA_SALDOS_ENTITIES,
   syncAllStatic: () => syncService.contaazulStatic(),
   syncMonth: (year, month) => syncService.contaazulFinancial(year, month),
-  syncEntityMonth: (entity, year, month) =>
-    syncService.contaazulTransactional(entity, year, month),
+  syncEntityMonth: (entity, year, month) => {
+    if (entity === 'transferencias')
+      return syncService.contaazulTransferencias(year, month)
+    return syncService.contaazulTransactional(entity, year, month)
+  },
   syncAlteracoes: (hoursBack) => syncService.contaazulAlteracoes(hoursBack),
   syncSaldos: () => syncService.contaazulSaldos(),
   syncHistorical: () => syncService.contaazulHistorical(),
   syncBaixas: () => syncService.contaazulBaixas(),
+  // Sincronização rápida (Fase 3 centralização) — orquestra tudo do mês:
+  // estáticos → saldos → transacional+transferências → baixas → rebuild
+  syncFull: (year, month) => syncService.contaazulFull(year, month),
   // Sem kpisMonth — Conta Azul não tem agregado pré-calculado
-  // showRebuildPipeline: true — o rebuild é global (cobre CC + CA), faz
-  // sentido aparecer nas duas abas pra quem entra direto no CA encontrar.
-  showRebuildPipeline: true,
+  // showRebuildPipeline removido aqui — `syncFull` já roda rebuild final;
+  // o botão "Reconstruir CORE+ANALYTICS" continua na aba Clinicorp pra quem
+  // precisa rebuildar isolado.
 }
 
 const TABS: { key: SyncSource; label: string; subtitle: string; config: SyncProviderConfig }[] = [

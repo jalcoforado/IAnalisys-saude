@@ -158,6 +158,30 @@ class ConciliacaoBlock(BaseModel):
     contas_destino: List[ContaDestinoItem]   # top contas destino das baixas
 
 
+class TransferenciaFluxoItem(BaseModel):
+    """1 fluxo entre contas (origem → destino) com volume agregado."""
+    origem_external_id: Optional[str]
+    origem_nome: str
+    origem_banco: Optional[str]
+    destino_external_id: Optional[str]
+    destino_nome: str
+    destino_banco: Optional[str]
+    qtd: int
+    valor_total: float
+
+
+class TransferenciasBlock(BaseModel):
+    """Movimentação interna entre contas no mês — não é receita nem despesa.
+
+    Mostra volume + top fluxos para o card "Transferências internas".
+    """
+    qtd: int
+    valor_total: float
+    qtd_contas_origem: int
+    qtd_contas_destino: int
+    fluxos: List[TransferenciaFluxoItem]   # top fluxos por valor
+
+
 class FinanceiroOverviewResponse(BaseModel):
     period: PeriodInfo
     previous: PeriodInfo
@@ -167,6 +191,7 @@ class FinanceiroOverviewResponse(BaseModel):
     dre: DreBlock
     metodos_pagamento: MetodosPagamentoBlock
     conciliacao: ConciliacaoBlock
+    transferencias: TransferenciasBlock
     top_receitas: List[CategoriaItem]
     top_despesas: List[CategoriaItem]
     centros_custo: List[CentroCustoItem]

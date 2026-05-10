@@ -2,6 +2,7 @@ import api from '@/services/api'
 import type {
   BatchResponse,
   Checkpoint,
+  FullSyncResponse,
   SyncEntity,
   SyncJob,
   SyncSource,
@@ -63,6 +64,18 @@ export const syncService = {
 
   contaazulBaixas: () =>
     api.post<SyncJob>('/sync/contaazul/baixas').then((r) => r.data),
+
+  contaazulTransferencias: (year: number, month: number) =>
+    api
+      .post<SyncJob>('/sync/contaazul/transferencias', { year, month })
+      .then((r) => r.data),
+
+  /** Orquestrador completo CA pra UM mês: estáticos → saldos →
+   * transacional → transferências → detalhar baixas → rebuild. ~2-5min. */
+  contaazulFull: (year: number, month: number) =>
+    api
+      .post<FullSyncResponse>('/sync/contaazul/full', { year, month })
+      .then((r) => r.data),
 
   // ── Read (com filtro source opcional) ────────────────────────
   jobs: (limit = 30, entity?: SyncEntity, year?: number, source?: SyncSource) =>
