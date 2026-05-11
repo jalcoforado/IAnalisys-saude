@@ -3,6 +3,7 @@ import { AuthProvider } from '@/modules/auth/AuthContext'
 import { SettingsProvider } from '@/contexts/SettingsContext'
 import { PageTitleProvider } from '@/contexts/PageTitleContext'
 import { TenantProvider } from '@/contexts/TenantContext'
+import { SonIAProvider } from '@/components/sonia/SonIAContext'
 import PrivateRoute from '@/components/common/PrivateRoute'
 import RequirePermission from '@/components/common/RequirePermission'
 import AppShell from '@/components/layout/AppShell'
@@ -13,6 +14,7 @@ import HomePage from '@/pages/HomePage'
 import DesignSystem from '@/pages/DesignSystem'
 import SyncPage from '@/modules/admin/SyncPage'
 import FinanceiroPage from '@/modules/financeiro/FinanceiroPage'
+import DREPage from '@/modules/financeiro/DREPage'
 import AnaliseFinanceiroPage from '@/modules/analise/financeiro/FinanceiroPage'
 import AnaliseComercialPage from '@/modules/analise/comercial/ComercialPage'
 import DashboardPacientesPage from '@/modules/pacientes/DashboardPacientesPage'
@@ -30,6 +32,7 @@ function App() {
         <AuthProvider>
           <TenantProvider>
           <PageTitleProvider>
+          <SonIAProvider>
           <Routes>
             <Route path="/login" element={<LoginPage />} />
             <Route path="/auth/recuperar-senha" element={<ForgotPasswordPage />} />
@@ -76,6 +79,18 @@ function App() {
                   <AppShell>
                     <RequirePermission permission="financeiro.read">
                       <FinanceiroPage />
+                    </RequirePermission>
+                  </AppShell>
+                </PrivateRoute>
+              }
+            />
+            <Route
+              path="/financeiro/dre"
+              element={
+                <PrivateRoute>
+                  <AppShell>
+                    <RequirePermission permission="financeiro.read">
+                      <DREPage />
                     </RequirePermission>
                   </AppShell>
                 </PrivateRoute>
@@ -174,6 +189,7 @@ function App() {
               }
             />
           </Routes>
+          </SonIAProvider>
           </PageTitleProvider>
           </TenantProvider>
         </AuthProvider>

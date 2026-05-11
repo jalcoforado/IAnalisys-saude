@@ -11,10 +11,11 @@
  * 3. Card "Indicações nominais" — top quem indicou (com nome)
  * 4. CTA "Treine sua recepção"
  */
+import { useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import {
-  AlertTriangle, BarChart3, ClipboardCheck, Globe, Hash, Loader2,
-  MessageCircle, Search, TrendingUp, UserPlus, Users,
+  BarChart3, ClipboardCheck, Globe, Hash, Loader2,
+  MessageCircle, Search, UserPlus, Users,
 } from 'lucide-react'
 
 import { usePageTitle } from '@/contexts/PageTitleContext'
@@ -25,6 +26,7 @@ import { PageFooter } from '@/components/layout/PageFooter'
 import type {
   CaptacaoOrigemItem, CaptacaoOrigemResponse, IndicacaoNominal,
 } from '@/types/analise'
+import { useSonIA, type SonIAInsight } from '@/components/sonia/SonIAContext'
 
 // ── Helpers ───────────────────────────────────────────────────
 
@@ -51,6 +53,17 @@ export default function CaptacaoPage() {
     queryFn: () => analiseService.pacientesCaptacao(),
     staleTime: 60_000,
   })
+
+  const { publish, clear } = useSonIA()
+  useEffect(() => {
+    if (!query.data) return
+    publish({
+      pageKey: '/pacientes/captacao',
+      pageTitle: 'Captação & Origem',
+      data: { insight: buildCaptacaoInsight(query.data) },
+    })
+    return () => clear('/pacientes/captacao')
+  }, [query.data, publish, clear])
 
   return (
     <PageContainer>
@@ -79,51 +92,12 @@ export default function CaptacaoPage() {
 function Body({ data }: { data: CaptacaoOrigemResponse }) {
   return (
     <>
-      <BannerChoque data={data} />
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
         <CanaisCard data={data.canais} totalPreenchido={data.total_com_origem} />
         <IndicacoesCard data={data.indicacoes_nominais} />
       </div>
       <TreineRecepcaoCard data={data} />
     </>
-  )
-}
-
-// ── Banner de choque ──────────────────────────────────────────
-
-function BannerChoque({ data }: { data: CaptacaoOrigemResponse }) {
-  const semOrigem = data.total_consultas - data.total_com_origem
-  const pctSem = 100 - data.pct_preenchimento
-  return (
-    <section className="bg-gradient-to-br from-rose-50 to-amber-50 border border-rose-200 rounded-xl p-5 shadow-sm">
-      <div className="flex items-start gap-3">
-        <AlertTriangle size={22} className="text-rose-600 shrink-0 mt-1" />
-        <div className="flex-1">
-          <div className="text-[10px] uppercase tracking-wider font-bold text-rose-700 mb-1">
-            ⚡ você está perdendo dado de marketing
-          </div>
-          <h3 className="text-xl font-bold text-rose-900 leading-tight">
-            <span className="tabular-nums">{pctSem.toFixed(1)}%</span> dos pacientes
-            <span className="text-rose-700"> não têm origem registrada</span>
-          </h3>
-          <div className="mt-2 text-[13px] text-rose-800 leading-snug">
-            De <strong className="tabular-nums">{fmtNum(data.total_consultas)}</strong> consultas,
-            apenas <strong className="tabular-nums text-emerald-700">{fmtNum(data.total_com_origem)}</strong>
-            {' '}têm o campo "como conheceu a clínica" preenchido
-            ({data.pct_preenchimento.toFixed(2)}%).
-            Outras <strong className="tabular-nums">{fmtNum(semOrigem)}</strong> consultas você
-            não sabe se vieram do Instagram, do Google, de indicação ou da rua.
-          </div>
-          <div className="mt-3 flex items-center gap-2 text-[11.5px] text-rose-900/80">
-            <TrendingUp size={13} className="text-rose-700 shrink-0" />
-            <span>
-              Sem esse dado, <strong>não dá pra calcular ROI por canal</strong> nem decidir onde
-              colocar verba de mídia. Treinar a recepção a preencher é o primeiro passo.
-            </span>
-          </div>
-        </div>
-      </div>
-    </section>
   )
 }
 
@@ -287,4 +261,56 @@ function TreineRecepcaoCard({ data }: { data: CaptacaoOrigemResponse }) {
       </div>
     </section>
   )
+}
+
+// ── Insight pra SonIA ─────────────────────────────────────────
+
+function buildCaptacaoInsight(data: CaptacaoOrigemResponse): SonIAInsight {
+  const pctPreench = data.pct_preenchimento
+  const semOrigem = data.total_consultas - data.total_com_origem
+
+  const muitoBaixo = pctPreench < 30
+  const baixo = pctPreench >= 30 && pctPreench < 50
+  const bom = pctPreench >= 70
+
+  const mood: SonIAInsight['mood'] = muitoBaixo ? 'alert' : bom ? 'happy' : 'curious'
+
+  const headline = muitoBaixo
+    ? 'Olhei aqui e queria te contar uma coisa.'
+    : baixo
+    ? 'Tenho uma observação pra te trazer.'
+    : bom
+    ? 'Olha que bonito.'
+    : 'Olhei os dados de captação com calma.'
+
+  const detail = muitoBaixo
+    ? `Apenas ${pctPreench.toFixed(1)}% das consultas têm origem preenchida — outras ${fmtNum(semOrigem)} estão sem essa informação. Sem isso, fica difícil saber onde colocar a verba de mídia.`
+    : baixo
+    ? `${pctPreench.toFixed(1)}% das consultas têm origem registrada. Já dá pra começar a ver tendências, mas vale treinar a recepção pra subir esse número.`
+    : bom
+    ? `${pctPreench.toFixed(1)}% das consultas têm origem registrada. A equipe está caprichando no preenchimento — assim dá pra confiar nos números por canal.`
+    : `${pctPreench.toFixed(1)}% das consultas têm origem registrada (${fmtNum(data.total_com_origem)} de ${fmtNum(data.total_consultas)}).`
+
+  const bullets: SonIAInsight['bullets'] = [
+    { text: `${fmtNum(data.total_consultas)} consultas no total.`, tone: 'neutral' },
+    { text: `${fmtNum(data.total_com_origem)} com origem registrada (${pctPreench.toFixed(1)}%).`, tone: bom ? 'positive' : muitoBaixo ? 'negative' : 'warning' },
+    { text: `${fmtNum(semOrigem)} sem origem registrada.`, tone: semOrigem > data.total_com_origem ? 'negative' : 'warning' },
+  ]
+
+  const topCanal = data.canais[0]
+  if (topCanal) {
+    bullets.push({
+      text: `Canal mais frequente: ${topCanal.canal} (${topCanal.pct.toFixed(1)}% dos preenchidos).`,
+      tone: 'neutral',
+    })
+  }
+  if (data.indicacoes_nominais.length > 0) {
+    const topInd = data.indicacoes_nominais[0]
+    bullets.push({
+      text: `Quem mais indica: ${topInd.nome_indicador} (${fmtNum(topInd.qtd_consultas)} consultas).`,
+      tone: 'positive',
+    })
+  }
+
+  return { mood, headline, detail, bullets }
 }

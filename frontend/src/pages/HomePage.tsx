@@ -1,3 +1,4 @@
+import { useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import {
   AlertTriangle,
@@ -20,6 +21,8 @@ import { StrategicAgendaSection } from '@/modules/agenda/StrategicAgendaCard'
 import { PendenciasCard } from '@/modules/agenda/PendenciasCard'
 import { PageContainer } from '@/components/layout/PageContainer'
 import { PageHeader } from '@/components/layout/PageHeader'
+import SonIAInsightBanner from '@/components/sonia/SonIAInsightBanner'
+import { useSonIA } from '@/components/sonia/SonIAContext'
 import type {
   HomeDashboardResponse,
   InadimplenciaCriticaSection,
@@ -62,6 +65,8 @@ const initials = (name: string): string => {
 
 // ── página ────────────────────────────────────────────────────
 
+const WELCOME_KEY = 'sonia.welcome.shown'
+
 export default function HomePage() {
   usePageTitle('Início', 'Cockpit operacional', 'INÍCIO')
   const { user } = useAuth()
@@ -72,6 +77,45 @@ export default function HomePage() {
     queryFn: () => homeService.dashboard(),
     staleTime: 60_000,
   })
+
+  const { publish, clear, setOpen } = useSonIA()
+
+  useEffect(() => {
+    if (!q.data) return
+    const hour = new Date().getHours()
+    const periodo = hour < 12 ? 'Bom dia' : hour < 18 ? 'Boa tarde' : 'Boa noite'
+    const nome = firstName || ''
+    const headline = nome ? `${periodo}, ${nome}.` : `${periodo}.`
+
+    publish({
+      pageKey: '/',
+      pageTitle: 'Início',
+      data: {
+        insight: {
+          mood: 'default',
+          headline: `${headline} Que bom te ver por aqui.`,
+          detail:
+            'Estou aqui no canto, sempre por perto. Pode me chamar quando quiser uma observação sobre alguma página — vou olhar com calma e te trazer o que achar relevante.',
+        },
+      },
+    })
+
+    return () => clear('/')
+  }, [q.data, firstName, publish, clear])
+
+  useEffect(() => {
+    if (!q.data) return
+    if (sessionStorage.getItem(WELCOME_KEY)) return
+    const timers: number[] = []
+    timers.push(window.setTimeout(() => {
+      setOpen(true)
+      sessionStorage.setItem(WELCOME_KEY, '1')
+      // Auto-fecha 6s depois (tempo de leitura). Só na saudação automática —
+      // se o usuário clica pra abrir, fica aberto até ele fechar.
+      timers.push(window.setTimeout(() => setOpen(false), 6000))
+    }, 1500))
+    return () => timers.forEach((id) => clearTimeout(id))
+  }, [q.data, setOpen])
 
   return (
     <main className="relative">
@@ -85,6 +129,8 @@ export default function HomePage() {
       />
       <PageContainer as="div" gap={6} className="relative">
         <Greeting name={firstName} data={q.data} />
+
+        {q.data && <SonIAInsightBanner data={q.data} firstName={firstName} />}
 
         {q.isLoading && (
           <div className="bg-white border rounded-xl p-12 text-center text-neutral-500 text-sm shadow-sm flex items-center justify-center gap-2">

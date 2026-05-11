@@ -3,7 +3,7 @@
  * Consome /home/agenda?date=... — endpoint dedicado que aceita data alvo.
  * Seletor permite Hoje / Amanhã / Depois de amanhã (limite gerencial: +2d).
  */
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Loader2, Calendar } from 'lucide-react'
 
@@ -18,6 +18,7 @@ import { CapacityCard } from './CapacityCard'
 import { RiskCard } from './RiskCard'
 import { WaitlistCard } from './WaitlistCard'
 import { STATUS_LABEL, STATUS_DOT } from './helpers'
+import { useSonIA, type SonIAInsight } from '@/components/sonia/SonIAContext'
 
 // Resolve YYYY-MM-DD em horário LOCAL (não UTC). Necessário porque o
 // backend interpreta esse param no timezone do tenant.
@@ -125,6 +126,17 @@ export default function AgendaPage() {
     refetchInterval: selected === 'today' ? 60_000 : false,
   })
 
+  const { publish, clear } = useSonIA()
+  useEffect(() => {
+    if (!agendaQ.data) return
+    publish({
+      pageKey: '/agenda',
+      pageTitle: 'Agenda',
+      data: { insight: buildAgendaInsight(agendaQ.data, targetOption.label) },
+    })
+    return () => clear('/agenda')
+  }, [agendaQ.data, targetOption.label, publish, clear])
+
   return (
     <PageContainer variant="wide">
       {/* Seletor de dia */}
@@ -190,4 +202,56 @@ export default function AgendaPage() {
       )}
     </PageContainer>
   )
+}
+
+// ── Insight pra SonIA ─────────────────────────────────────────
+
+function buildAgendaInsight(data: AgendaSection, diaLabel: string): SonIAInsight {
+  const total = data.items.length
+  const confirmados = data.items.filter((i) => i.status_type === 'CONFIRMED').length
+  const faltas = data.items.filter((i) => i.status_type === 'MISSED').length
+  const efetivas = data.items.filter((i) =>
+    ['ARRIVED', 'IN_SESSION', 'CHECKOUT'].includes(i.status_type ?? ''),
+  ).length
+
+  const confirmadosPct = total > 0 ? Math.round((confirmados / total) * 100) : 0
+  const faltasPct = total > 0 ? Math.round((faltas / total) * 100) : 0
+
+  const altoRisco = data.risk?.pacientes_alto_risco.length ?? 0
+  const encaixe = data.capacity?.encaixe_total_min ?? 0
+  const encaixeH = Math.floor(encaixe / 60)
+
+  const moodAlerta = faltasPct >= 20 || altoRisco >= 3
+  const mood = moodAlerta ? 'alert' : encaixe >= 60 ? 'curious' : 'default'
+
+  const headline = moodAlerta
+    ? 'Olhei a agenda — tem uns pontos pra olharmos juntos.'
+    : encaixe >= 60
+    ? 'Olhei a agenda com calma — tem espaço pra encaixe.'
+    : `Aqui está como ${diaLabel.toLowerCase()} está se desenhando.`
+
+  const detail = moodAlerta
+    ? `${total} agendamentos, ${faltas} marcados como falta (${faltasPct}%) e ${altoRisco} pacientes com risco elevado. Vale acompanhar de perto.`
+    : encaixe >= 60
+    ? `${total} agendamentos previstos. Tenho ${encaixeH > 0 ? `${encaixeH}h de` : ''} folga no calendário — janelas que podem virar encaixe pra fila de espera.`
+    : `${total} agendamentos no total, ${confirmados} confirmados (${confirmadosPct}%) e ${efetivas} já efetivados.`
+
+  const bullets: SonIAInsight['bullets'] = [
+    { text: `${total} agendamentos no dia.`, tone: 'neutral' },
+    { text: `${confirmados} confirmados (${confirmadosPct}%).`, tone: confirmadosPct >= 60 ? 'positive' : 'warning' },
+  ]
+  if (faltas > 0) {
+    bullets.push({ text: `${faltas} faltas marcadas (${faltasPct}%).`, tone: faltasPct >= 20 ? 'negative' : 'warning' })
+  }
+  if (altoRisco > 0) {
+    bullets.push({ text: `${altoRisco} paciente${altoRisco > 1 ? 's' : ''} de alto risco.`, tone: 'warning' })
+  }
+  if (encaixe >= 30) {
+    bullets.push({
+      text: `${encaixeH > 0 ? `${encaixeH}h ${encaixe % 60}min` : `${encaixe}min`} de folga pra encaixe.`,
+      tone: 'positive',
+    })
+  }
+
+  return { mood, headline, detail, bullets }
 }

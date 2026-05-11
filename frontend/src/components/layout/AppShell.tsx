@@ -3,6 +3,7 @@ import type { ReactNode } from 'react'
 import BrandBar from './BrandBar'
 import MenuBar from './MenuBar'
 import SideNavbar from './SideNavbar'
+import SonIAFab from '@/components/sonia/SonIAFab'
 import { useSettings } from '@/contexts/SettingsContext'
 
 interface AppShellProps {
@@ -39,6 +40,7 @@ export default function AppShell({ children }: AppShellProps) {
           {children}
         </>
       )}
+      <SonIAFab />
     </div>
   )
 }

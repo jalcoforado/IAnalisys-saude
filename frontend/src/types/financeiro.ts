@@ -63,6 +63,13 @@ export interface SaldosBancariosBlock {
   contas: ContaBancariaItem[]
 }
 
+export interface DreCategoriaItem {
+  external_id: string
+  nome: string
+  total: number
+  pct_subgrupo: number
+}
+
 export interface DreSubgrupoItem {
   external_id: string
   descricao: string
@@ -70,6 +77,7 @@ export interface DreSubgrupoItem {
   posicao: number | null
   qtd_categorias: number
   total: number
+  categorias: DreCategoriaItem[]   // 3º nível de drill — vazio no overview
 }
 
 export interface DreGrupoItem {
@@ -139,6 +147,11 @@ export interface TransferenciasBlock {
   qtd_contas_origem: number
   qtd_contas_destino: number
   fluxos: TransferenciaFluxoItem[]
+}
+
+export interface DreResponse {
+  period: PeriodInfo
+  dre: DreBlock
 }
 
 export interface FinanceiroOverviewResponse {

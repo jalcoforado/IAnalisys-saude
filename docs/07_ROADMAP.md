@@ -941,6 +941,111 @@ Tela única `/empresa/configuracoes` com seções abaixo. Apenas usuários com
 - [ ] Card de resposta com: valor, explicação, período, fonte (doc 06)
 - [ ] Botão "Explicar mais" → aprofunda com Claude
 
+#### Persona — SonIA (alinhado 2026-05-10)
+
+A IA do sistema é personificada como **SonIA** — grafia destacando `IA` (Sôn**IA**) para reforçar a natureza de Inteligência Artificial. Avatar humano criado por Pedro (Nano Banana), mulher profissional sobre fundo com dashboards holográficos azuis.
+
+**Assets de imagem** (`frontend/src/assets/sonia/`):
+- [ ] `sonia-default.png` — neutra/sorrindo (sem watermark) — versão padrão
+- [ ] `sonia-thinking.png` — pensando (mão no queixo, olhar lateral)
+- [ ] `sonia-alert.png` — atenta/séria (alertas críticos, KPIs vermelhos)
+- [ ] `sonia-happy.png` — comemorando (metas batidas, sucesso)
+- [ ] `sonia-curious.png` — curiosa/convidativa (sugestões proativas)
+- [ ] Exportar todas em `.webp` para reduzir bundle
+
+**Hierarquia de uso na UI**:
+1. **FAB persistente** (canto inferior direito, ~56px circular) — sempre presente, abre chat lateral.
+2. **Cards de Insight** — avatar 24-28px à esquerda do título: "💬 **SonIA** notou que...". Aplica em Cockpit, Agenda Inteligente, drill-downs de KPI.
+3. **Drawer/Modal narrativo** — quando IA explica análise complexa: foto maior (64-80px) + balão de fala. Acionado por "Explicar mais".
+4. **Estados especiais**:
+   - Loading IA → avatar `thinking` + animação suave (pulso).
+   - Empty state → "SonIA ainda está aprendendo sobre este mês..." com `default` em tom suave.
+   - Sucesso → `happy` com micro-animação.
+   - Alerta crítico → `alert` no toast/banner.
+
+**Estilização do nome**:
+- `Sôn` em neutro (text-neutral-900)
+- `IA` em destaque (text-primary-700, font-bold, tracking-wider)
+- Componente reutilizável `<SonIABrand />` para uso consistente em headers, cards e tooltips.
+
+**Status (2026-05-10 — fim de dia)**: SonIA MVP completo entregue.
+
+**Componentes prontos** em `frontend/src/components/sonia/`:
+- `SonIAContext` (provider + hook + open/setOpen exposto)
+- `SonIAAnalyzers.ts` (analyze() entry point)
+- `SonIAAvatar` (mood + size xs..2xl + ring + pulse)
+- `SonIABrand` (texto Sôn**IA** estilizado)
+- `SonIAFab` (avatar 2xl "se debruçando" + auto-close 6s na saudação)
+- `SonIAInsightBanner` (banner narrativo na HomePage)
+- `partialMonth.ts` (helper pra páginas sem `is_partial` do backend)
+
+**Cobertura de páginas** (heurística front, sem LLM ainda):
+- ✅ HomePage — banner + saudação automática (1× sessão, auto-fecha 6s)
+- ✅ /agenda — confirmados, faltas, riscos, encaixe
+- ✅ /analise/financeiro — faturamento, conversão, ticket, recebido
+- ✅ /analise/comercial — consultas, absenteísmo, conversão, pacientes únicos
+- ✅ /financeiro — entradas, saídas, saldo, inadimplência, encargos
+- ✅ /financeiro/dre — receita, custos, despesas, resultado, margem
+- ✅ /pacientes — ativos, recorrência, LTV, em risco, resgate
+- ✅ /pacientes/captacao — % preenchimento, canais, top indicadores
+- ❌ /admin/*, /empresa/*, /configuracoes — IA não atua (decisão Pedro)
+
+**Mês corrente (parcial)**: SonIA suprime MoM% (que viraria alerta enganoso "caiu 70%!") e mostra valor parcial + projeção no ritmo atual. Headline: "Olhei o que temos de {mês} até agora." Alertas absolutos (inadimplência alta, saldo negativo, absenteísmo alto) continuam válidos.
+
+**Limpeza concluída** (cards antigos de "IA narrativa" removidos):
+- `AIInsightsSection` violeta de /analise/financeiro
+- `AIInsightsSection` violeta de /analise/comercial
+- `AINarrative` ("Gerar análise IA dos próximos 3 dias") de /agenda
+- `BannerChoque` ("⚡ você está perdendo dado de marketing") de /pacientes/captacao
+
+**Próximos passos (Fase 7)**:
+- Plugar LLM real no FAB — endpoint `/ai/insight?page=...` com Sonnet 4.6
+- Página dedicada `/sonia` (chat conversacional multi-turn) com Opus 4.7
+- Recortar fundo dos PNGs via remove.bg + variar visual quando avatar grande
+- Cache por sessão (mesmo page + filtros = mesmo insight por 5min)
+
+**Pendências de UI conhecidas (não-bloqueantes)**:
+- Avatares ainda têm fundo (escritório + hologramas) e marca d'água ✦ do Gemini no canto. Pedro adiou recorte transparente.
+
+**Princípio**: SonIA é a "voz" da IA — toda saída de IA narrativa (Cockpit, Agenda, alertas, chat) é apresentada como vinda dela. Cria continuidade emocional e identidade de marca; usuário desenvolve relação com o assistente.
+
+#### Arquitetura SonIA (decisão 2026-05-10)
+
+Duas superfícies distintas, mesma persona:
+
+| Superfície | Escopo | Modelo recomendado | Status |
+|---|---|---|---|
+| **FAB contextual** (canto inferior direito, sempre presente) | Insight rápido sobre a página atual (1 KPI block, ~5-15 métricas). Clique = "varredura" + observação. | **Claude Sonnet 4.6** (~US$ 0,016/insight) | ✅ Estrutura pronta, heurística front · LLM pendente (Fase 7) |
+| **Página `/sonia`** (a criar) | Agente conversacional pleno, multi-turn, análise cross-página, histórico de conversa. | **Claude Opus 4.7 (1M ctx)** | ⏳ Adiada para depois — escopo robusto, depende de AI Gateway |
+| Tarefas triviais (resumir 1 frase, classificar) | Sub-rotinas internas | **Haiku 4.5** ou **DeepSeek-Chat** | n/a |
+
+**Regra crítica:** Haiku **não** deve fazer análise de números — ele alucina em raciocínio analítico. Sonnet é o piso para qualquer insight com KPIs.
+
+#### Limpeza de "IA narrativa" das páginas (2026-05-10)
+
+Decisão: remover seções de "Gerar com IA" embutidas em páginas — toda IA narrativa centraliza no FAB da SonIA. Páginas voltam ao papel de dashboard puro.
+
+Removidos:
+- `AIInsightsSection` em `/analise/financeiro` (card violeta com botão "Gerar com IA")
+- `AIInsightsSection` em `/analise/comercial`
+- `AINarrative` em `/agenda` (bloco "Gerar análise IA dos próximos 3 dias")
+- `BannerChoque` em `/pacientes/captacao` (alerta editorial estático)
+
+Mantidos (NÃO são IA narrativa, são dashboard operacional): `CapacityCard`, `RiskCard`, `WaitlistCard`, todos os `Top*Card`, `FunilCard`, `SaudeAgendaCard`, `MixCategoriasCard`, `OperacionalCard`, `SaudeBaseCard`, `CurvaAbcCard`, `ParaResgatarCard`, `OrcamentosPendentesCard`, `TreineRecepcaoCard`, KPI insights estáticos. Esses são VISUALIZAÇÕES — produto, não comentário.
+
+#### Tom de voz canônico da SonIA
+
+Personalidade: mulher de ~30 anos, **doce, discreta, cordial e gentil**. Reflete a pessoa real homenageada.
+
+- Cumprimento sempre: "Oi, {nome}." em vez de "{nome}," seco
+- Verbos suaves: "notei", "reparei", "encontrei", "selecionei", "achei", "queria te mostrar"
+- Sugere, não manda: "que tal", "se quiser", "quem sabe", "podemos"
+- Sem jargão corporativo: "régua de cobrança" → "olhar com calma"; "pipeline destravar" → "retomar essas conversas"
+- Alertas críticos: séria mas calma, nunca alarmista
+- Self-reference: "Pode contar comigo", "Sempre por perto"
+
+Detalhe em `feedback_pedro_decisoes` e `project_sonia_persona` (memória).
+
 ---
 
 ### FASE 8 — Admin SaaS

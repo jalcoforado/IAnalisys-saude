@@ -27,6 +27,7 @@ from app.schemas.financeiro import (
     ContaBancariaItem,
     ContaDestinoItem,
     DreBlock,
+    DreCategoriaItem,
     DreGrupoItem,
     DreSubgrupoItem,
     FinanceiroEvolutionPoint,
@@ -435,7 +436,10 @@ async def _conciliacao(
 
 # ── DRE estruturada (Fase 2 Show no Financeiro) ─────────────────
 
-async def _dre_block(db: AsyncSession, tenant_id: str, ym: str) -> DreBlock:
+async def _dre_block(
+    db: AsyncSession, tenant_id: str, ym: str,
+    *, with_categorias: bool = False,
+) -> DreBlock:
     """DRE hierárquico do mês — agrupa fato_caixa por nó DRE via
     `core_ca_dre_links` (ponte DRE ↔ categoria_financeira plana).
 
@@ -511,6 +515,38 @@ async def _dre_block(db: AsyncSession, tenant_id: str, ym: str) -> DreBlock:
             if v:
                 total_por_no[n.parent_external_id] = total_por_no.get(n.parent_external_id, 0.0) + v
 
+    # 5a. (Opcional) 3º nível: nome das categorias planas + valor por subgrupo
+    nome_por_categoria: dict[str, str] = {}
+    cats_por_subgrupo: dict[str, list[DreCategoriaItem]] = {}
+    if with_categorias:
+        # 1 query lookup nos nomes das categorias relevantes (apenas as com valor)
+        cat_ids_com_valor = [c for c in totais_por_categoria.keys() if totais_por_categoria.get(c, 0)]
+        if cat_ids_com_valor:
+            q_nomes = await db.execute(
+                text("""
+                    SELECT external_id, nome
+                    FROM dim_categoria_ca
+                    WHERE tenant_id = :tid AND external_id IN :ids
+                """).bindparams(bindparam("ids", expanding=True)),
+                {"tid": tenant_id, "ids": cat_ids_com_valor},
+            )
+            nome_por_categoria = {row.external_id: row.nome for row in q_nomes.all()}
+
+        # Inverte cat_para_dre: para cada subgrupo (dre_external_id), lista as
+        # categorias com valor + nome. Ordena por valor desc.
+        for cat_id, valor in totais_por_categoria.items():
+            if not valor:
+                continue
+            for no_id in cat_para_dre.get(cat_id, []):
+                cats_por_subgrupo.setdefault(no_id, []).append(
+                    DreCategoriaItem(
+                        external_id=cat_id,
+                        nome=nome_por_categoria.get(cat_id) or "(sem nome)",
+                        total=round(valor, 2),
+                        pct_subgrupo=0.0,  # preenchido depois com o total do subgrupo
+                    )
+                )
+
     # 5. Monta resposta — só raízes com código (operacionais)
     grupos: list[DreGrupoItem] = []
     raizes = [n for n in nos if n.nivel == 0 and n.codigo]
@@ -518,17 +554,36 @@ async def _dre_block(db: AsyncSession, tenant_id: str, ym: str) -> DreBlock:
     for r in raizes:
         subitens = [n for n in nos if n.parent_external_id == r.external_id]
         subitens.sort(key=lambda x: (x.posicao or 99, x.codigo or ""))
-        sub_dto = [
-            DreSubgrupoItem(
+        sub_dto: list[DreSubgrupoItem] = []
+        for s in subitens:
+            sub_total = round(total_por_no.get(s.external_id, 0.0), 2)
+            cats: list[DreCategoriaItem] = []
+            if with_categorias:
+                raw_cats = cats_por_subgrupo.get(s.external_id, [])
+                # Calcula pct_subgrupo agora que temos o total real do subgrupo
+                base = abs(sub_total) or 1.0
+                cats = sorted(
+                    [
+                        DreCategoriaItem(
+                            external_id=c.external_id,
+                            nome=c.nome,
+                            total=c.total,
+                            pct_subgrupo=round((abs(c.total) / base) * 100, 1),
+                        )
+                        for c in raw_cats
+                    ],
+                    key=lambda c: abs(c.total),
+                    reverse=True,
+                )
+            sub_dto.append(DreSubgrupoItem(
                 external_id=s.external_id,
                 descricao=s.descricao or "(sem descrição)",
                 codigo=s.codigo,
                 posicao=s.posicao,
                 qtd_categorias=int(s.qtd_categorias_financeiras or 0),
-                total=round(total_por_no.get(s.external_id, 0.0), 2),
-            )
-            for s in subitens
-        ]
+                total=sub_total,
+                categorias=cats,
+            ))
         grupos.append(DreGrupoItem(
             external_id=r.external_id,
             descricao=r.descricao or "(sem descrição)",

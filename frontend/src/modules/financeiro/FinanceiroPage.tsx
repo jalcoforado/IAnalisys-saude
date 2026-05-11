@@ -3,7 +3,7 @@
  * Visual alinhado com /analise/comercial: cards brancos minimalistas,
  * headers inline (icon + uppercase tracking-wider), shadow-sm sem hover.
  */
-import { useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import {
   Bar,
@@ -48,13 +48,13 @@ import { PageContainer } from '@/components/layout/PageContainer'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { PageFooter } from '@/components/layout/PageFooter'
 import { PeriodSelector } from '@/modules/analise/components/PeriodSelector'
+import { useSonIA, type SonIAInsight } from '@/components/sonia/SonIAContext'
+import { isCurrentMonthPartial } from '@/components/sonia/partialMonth'
 import type {
   CategoriaItem,
   CentroCustoItem,
   ConciliacaoBlock as ConciliacaoBlockT,
   ContaBancariaItem,
-  DreBlock,
-  DreGrupoItem,
   FinanceiroOverviewResponse,
   MetodosPagamentoBlock,
   SaldosBancariosBlock,
@@ -112,6 +112,17 @@ export default function FinanceiroPage() {
     queryFn: () => financeiroService.overview(period.year, period.month),
     staleTime: 60_000,
   })
+
+  const { publish, clear } = useSonIA()
+  useEffect(() => {
+    if (!query.data) return
+    publish({
+      pageKey: '/financeiro',
+      pageTitle: 'Fluxo de Caixa',
+      data: { insight: buildFluxoCaixaInsight(query.data) },
+    })
+    return () => clear('/financeiro')
+  }, [query.data, publish, clear])
 
   return (
     <PageContainer>
@@ -246,8 +257,9 @@ function Body({ data }: { data: FinanceiroOverviewResponse }) {
       {/* Distribuição por banco */}
       <SaldoPorBancoCard data={saldos_bancarios} />
 
-      {/* DRE estruturada */}
-      <DreCard data={dre} periodLabel={period.label_pt} />
+      {/* DRE foi movida para a página dedicada /financeiro/dre — link
+           rápido aqui pra quem quer drill 3 níveis (grupo → subgrupo → categoria). */}
+      <DreShortcutCard total={dre.grupos.length} periodLabel={period.label_pt} />
 
       {/* Onde caiu o dinheiro + Conciliação */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
@@ -470,118 +482,34 @@ function ContaBancoItem({ c, muted = false }: { c: ContaBancariaItem; muted?: bo
   )
 }
 
-// ── DRE estruturada ───────────────────────────────────────────
+// ── DRE shortcut ──────────────────────────────────────────────
 
-function DreCard({ data, periodLabel }: { data: DreBlock; periodLabel: string }) {
-  const [expanded, setExpanded] = useState<Set<string>>(new Set())
-  const grupos = useMemo(() => data.grupos.filter(g => g.total !== 0), [data.grupos])
-
-  const toggle = (id: string) => {
-    setExpanded(prev => {
-      const next = new Set(prev)
-      if (next.has(id)) next.delete(id); else next.add(id)
-      return next
-    })
-  }
-
-  const grupoMaiorTotal = Math.max(...grupos.map(g => Math.abs(g.total)), 1)
-
+// Card compacto que substituiu a árvore completa de DRE — a árvore com
+// drill 3 níveis vive agora em /financeiro/dre. Aqui só linkamos pra lá.
+function DreShortcutCard({ total, periodLabel }: { total: number; periodLabel: string }) {
   return (
-    <div className="bg-white border border-neutral-200 rounded-xl p-4 shadow-sm">
-      <div className="flex items-center gap-2 mb-3">
-        <Layers size={14} className="text-neutral-600" />
-        <span className="text-[11px] uppercase tracking-wider font-bold text-neutral-500">
-          DRE estruturada — {periodLabel}
+    <a
+      href="/financeiro/dre"
+      className="block bg-white border border-neutral-200 rounded-xl p-4 shadow-sm hover:border-primary-200 hover:shadow transition group"
+    >
+      <div className="flex items-center gap-3">
+        <span className="w-9 h-9 rounded-lg bg-primary-50 flex items-center justify-center shrink-0">
+          <Layers size={16} className="text-primary-700" />
         </span>
-        <span className="ml-auto text-[10px] text-neutral-400">
-          {data.total_nao_classificado > 0
-            ? <>R$ {fmtNum(Math.round(data.total_nao_classificado))} sem categoria DRE</>
-            : <>100% classificado</>}
-        </span>
-      </div>
-
-      {data.grupos.length === 0 && (
-        <div className="text-sm text-neutral-400 py-6 text-center">
-          Plano DRE não sincronizado. Rode sync de cadastros CA + reconstruir pipeline.
-        </div>
-      )}
-      {data.grupos.length > 0 && grupos.length === 0 && (
-        <div className="text-sm text-neutral-400 py-6 text-center">
-          Sem movimentações classificadas no DRE neste período.
-        </div>
-      )}
-
-      {grupos.length > 0 && (
-        <ul className="space-y-2">
-          {grupos.map(grupo => {
-            const isOpen = expanded.has(grupo.external_id)
-            const widthPct = (Math.abs(grupo.total) / grupoMaiorTotal) * 100
-            const subAtivos = grupo.subgrupos.filter(s => s.total !== 0)
-            return (
-              <li key={grupo.external_id}>
-                <button
-                  onClick={() => toggle(grupo.external_id)}
-                  className="w-full text-left flex items-center gap-2 hover:bg-neutral-50 rounded p-1.5 transition"
-                >
-                  <span className="w-4 h-4 flex items-center justify-center text-neutral-400 shrink-0">
-                    {subAtivos.length > 0 && (isOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />)}
-                  </span>
-                  <span className="text-[10px] font-mono font-bold text-neutral-500 w-7 shrink-0">{grupo.codigo}</span>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-baseline justify-between gap-2 mb-1">
-                      <span className="text-[12px] font-semibold text-neutral-800 truncate">{grupo.descricao}</span>
-                      <span className="text-[12px] font-bold tabular-nums text-neutral-900 shrink-0">
-                        {fmtBRL(grupo.total, true)}
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <div className="flex-1 h-1.5 bg-neutral-100 rounded-full overflow-hidden">
-                        <div className="h-full bg-primary-500 rounded-full" style={{ width: `${widthPct}%` }} />
-                      </div>
-                      {subAtivos.length > 0 && (
-                        <span className="text-[10px] text-neutral-500 shrink-0">{subAtivos.length} sub.</span>
-                      )}
-                    </div>
-                  </div>
-                </button>
-                {isOpen && subAtivos.length > 0 && (
-                  <DreSubgrupos grupo={grupo} />
-                )}
-              </li>
-            )
-          })}
-        </ul>
-      )}
-    </div>
-  )
-}
-
-function DreSubgrupos({ grupo }: { grupo: DreGrupoItem }) {
-  const subAtivos = grupo.subgrupos.filter(s => s.total !== 0)
-  const max = Math.max(...subAtivos.map(s => Math.abs(s.total)), 1)
-  return (
-    <div className="ml-9 mt-1 space-y-1.5 pl-3 border-l border-primary-200">
-      {subAtivos.map(s => {
-        const w = (Math.abs(s.total) / max) * 100
-        return (
-          <div key={s.external_id} className="flex items-center gap-2">
-            <span className="text-[10px] font-mono text-neutral-400 w-10 shrink-0">{s.codigo || '—'}</span>
-            <div className="min-w-0 flex-1">
-              <div className="flex items-baseline justify-between gap-2 mb-0.5">
-                <span className="text-[11px] text-neutral-700 truncate">{s.descricao}</span>
-                <span className="text-[11px] font-semibold tabular-nums text-neutral-900 shrink-0">
-                  {fmtBRL(s.total, true)}
-                </span>
-              </div>
-              <div className="h-1 bg-neutral-100 rounded-full overflow-hidden">
-                <div className="h-full bg-primary-400 rounded-full" style={{ width: `${w}%` }} />
-              </div>
-            </div>
-            <span className="text-[10px] text-neutral-400 w-10 text-right shrink-0">{s.qtd_categorias} cat.</span>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-baseline gap-2 mb-0.5">
+            <span className="text-sm font-semibold text-neutral-900">DRE Estruturada</span>
+            <span className="text-[10px] uppercase tracking-wider text-neutral-400">{periodLabel}</span>
           </div>
-        )
-      })}
-    </div>
+          <div className="text-[12px] text-neutral-500 leading-snug">
+            {total > 0
+              ? <>{total} grupos classificados · drill em 3 níveis (grupo → subgrupo → categoria)</>
+              : <>Plano DRE não sincronizado.</>}
+          </div>
+        </div>
+        <ChevronRight size={16} className="text-neutral-400 group-hover:text-primary-700 shrink-0" />
+      </div>
+    </a>
   )
 }
 
@@ -1027,4 +955,98 @@ function CentrosCustoCard({ items }: { items: CentroCustoItem[] }) {
       )}
     </div>
   )
+}
+
+// ── Insight pra SonIA ─────────────────────────────────────────
+
+function buildFluxoCaixaInsight(data: FinanceiroOverviewResponse): SonIAInsight {
+  const k = data.kpis
+  const kPrev = data.kpis_previous
+
+  // Mês em andamento: suprimir MoM (enganoso) e projetar no ritmo atual.
+  // Alertas absolutos (saldo negativo, inadimplência alta) continuam válidos
+  // porque não dependem de comparação.
+  const progress = isCurrentMonthPartial(data.period.year, data.period.month)
+  if (progress.partial) {
+    const factor = progress.totalDays / progress.days
+    const projEntradas = k.entradas * factor
+    const projSaidas = k.saidas * factor
+    const projSaldo = projEntradas - projSaidas
+
+    const inadAlta = k.inadimplencia_pct >= 8
+    const moodPartial: SonIAInsight['mood'] = inadAlta ? 'alert' : 'curious'
+
+    return {
+      mood: moodPartial,
+      headline: inadAlta
+        ? 'Olhei aqui e queria te mostrar uma coisa.'
+        : `Olhei o caixa de ${data.period.label} até agora.`,
+      detail: inadAlta
+        ? `Estamos no dia ${progress.days} de ${progress.totalDays} (${progress.progressPct.toFixed(0)}% do mês). A inadimplência está em ${k.inadimplencia_pct.toFixed(1)}% — ${fmtNum(k.qtd_parcelas_vencidas)} parcelas vencidas. Que tal acionarmos a régua de cobrança com carinho?`
+        : `Estamos no dia ${progress.days} de ${progress.totalDays} (${progress.progressPct.toFixed(0)}% do mês). Até agora entraram ${fmtBRL(k.entradas, true)} e saíram ${fmtBRL(k.saidas, true)}. No ritmo atual, o mês deve fechar em ${fmtBRL(projSaldo, true)}.`,
+      bullets: [
+        { text: `Entradas ${fmtBRL(k.entradas, true)} · projeção ${fmtBRL(projEntradas, true)}.`, tone: 'neutral' },
+        { text: `Saídas ${fmtBRL(k.saidas, true)} · projeção ${fmtBRL(projSaidas, true)}.`, tone: 'neutral' },
+        { text: `Saldo parcial ${fmtBRL(k.saldo_liquido, true)} · projeção ${fmtBRL(projSaldo, true)}.`, tone: projSaldo < 0 ? 'warning' : 'neutral' },
+        { text: `Inadimplência ${k.inadimplencia_pct.toFixed(1)}% (${fmtNum(k.qtd_parcelas_vencidas)} parcelas).`, tone: inadAlta ? 'negative' : k.inadimplencia_pct >= 4 ? 'warning' : 'neutral' },
+        { text: `A receber ${fmtBRL(k.a_receber, true)} · A pagar ${fmtBRL(k.a_pagar, true)}.`, tone: 'neutral' },
+      ],
+    }
+  }
+
+  const saldoMoMPct = kPrev.saldo_liquido !== 0
+    ? ((k.saldo_liquido - kPrev.saldo_liquido) / Math.abs(kPrev.saldo_liquido)) * 100
+    : null
+  const entradasMoMPct = kPrev.entradas > 0
+    ? ((k.entradas - kPrev.entradas) / kPrev.entradas) * 100
+    : null
+
+  const saldoNeg = k.saldo_liquido < 0
+  const inadAlta = k.inadimplencia_pct >= 8
+  const vencidasMuitas = k.qtd_parcelas_vencidas >= 30
+
+  const moodAlert = saldoNeg || inadAlta || vencidasMuitas
+  const moodHappy = !moodAlert && saldoMoMPct !== null && saldoMoMPct >= 10
+
+  const mood: SonIAInsight['mood'] = moodAlert ? 'alert' : moodHappy ? 'happy' : 'curious'
+
+  const headline = saldoNeg
+    ? 'Olhei aqui e queria conversar com você.'
+    : inadAlta
+    ? 'Tem uma coisa que me chamou atenção.'
+    : moodHappy
+    ? 'Olha que notícia boa.'
+    : 'Olhei o caixa com calma.'
+
+  const detail = saldoNeg
+    ? `O saldo de ${data.period.label} fechou em ${fmtBRL(k.saldo_liquido, true)}, abaixo do que entrou. Vale revisar o que pode ser ajustado.`
+    : inadAlta
+    ? `A inadimplência está em ${k.inadimplencia_pct.toFixed(1)}% — ${fmtNum(k.qtd_parcelas_vencidas)} parcelas vencidas. Que tal acionarmos a régua de cobrança com carinho?`
+    : moodHappy
+    ? `O caixa de ${data.period.label} fechou em ${fmtBRL(k.saldo_liquido, true)}, com alta de ${saldoMoMPct!.toFixed(1)}% sobre o mês anterior. Bonito de ver.`
+    : `Entradas de ${fmtBRL(k.entradas, true)}, saídas de ${fmtBRL(k.saidas, true)}. Saldo do mês: ${fmtBRL(k.saldo_liquido, true)}.`
+
+  const bullets: SonIAInsight['bullets'] = [
+    { text: `Entradas ${fmtBRL(k.entradas, true)}${pctSuffix(entradasMoMPct)}.`, tone: tonePct(entradasMoMPct, false) },
+    { text: `Saídas ${fmtBRL(k.saidas, true)}.`, tone: 'neutral' },
+    { text: `Saldo ${fmtBRL(k.saldo_liquido, true)}${pctSuffix(saldoMoMPct)}.`, tone: saldoNeg ? 'negative' : tonePct(saldoMoMPct, false) },
+    { text: `Inadimplência ${k.inadimplencia_pct.toFixed(1)}% (${fmtNum(k.qtd_parcelas_vencidas)} parcelas).`, tone: inadAlta ? 'negative' : k.inadimplencia_pct >= 4 ? 'warning' : 'neutral' },
+    { text: `A receber ${fmtBRL(k.a_receber, true)} · A pagar ${fmtBRL(k.a_pagar, true)}.`, tone: 'neutral' },
+  ]
+
+  return { mood, headline, detail, bullets }
+}
+
+function pctSuffix(p: number | null): string {
+  if (p === null) return ''
+  const sign = p > 0 ? '+' : ''
+  return ` (${sign}${p.toFixed(1)}% vs mês passado)`
+}
+
+function tonePct(p: number | null, inverse: boolean): 'positive' | 'negative' | 'neutral' | 'warning' {
+  if (p === null) return 'neutral'
+  if (Math.abs(p) < 2) return 'neutral'
+  const positivo = inverse ? p < 0 : p > 0
+  if (positivo) return 'positive'
+  return Math.abs(p) >= 10 ? 'negative' : 'warning'
 }

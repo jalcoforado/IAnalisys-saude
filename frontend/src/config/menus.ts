@@ -5,6 +5,7 @@ import {
   Calendar,
   DollarSign,
   Home,
+  Layers,
   RefreshCw,
   Settings,
   ShieldCheck,
@@ -12,6 +13,7 @@ import {
   Stethoscope,
   Users,
   UserPlus,
+  Wallet,
 } from 'lucide-react'
 
 export interface MenuItem {
@@ -44,11 +46,19 @@ export const MAIN_MENU: MenuItem[] = [
   {
     label: 'Análise',
     icon: BarChart3,
-    permissionAny: ['dashboard.read', 'financeiro.read'],
+    permissionAny: ['dashboard.read'],
     children: [
       { label: 'Financeiro', icon: DollarSign, path: '/analise/financeiro', permission: 'dashboard.read' },
       { label: 'Comercial', icon: BarChart3, path: '/analise/comercial', permission: 'dashboard.read' },
+    ],
+  },
+  {
+    label: 'Financeiro',
+    icon: Wallet,
+    permission: 'financeiro.read',
+    children: [
       { label: 'Fluxo de Caixa', icon: DollarSign, path: '/financeiro', permission: 'financeiro.read' },
+      { label: 'DRE Estruturada', icon: Layers, path: '/financeiro/dre', permission: 'financeiro.read' },
     ],
   },
   {

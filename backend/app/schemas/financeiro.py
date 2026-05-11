@@ -81,6 +81,14 @@ class SaldosBancariosBlock(BaseModel):
     contas: List[ContaBancariaItem]
 
 
+class DreCategoriaItem(BaseModel):
+    """Folha do DRE — categoria_financeira plana com valor no mês."""
+    external_id: str
+    nome: str
+    total: float                           # SUM(valor_pago_rateado) no mês
+    pct_subgrupo: float                    # % do total do subgrupo pai
+
+
 class DreSubgrupoItem(BaseModel):
     """Subgrupo DRE (nível 1) — ex: '01.1 Receita de Vendas'."""
     external_id: str
@@ -89,6 +97,7 @@ class DreSubgrupoItem(BaseModel):
     posicao: Optional[int]
     qtd_categorias: int
     total: float                          # SUM(valor_pago_rateado) no mês
+    categorias: List[DreCategoriaItem] = []  # 3º nível de drill (lazy-loaded no overview)
 
 
 class DreGrupoItem(BaseModel):

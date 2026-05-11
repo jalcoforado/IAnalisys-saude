@@ -13,7 +13,7 @@
  * 8. Top LTV (pacientes valor total)
  * 9. Novos do mês (com status orçamento)
  */
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import {
   Activity, AlertTriangle, BarChart3, CalendarClock, Clock, Crown, Flame, HeartPulse, Loader2, Phone,
@@ -37,6 +37,7 @@ import type {
 import { KpiCardEnriched } from '../analise/components/KpiCardEnriched'
 import { PeriodSelector } from '../analise/components/PeriodSelector'
 import PacienteDetalheDrawer from './PacienteDetalheDrawer'
+import { useSonIA, type SonIAInsight } from '@/components/sonia/SonIAContext'
 
 // ── Helpers ───────────────────────────────────────────────────
 
@@ -77,6 +78,17 @@ export default function PacientesPage() {
     queryFn: () => analiseService.pacientes(period.year, period.month),
     staleTime: 60_000,
   })
+
+  const { publish, clear } = useSonIA()
+  useEffect(() => {
+    if (!query.data) return
+    publish({
+      pageKey: '/pacientes',
+      pageTitle: 'Análise de Pacientes',
+      data: { insight: buildPacientesInsight(query.data) },
+    })
+    return () => clear('/pacientes')
+  }, [query.data, publish, clear])
 
   return (
     <PageContainer>
@@ -807,4 +819,91 @@ function NovosDoMesCard({
       </div>
     </div>
   )
+}
+
+// ── Insight pra SonIA ─────────────────────────────────────────
+
+function buildPacientesInsight(data: AnalisePacientesResponse): SonIAInsight {
+  const k = data.kpis
+  const saude = data.saude_base
+  const resgate = data.para_resgatar.length
+  const orcPend = data.orcamentos_pendentes.length
+
+  const emRiscoPct = saude.em_risco_pct + saude.perdido_pct
+  const recPct = k.taxa_recorrencia_pct.value ?? 0
+
+  // Mês em andamento: saúde da base e LTV são fotos do "agora" (válidos),
+  // mas MoM de qty é enganoso. Suprimir MoM dos bullets e tom mais neutro.
+  const partial = k.pacientes_ativos.is_partial
+  if (partial) {
+    const days = k.pacientes_ativos.partial_days ?? 0
+    const total = k.pacientes_ativos.partial_days_in_month ?? 30
+    const pctMes = total > 0 ? Math.round((days / total) * 100) : 0
+
+    // Alertas absolutos ainda válidos (saúde da base não depende de MoM).
+    const moodPartial: SonIAInsight['mood'] = emRiscoPct >= 35 ? 'alert' : 'curious'
+    return {
+      mood: moodPartial,
+      headline: emRiscoPct >= 35
+        ? 'Olhei a base e queria te mostrar uma coisa.'
+        : `Olhei a base de pacientes — uma foto até agora.`,
+      detail: emRiscoPct >= 35
+        ? `${emRiscoPct.toFixed(0)}% da base está em risco ou já perdida. ${fmtNum(resgate)} pacientes podem ser resgatados — um contato gentil pode ajudar.`
+        : `Estamos no dia ${days} de ${total} (${pctMes}% do mês). ${k.pacientes_ativos.value_label} pacientes ativos no momento, recorrência ${recPct.toFixed(0)}%. Espero o mês fechar pra falar de tendência.`,
+      bullets: [
+        { text: `${k.pacientes_ativos.value_label} pacientes ativos (foto atual).`, tone: 'neutral' },
+        { text: `Recorrência ${k.taxa_recorrencia_pct.value_label}.`, tone: 'neutral' },
+        { text: `LTV médio ${k.ltv_medio.value_label}.`, tone: 'neutral' },
+        { text: `${saude.ativo_qty} ativos · ${saude.em_risco_qty} em risco · ${saude.inativo_qty} inativos.`, tone: emRiscoPct >= 30 ? 'warning' : 'neutral' },
+        ...(resgate > 0 ? [{ text: `${fmtNum(resgate)} pacientes na lista pra resgatar.`, tone: 'warning' as const }] : []),
+        ...(orcPend > 0 ? [{ text: `${fmtNum(orcPend)} orçamentos pendentes — oportunidades quentes.`, tone: 'warning' as const }] : []),
+      ],
+    }
+  }
+
+  const moodAlert = emRiscoPct >= 35 || (resgate >= 10 && recPct < 30)
+  const moodHappy = recPct >= 60 && emRiscoPct < 20
+
+  const mood: SonIAInsight['mood'] = moodAlert ? 'alert' : moodHappy ? 'happy' : 'curious'
+
+  const headline = moodAlert
+    ? 'Olhei a base e queria te mostrar uma coisa.'
+    : moodHappy
+    ? 'Olha que notícia boa.'
+    : 'Olhei os pacientes com calma.'
+
+  const detail = moodAlert
+    ? `${emRiscoPct.toFixed(0)}% da sua base está em risco ou já perdida. Tem ${fmtNum(resgate)} pacientes na lista pra resgatar — quem sabe um contato gentil ajuda a trazê-los de volta?`
+    : moodHappy
+    ? `${k.pacientes_ativos.value_label} pacientes ativos e ${recPct.toFixed(0)}% de recorrência. A base está saudável.`
+    : `${k.pacientes_ativos.value_label} pacientes ativos, recorrência em ${recPct.toFixed(0)}%. ${resgate > 0 ? `${fmtNum(resgate)} pacientes podem ser resgatados.` : ''}`
+
+  const bullets: SonIAInsight['bullets'] = [
+    { text: `${k.pacientes_ativos.value_label} pacientes ativos${pctSuffix(k.pacientes_ativos.mom_pct)}.`, tone: tonePctP(k.pacientes_ativos.mom_pct, false) },
+    { text: `Recorrência ${k.taxa_recorrencia_pct.value_label}${pctSuffix(k.taxa_recorrencia_pct.mom_pct)}.`, tone: tonePctP(k.taxa_recorrencia_pct.mom_pct, false) },
+    { text: `LTV médio ${k.ltv_medio.value_label}.`, tone: 'neutral' },
+    { text: `${saude.ativo_qty} ativos · ${saude.em_risco_qty} em risco · ${saude.inativo_qty} inativos.`, tone: emRiscoPct >= 30 ? 'warning' : 'neutral' },
+  ]
+  if (resgate > 0) {
+    bullets.push({ text: `${fmtNum(resgate)} pacientes na lista pra resgatar.`, tone: 'warning' })
+  }
+  if (orcPend > 0) {
+    bullets.push({ text: `${fmtNum(orcPend)} orçamentos pendentes — oportunidades quentes.`, tone: 'warning' })
+  }
+
+  return { mood, headline, detail, bullets }
+}
+
+function pctSuffix(p: number | null): string {
+  if (p === null) return ''
+  const sign = p > 0 ? '+' : ''
+  return ` (${sign}${p.toFixed(1)}% vs mês passado)`
+}
+
+function tonePctP(p: number | null, inverse: boolean): 'positive' | 'negative' | 'neutral' | 'warning' {
+  if (p === null) return 'neutral'
+  if (Math.abs(p) < 2) return 'neutral'
+  const positivo = inverse ? p < 0 : p > 0
+  if (positivo) return 'positive'
+  return Math.abs(p) >= 10 ? 'negative' : 'warning'
 }

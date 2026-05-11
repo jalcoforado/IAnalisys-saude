@@ -13,11 +13,11 @@
  * 8. Top profissionais por consultas
  * 9. Mix de categorias + Operacional
  */
-import { useState } from 'react'
-import { useMutation, useQuery } from '@tanstack/react-query'
+import { useEffect, useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import {
-  Activity, BarChart3, BrainCircuit, Briefcase, CalendarClock,
-  CheckCircle2, FileText, HelpCircle, Loader2, Sparkles, Target, TrendingUp, UserCheck, Users, XCircle,
+  Activity, BarChart3, Briefcase, CalendarClock,
+  CheckCircle2, FileText, HelpCircle, Loader2, Target, TrendingUp, UserCheck, Users, XCircle,
 } from 'lucide-react'
 import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, Legend, CartesianGrid,
@@ -36,6 +36,7 @@ import type {
 
 import { KpiCardEnriched } from '../components/KpiCardEnriched'
 import { PeriodSelector } from '../components/PeriodSelector'
+import { useSonIA, type SonIAInsight } from '@/components/sonia/SonIAContext'
 
 // ── Helpers ───────────────────────────────────────────────────
 
@@ -68,6 +69,17 @@ export default function ComercialPage() {
     queryFn: () => analiseService.comercial(period.year, period.month),
     staleTime: 60_000,
   })
+
+  const { publish, clear } = useSonIA()
+  useEffect(() => {
+    if (!query.data) return
+    publish({
+      pageKey: '/analise/comercial',
+      pageTitle: 'Análise Comercial',
+      data: { insight: buildAnaliseComercialInsight(query.data) },
+    })
+    return () => clear('/analise/comercial')
+  }, [query.data, publish, clear])
 
   return (
     <PageContainer>
@@ -113,8 +125,6 @@ function Body({ data }: { data: AnaliseComercialResponse }) {
           progress={consultas.partial_progress ?? 0}
         />
       )}
-
-      <AIInsightsSection year={data.period.year} month={data.period.month} />
 
       {/* KPIs principais — 4 cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
@@ -289,6 +299,80 @@ function SaudeAgendaCard({ data }: { data: SaudeAgendaSection }) {
   )
 }
 
+// ── Insight pra SonIA ─────────────────────────────────────────
+
+function buildAnaliseComercialInsight(data: AnaliseComercialResponse): SonIAInsight {
+  const cons = data.kpis.consultas
+  const abs = data.kpis.absenteismo_pct
+  const conv = data.kpis.conversao_consulta_orcamento_pct
+  const pac = data.kpis.pacientes_unicos
+
+  // Mês em andamento: suprimir MoM e mostrar projeção quando disponível.
+  if (cons.is_partial) {
+    const days = cons.partial_days ?? 0
+    const total = cons.partial_days_in_month ?? 30
+    const pctMes = total > 0 ? Math.round((days / total) * 100) : 0
+    const proj = cons.projected_label
+
+    // Absenteísmo continua válido (é taxa, não acumulado) — alerta se alto.
+    const absHigh = abs.value !== null && abs.value >= 15
+    return {
+      mood: absHigh ? 'alert' : 'curious',
+      headline: absHigh
+        ? `Olhei o que temos até agora — tenho uma observação.`
+        : `Olhei o que temos de ${data.period.label} até agora.`,
+      detail: absHigh
+        ? `Estamos no dia ${days} de ${total} (${pctMes}% do mês). O absenteísmo está em ${abs.value_label} — um pouco acima do confortável. Vale conversar com a equipe sobre confirmações.`
+        : `Estamos no dia ${days} de ${total} (${pctMes}% do mês). Por enquanto ${cons.value_label} consultas${proj ? `, com projeção de ${proj}` : ''}. Espero o mês fechar pra comparar com confiança.`,
+      bullets: [
+        { text: `${cons.value_label} consultas${proj ? ` · projeção ${proj}` : ''}.`, tone: 'neutral' },
+        { text: `Absenteísmo ${abs.value_label}.`, tone: absHigh ? 'negative' : 'neutral' },
+        { text: `Conversão em orçamento ${conv.value_label}.`, tone: 'neutral' },
+        { text: `Pacientes únicos ${pac.value_label}.`, tone: 'neutral' },
+      ],
+    }
+  }
+
+  const absHigh = abs.value !== null && abs.value >= 15
+  const convDown = conv.mom_pct !== null && conv.mom_pct <= -5
+
+  const mood = absHigh || convDown ? 'alert' : 'curious'
+  const headline = absHigh
+    ? 'Dei uma olhadinha aqui — tem algo pra olharmos juntos.'
+    : convDown
+    ? 'Vi algumas coisas que vale a pena olhar.'
+    : 'Olhei a página com calma.'
+
+  const detail = absHigh
+    ? `O absenteísmo de ${data.period.label} está em ${abs.value_label} — um pouco acima do confortável. Vale conversar com a equipe sobre confirmações.`
+    : convDown
+    ? `A conversão de consulta em orçamento caiu ${Math.abs(conv.mom_pct!).toFixed(1)}% em relação ao mês passado. Quem sabe a gente investiga as últimas oportunidades?`
+    : `${data.period.label} foram ${cons.value_label} consultas atendidas. Trouxe um resumo do que observei.`
+
+  const bullets = [
+    { text: `${cons.value_label} consultas${pctSuffix(cons.mom_pct)}.`, tone: tonePctC(cons.mom_pct, false) },
+    { text: `Absenteísmo ${abs.value_label}${pctSuffix(abs.mom_pct)}.`, tone: tonePctC(abs.mom_pct, true) },
+    { text: `Conversão em orçamento ${conv.value_label}${pctSuffix(conv.mom_pct)}.`, tone: tonePctC(conv.mom_pct, false) },
+    { text: `Pacientes únicos ${pac.value_label}${pctSuffix(pac.mom_pct)}.`, tone: tonePctC(pac.mom_pct, false) },
+  ] as SonIAInsight['bullets']
+
+  return { mood, headline, detail, bullets }
+}
+
+function pctSuffix(p: number | null): string {
+  if (p === null) return ''
+  const sign = p > 0 ? '+' : ''
+  return ` (${sign}${p.toFixed(1)}% vs mês passado)`
+}
+
+function tonePctC(p: number | null, inverse: boolean): 'positive' | 'negative' | 'neutral' | 'warning' {
+  if (p === null) return 'neutral'
+  if (Math.abs(p) < 2) return 'neutral'
+  const positivo = inverse ? p < 0 : p > 0
+  if (positivo) return 'positive'
+  return Math.abs(p) >= 10 ? 'negative' : 'warning'
+}
+
 // ── Banner mês parcial ────────────────────────────────────────
 
 function PartialMonthBanner({
@@ -304,89 +388,6 @@ function PartialMonthBanner({
       <span className="text-sky-700/80 ml-auto hidden sm:block">
         Volumes mostram acumulado parcial; KPIs comparam projeção do ritmo atual.
       </span>
-    </div>
-  )
-}
-
-// ── Insights via IA ───────────────────────────────────────────
-
-function AIInsightsSection({ year, month }: { year: number; month: number }) {
-  const mutation = useMutation({
-    mutationFn: () => analiseService.comercialAIInsights(year, month),
-  })
-
-  const key = `${year}-${month}`
-  const [lastKey, setLastKey] = useState(key)
-  if (lastKey !== key) {
-    setLastKey(key)
-    mutation.reset()
-  }
-
-  const lines = mutation.data?.narrative
-    ? mutation.data.narrative
-        .split('\n')
-        .map((l) => l.trim())
-        .filter((l) => l.length > 0)
-    : []
-
-  return (
-    <div className="bg-gradient-to-br from-violet-50/70 to-fuchsia-50/40 border border-violet-200 rounded-xl p-4">
-      <div className="flex items-center justify-between gap-3 mb-3 flex-wrap">
-        <div className="flex items-center gap-2">
-          <BrainCircuit size={14} className="text-violet-600" />
-          <span className="text-[11px] uppercase tracking-wider font-bold text-violet-800">
-            Insights estratégicos com IA
-          </span>
-          {mutation.data && (
-            <span className="text-[10px] text-violet-500 font-mono">
-              · {mutation.data.model}
-            </span>
-          )}
-        </div>
-        <button
-          onClick={() => mutation.mutate()}
-          disabled={mutation.isPending}
-          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-violet-600 hover:bg-violet-700 disabled:bg-violet-300 text-white text-[12px] font-semibold transition-colors"
-        >
-          {mutation.isPending ? (
-            <>
-              <Loader2 size={12} className="animate-spin" /> Gerando...
-            </>
-          ) : (
-            <>
-              <Sparkles size={12} /> {mutation.data ? 'Regenerar' : 'Gerar com IA'}
-            </>
-          )}
-        </button>
-      </div>
-
-      {!mutation.data && !mutation.isPending && !mutation.isError && (
-        <div className="text-[12px] text-violet-700/80 leading-relaxed">
-          Clique em <span className="font-semibold">Gerar com IA</span> para análise cruzada
-          das dimensões comerciais (consultas, conversão, procedimentos, profissionais).
-        </div>
-      )}
-
-      {mutation.isError && (
-        <div className="text-[12px] text-rose-700 bg-rose-50 border border-rose-200 rounded-md px-3 py-2">
-          Falha ao gerar insights:{' '}
-          {(mutation.error as { response?: { data?: { detail?: string } }; message?: string })
-            ?.response?.data?.detail ||
-            (mutation.error as Error)?.message ||
-            'erro desconhecido'}
-        </div>
-      )}
-
-      {lines.length > 0 && (
-        <ul className="space-y-1.5 text-[13px] text-neutral-800 leading-relaxed">
-          {lines.map((line, i) => (
-            <li key={i} className="flex items-start gap-2">
-              <span className="w-1.5 h-1.5 rounded-full bg-violet-500 mt-2 shrink-0" />
-              <span>{line}</span>
-            </li>
-          ))}
-        </ul>
-      )}
     </div>
   )
 }

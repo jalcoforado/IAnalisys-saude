@@ -11,11 +11,11 @@
  * 6. Top profissionais + Top categorias
  * 7. Saúde de recebíveis
  */
-import { useState } from 'react'
-import { useMutation, useQuery } from '@tanstack/react-query'
+import { useEffect, useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import {
-  BarChart3, BrainCircuit, CalendarClock, ChevronDown, ChevronRight, Clock, DollarSign,
-  FileText, HandCoins, Loader2, Scissors, Search, Sparkles, Target, TrendingUp, Zap,
+  BarChart3, CalendarClock, ChevronDown, ChevronRight, Clock, DollarSign,
+  FileText, HandCoins, Loader2, Scissors, Search, Target, TrendingUp, Zap,
 } from 'lucide-react'
 import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, Legend, CartesianGrid,
@@ -33,6 +33,7 @@ import type {
 
 import { KpiCardEnriched } from '../components/KpiCardEnriched'
 import { PeriodSelector } from '../components/PeriodSelector'
+import { useSonIA, type SonIAInsight } from '@/components/sonia/SonIAContext'
 import { CustoAdquirenciaCard } from './CustoAdquirenciaCard'
 import PrazoAuditModal from './PrazoAuditModal'
 
@@ -75,6 +76,17 @@ export default function FinanceiroPage() {
     queryFn: () => analiseService.financeiro(period.year, period.month),
     staleTime: 5 * 60_000,  // 5min
   })
+
+  const { publish, clear } = useSonIA()
+  useEffect(() => {
+    if (!q.data) return
+    publish({
+      pageKey: '/analise/financeiro',
+      pageTitle: 'Análise Financeira',
+      data: { insight: buildAnaliseFinanceiroInsight(q.data) },
+    })
+    return () => clear('/analise/financeiro')
+  }, [q.data, publish, clear])
 
   return (
     <PageContainer>
@@ -126,9 +138,6 @@ function Body({ data }: { data: AnaliseFinanceiroResponse }) {
           progress={fat.partial_progress ?? 0}
         />
       )}
-
-      {/* Insights estratégicos via IA — chamada explícita por clique */}
-      <AIInsightsSection year={data.period.year} month={data.period.month} />
 
       {/* KPIs principais — 4 cards (Inadimplência foi pra Fluxo de Caixa) */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
@@ -209,6 +218,76 @@ function Body({ data }: { data: AnaliseFinanceiroResponse }) {
   )
 }
 
+// ── Insight pra SonIA ─────────────────────────────────────────
+
+function buildAnaliseFinanceiroInsight(data: AnaliseFinanceiroResponse): SonIAInsight {
+  const fat = data.kpis.faturamento
+  const conv = data.kpis.conversao
+  const tk = data.kpis.ticket_medio
+  const rec = data.kpis.recebido
+
+  // Mês em andamento: comparar parcial com mês fechado distorce TUDO.
+  // Backend já marca is_partial e fornece projeção — usamos isso.
+  if (fat.is_partial) {
+    const days = fat.partial_days ?? 0
+    const total = fat.partial_days_in_month ?? 30
+    const pctMes = total > 0 ? Math.round((days / total) * 100) : 0
+    const proj = fat.projected_label
+
+    return {
+      mood: 'curious',
+      headline: `Olhei o que temos de ${data.period.label} até agora.`,
+      detail: `Estamos no dia ${days} de ${total} (${pctMes}% do mês). Por enquanto o faturamento parcial é ${fat.value_label}${proj ? `, com projeção de ${proj} no ritmo atual` : ''}. Vou esperar o mês fechar pra trazer comparações com confiança.`,
+      bullets: [
+        { text: `Faturamento parcial ${fat.value_label}${proj ? ` · projeção ${proj}` : ''}.`, tone: 'neutral' },
+        { text: `Conversão ${conv.value_label} (sobre o que já foi atendido).`, tone: 'neutral' },
+        { text: `Ticket médio ${tk.value_label}.`, tone: 'neutral' },
+        { text: `Recebido (caixa) ${rec.value_label}.`, tone: 'neutral' },
+      ],
+    }
+  }
+
+  const momPct = fat.mom_pct
+  const positivaSubida = momPct !== null && momPct >= 5
+  const queda = momPct !== null && momPct <= -5
+
+  const mood = queda ? 'alert' : positivaSubida ? 'happy' : 'curious'
+  const headline = queda
+    ? 'Dei uma olhadinha e queria te contar.'
+    : positivaSubida
+    ? 'Olha que notícia boa.'
+    : 'Olhei a página com calma.'
+
+  const detail = queda
+    ? `O faturamento de ${data.period.label} ficou em ${fat.value_label}, ${momPct!.toFixed(1)}% abaixo do mês anterior. Vale a pena olhar com mais carinho.`
+    : positivaSubida
+    ? `O faturamento de ${data.period.label} foi ${fat.value_label}, com alta de ${momPct!.toFixed(1)}% sobre o mês anterior. A equipe está em ritmo bonito.`
+    : `O faturamento de ${data.period.label} está em ${fat.value_label}. Trouxe aqui um resumo do que observei.`
+
+  const bullets = [
+    { text: `Faturamento ${fat.value_label}${momLabel(fat.mom_pct)}.`, tone: tonePct(fat.mom_pct, fat.is_inverse) },
+    { text: `Conversão ${conv.value_label}${momLabel(conv.mom_pct)}.`, tone: tonePct(conv.mom_pct, conv.is_inverse) },
+    { text: `Ticket médio ${tk.value_label}${momLabel(tk.mom_pct)}.`, tone: tonePct(tk.mom_pct, tk.is_inverse) },
+    { text: `Recebido (caixa) ${rec.value_label}${momLabel(rec.mom_pct)}.`, tone: tonePct(rec.mom_pct, rec.is_inverse) },
+  ] as SonIAInsight['bullets']
+
+  return { mood, headline, detail, bullets }
+}
+
+function momLabel(p: number | null): string {
+  if (p === null) return ''
+  const sign = p > 0 ? '+' : ''
+  return ` (${sign}${p.toFixed(1)}% vs mês passado)`
+}
+
+function tonePct(p: number | null, inverse: boolean): 'positive' | 'negative' | 'neutral' | 'warning' {
+  if (p === null) return 'neutral'
+  if (Math.abs(p) < 2) return 'neutral'
+  const positivo = inverse ? p < 0 : p > 0
+  if (positivo) return 'positive'
+  return Math.abs(p) >= 10 ? 'negative' : 'warning'
+}
+
 // ── Banner mês parcial ────────────────────────────────────────
 
 function PartialMonthBanner({
@@ -224,93 +303,6 @@ function PartialMonthBanner({
       <span className="text-sky-700/80 ml-auto hidden sm:block">
         Comparativos e médias usam projeção do ritmo atual.
       </span>
-    </div>
-  )
-}
-
-// ── Insights via IA (sob demanda, clique do usuário) ──────────
-
-function AIInsightsSection({ year, month }: { year: number; month: number }) {
-  const mutation = useMutation({
-    mutationFn: () => analiseService.financeiroAIInsights(year, month),
-  })
-
-  // Reset ao trocar de mês
-  const key = `${year}-${month}`
-  const [lastKey, setLastKey] = useState(key)
-  if (lastKey !== key) {
-    setLastKey(key)
-    mutation.reset()
-  }
-
-  const lines = mutation.data?.narrative
-    ? mutation.data.narrative
-        .split('\n')
-        .map((l) => l.trim())
-        .filter((l) => l.length > 0)
-    : []
-
-  return (
-    <div className="bg-gradient-to-br from-violet-50/70 to-fuchsia-50/40 border border-violet-200 rounded-xl p-4">
-      <div className="flex items-center justify-between gap-3 mb-3 flex-wrap">
-        <div className="flex items-center gap-2">
-          <BrainCircuit size={14} className="text-violet-600" />
-          <span className="text-[11px] uppercase tracking-wider font-bold text-violet-800">
-            Insights estratégicos com IA
-          </span>
-          {mutation.data && (
-            <span className="text-[10px] text-violet-500 font-mono">
-              · {mutation.data.model}
-            </span>
-          )}
-        </div>
-        <button
-          onClick={() => mutation.mutate()}
-          disabled={mutation.isPending}
-          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-violet-600 hover:bg-violet-700 disabled:bg-violet-300 text-white text-[12px] font-semibold transition-colors"
-        >
-          {mutation.isPending ? (
-            <>
-              <Loader2 size={12} className="animate-spin" />
-              Gerando...
-            </>
-          ) : (
-            <>
-              <Sparkles size={12} />
-              {mutation.data ? 'Regenerar' : 'Gerar com IA'}
-            </>
-          )}
-        </button>
-      </div>
-
-      {!mutation.data && !mutation.isPending && !mutation.isError && (
-        <div className="text-[12px] text-violet-700/80 leading-relaxed">
-          Clique em <span className="font-semibold">Gerar com IA</span> para análise cruzada
-          das dimensões (faturamento, mix, conversão, profissionais) — chamada paga,
-          executada apenas sob demanda.
-        </div>
-      )}
-
-      {mutation.isError && (
-        <div className="text-[12px] text-rose-700 bg-rose-50 border border-rose-200 rounded-md px-3 py-2">
-          Falha ao gerar insights:{' '}
-          {(mutation.error as { response?: { data?: { detail?: string } }; message?: string })
-            ?.response?.data?.detail ||
-            (mutation.error as Error)?.message ||
-            'erro desconhecido'}
-        </div>
-      )}
-
-      {lines.length > 0 && (
-        <ul className="space-y-1.5 text-[13px] text-neutral-800 leading-relaxed">
-          {lines.map((line, i) => (
-            <li key={i} className="flex items-start gap-2">
-              <span className="w-1.5 h-1.5 rounded-full bg-violet-500 mt-2 shrink-0" />
-              <span>{line}</span>
-            </li>
-          ))}
-        </ul>
-      )}
     </div>
   )
 }

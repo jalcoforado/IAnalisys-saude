@@ -8,9 +8,7 @@
  * (IA Anthropic) estiver pronto, este card vira a "view" e a IA gera prosa
  * narrativa por cima destes números.
  */
-import { Sparkles, Clock, Users, Loader2, RefreshCw, AlertTriangle } from 'lucide-react'
-import { useMutation } from '@tanstack/react-query'
-import { useState } from 'react'
+import { Sparkles, Clock, Users } from 'lucide-react'
 import type { AgendaSection } from '@/types/home'
 import {
   STATUS_LABEL,
@@ -18,7 +16,6 @@ import {
   CATEGORY_GROUP_LABEL,
 } from './helpers'
 import type { CategoryGroup, StatusType } from '@/types/home'
-import { homeService, type AgendaAISummaryResponse } from '@/services/home.service'
 
 const fmtMin = (m: number) => {
   if (m >= 60) {
@@ -45,82 +42,6 @@ const CATEGORY_DOT: Record<CategoryGroup, string> = {
   ortodontia: 'bg-pink-500',
   bloqueio: 'bg-red-500',
   outro: 'bg-neutral-400',
-}
-
-function AINarrative() {
-  const [generated, setGenerated] = useState<AgendaAISummaryResponse | null>(null)
-  const mut = useMutation({
-    mutationFn: () => homeService.agendaAISummary(),
-    onSuccess: (data) => setGenerated(data),
-  })
-
-  const errMsg = mut.error
-    ? (mut.error as { response?: { data?: { detail?: string } } }).response?.data?.detail
-        ?? (mut.error as Error).message
-    : null
-
-  return (
-    <div className="border-t border-neutral-200 px-4 py-3 bg-gradient-to-br from-purple-50/40 to-pink-50/30">
-      <div className="flex items-center gap-2 mb-2">
-        <Sparkles size={14} className="text-purple-600" />
-        <span className="text-[10px] uppercase tracking-wide font-semibold text-neutral-500">
-          Análise da agenda
-        </span>
-        {generated && (
-          <button
-            onClick={() => mut.mutate()}
-            disabled={mut.isPending}
-            className="ml-auto text-[10px] inline-flex items-center gap-1 text-purple-700 hover:text-purple-900 font-medium"
-          >
-            {mut.isPending ? <Loader2 size={11} className="animate-spin" /> : <RefreshCw size={11} />}
-            Atualizar
-          </button>
-        )}
-      </div>
-
-      {!generated && !mut.isPending && !errMsg && (
-        <button
-          onClick={() => mut.mutate()}
-          className="w-full text-left px-3 py-2.5 rounded-lg border border-dashed border-purple-300 bg-white/70 hover:bg-white hover:border-purple-400 transition-all text-[12px] text-neutral-600 flex items-center gap-2"
-        >
-          <Sparkles size={14} className="text-purple-600 shrink-0" />
-          <span>Gerar análise IA dos próximos 3 dias (Claude)</span>
-        </button>
-      )}
-
-      {mut.isPending && (
-        <div className="flex items-center gap-2 text-[12px] text-neutral-600 px-3 py-2.5">
-          <Loader2 size={14} className="animate-spin text-purple-600" />
-          Gerando análise…
-        </div>
-      )}
-
-      {errMsg && !mut.isPending && (
-        <div className="px-3 py-2.5 rounded-lg border border-amber-300 bg-amber-50 text-[12px] text-amber-800 flex items-start gap-2">
-          <AlertTriangle size={14} className="shrink-0 mt-0.5" />
-          <div className="flex-1">
-            <div className="font-semibold mb-0.5">Não consegui gerar agora</div>
-            <div className="text-amber-700">{errMsg}</div>
-            <button
-              onClick={() => mut.mutate()}
-              className="mt-1.5 text-amber-900 hover:text-amber-950 font-medium underline"
-            >
-              Tentar de novo
-            </button>
-          </div>
-        </div>
-      )}
-
-      {generated && !mut.isPending && (
-        <div className="px-3 py-2.5 rounded-lg bg-white/80 border border-purple-200 text-[12.5px] text-neutral-800 leading-relaxed whitespace-pre-line">
-          {generated.narrative}
-          <div className="mt-1.5 text-[9px] uppercase tracking-wider text-neutral-400">
-            via {generated.model}
-          </div>
-        </div>
-      )}
-    </div>
-  )
 }
 
 export function AgendaInsightsCard({ data }: { data: AgendaSection }) {
@@ -168,9 +89,6 @@ export function AgendaInsightsCard({ data }: { data: AgendaSection }) {
           <div className="text-[11px] text-neutral-500">Análise automática · {total} consultas</div>
         </div>
       </div>
-
-      {/* Bloco IA: prosa narrativa gerada sob demanda (Sub-PR 17b) */}
-      <AINarrative />
 
       {/* Bloco 1: KPIs */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-0 divide-y sm:divide-y-0 sm:divide-x divide-neutral-100">
