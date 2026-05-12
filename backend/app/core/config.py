@@ -68,6 +68,21 @@ class Settings(BaseSettings):
     # depth pra análise mas custa ~5x mais. Trocar via env sem redeploy.
     ANTHROPIC_MODEL: str = "claude-haiku-4-5-20251001"
 
+    # Meta Graph API — Sub-PR 21b/c. Token + IDs por tenant ficam em
+    # `stg_meta_tokens` (multi-tenant); aqui só fica versão da Graph.
+    META_GRAPH_API_VERSION: str = "v19.0"
+
+    @property
+    def META_GRAPH_URL(self) -> str:
+        return f"https://graph.facebook.com/{self.META_GRAPH_API_VERSION}"
+
+    # DeepSeek — IA narrativa da SonIA (FAB de insights por página).
+    # API compatível com OpenAI. ~13× mais barato que Sonnet 4.6.
+    # Modelos: `deepseek-chat` (V3, padrão) ou `deepseek-reasoner` (R1, raciocínio).
+    DEEPSEEK_API_KEY: str = ""
+    DEEPSEEK_API_URL: str = "https://api.deepseek.com/v1"
+    DEEPSEEK_MODEL: str = "deepseek-chat"
+
     class Config:
         env_file = ".env"
         case_sensitive = True

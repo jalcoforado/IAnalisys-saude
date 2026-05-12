@@ -1,12 +1,45 @@
-import type { SonIAInsight, SonIAPagePublication } from './SonIAContext'
+import api from '@/services/api'
+import type { SonIABullet, SonIAInsight, SonIAPagePublication } from './SonIAContext'
 
 /**
- * Análise heurística por página. Hoje cada página passa `data.insight`
- * pronto (regra simples no front); na Fase 7 substituímos por chamada
- * `/ai/insight?page={pageKey}` no backend, mantendo a mesma interface.
+ * Análise da SonIA — entry point chamado pelo FAB ao abrir.
+ *
+ * Fluxo:
+ *  1. Tenta endpoint `GET /ai/insight?page_key=...&year=...&month=...`
+ *     - 200 → usa a resposta da IA (DeepSeek ou Claude no backend)
+ *     - 404 → backend não tem provedor de IA ou página não suportada
+ *     - 4xx/5xx/rede → idem
+ *  2. Fallback: usa `publication.data.insight` (heurística calculada na própria página)
+ *  3. Se nada disponível → texto default acolhedor
+ *
+ * O `period` (year/month) vem do `publication.data.period`. Páginas com
+ * PeriodSelector devem publicar isso; páginas "do dia" (Agenda, Início)
+ * podem omitir — caímos pra mês atual.
  */
 
 const SOURCE_HEURISTIC = 'Heurístico'
+
+interface ApiInsightResponse {
+  mood: SonIAInsight['mood']
+  headline: string
+  detail: string
+  bullets?: { text: string; tone?: SonIABullet['tone'] }[]
+  cta_href?: string | null
+  cta_label?: string | null
+  source: string
+}
+
+function apiToInsight(api: ApiInsightResponse): SonIAInsight {
+  return {
+    mood: api.mood,
+    headline: api.headline,
+    detail: api.detail,
+    bullets: api.bullets?.map((b) => ({ text: b.text, tone: b.tone })),
+    ctaHref: api.cta_href ?? undefined,
+    ctaLabel: api.cta_label ?? undefined,
+    source: api.source,
+  }
+}
 
 function defaultInsight(pageTitle?: string): SonIAInsight {
   return {
@@ -28,12 +61,31 @@ function emptyInsight(): SonIAInsight {
   }
 }
 
-/** Entry point — chamado pelo FAB ao abrir. */
-export function analyze(publication: SonIAPagePublication | null): SonIAInsight {
-  if (!publication) return emptyInsight()
+function localFallback(publication: SonIAPagePublication): SonIAInsight {
   const data = publication.data as { insight?: SonIAInsight } | undefined | null
-  if (data && data.insight) {
+  if (data?.insight) {
     return { source: SOURCE_HEURISTIC, ...data.insight }
   }
   return defaultInsight(publication.pageTitle)
+}
+
+export async function analyze(publication: SonIAPagePublication | null): Promise<SonIAInsight> {
+  if (!publication) return emptyInsight()
+
+  // Period: prioridade pra o que a página publicou; senão usa "hoje".
+  const data = publication.data as { period?: { year: number; month: number } } | undefined | null
+  const now = new Date()
+  const year = data?.period?.year ?? now.getFullYear()
+  const month = data?.period?.month ?? now.getMonth() + 1
+
+  try {
+    const res = await api.get<ApiInsightResponse>('/ai/insight', {
+      params: { page_key: publication.pageKey, year, month },
+    })
+    return apiToInsight(res.data)
+  } catch {
+    // 404 (página não suportada / IA indisponível) ou erro transitório.
+    // Cai pra heurística local sem mostrar erro ao usuário.
+    return localFallback(publication)
+  }
 }

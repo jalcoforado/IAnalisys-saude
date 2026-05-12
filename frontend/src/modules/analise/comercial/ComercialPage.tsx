@@ -76,7 +76,10 @@ export default function ComercialPage() {
     publish({
       pageKey: '/analise/comercial',
       pageTitle: 'Análise Comercial',
-      data: { insight: buildAnaliseComercialInsight(query.data) },
+      data: {
+        insight: buildAnaliseComercialInsight(query.data),
+        period: { year: query.data.period.year, month: query.data.period.month },
+      },
     })
     return () => clear('/analise/comercial')
   }, [query.data, publish, clear])

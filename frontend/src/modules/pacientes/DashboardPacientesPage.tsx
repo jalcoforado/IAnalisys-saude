@@ -85,7 +85,10 @@ export default function PacientesPage() {
     publish({
       pageKey: '/pacientes',
       pageTitle: 'Análise de Pacientes',
-      data: { insight: buildPacientesInsight(query.data) },
+      data: {
+        insight: buildPacientesInsight(query.data),
+        period: { year: query.data.period.year, month: query.data.period.month },
+      },
     })
     return () => clear('/pacientes')
   }, [query.data, publish, clear])

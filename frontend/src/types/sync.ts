@@ -1,4 +1,4 @@
-export type SyncSource = 'clinicorp' | 'contaazul'
+export type SyncSource = 'clinicorp' | 'contaazul' | 'meta'
 
 export type SyncEntity =
   // Estáticas

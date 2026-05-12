@@ -119,7 +119,10 @@ export default function FinanceiroPage() {
     publish({
       pageKey: '/financeiro',
       pageTitle: 'Fluxo de Caixa',
-      data: { insight: buildFluxoCaixaInsight(query.data) },
+      data: {
+        insight: buildFluxoCaixaInsight(query.data),
+        period: { year: query.data.period.year, month: query.data.period.month },
+      },
     })
     return () => clear('/financeiro')
   }, [query.data, publish, clear])

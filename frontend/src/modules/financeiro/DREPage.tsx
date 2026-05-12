@@ -30,7 +30,6 @@ import type {
   DreBlock,
   DreCategoriaItem,
   DreGrupoItem,
-  DreSubgrupoItem,
 } from '@/types/financeiro'
 
 // ── Helpers ───────────────────────────────────────────────────
@@ -75,7 +74,10 @@ export default function DREPage() {
     publish({
       pageKey: '/financeiro/dre',
       pageTitle: 'DRE Estruturada',
-      data: { insight: buildDREInsight(query.data) },
+      data: {
+        insight: buildDREInsight(query.data),
+        period: { year: query.data.period.year, month: query.data.period.month },
+      },
     })
     return () => clear('/financeiro/dre')
   }, [query.data, publish, clear])

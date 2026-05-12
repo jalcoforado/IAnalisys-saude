@@ -17,6 +17,7 @@ import {
   type SyncSource,
 } from '@/types/sync'
 import { SyncProviderPanel, type SyncProviderConfig } from './SyncProviderPanel'
+import { MetaSyncPanel } from './MetaSyncPanel'
 
 const CLINICORP_CONFIG: SyncProviderConfig = {
   source: 'clinicorp',
@@ -56,9 +57,10 @@ const CONTAAZUL_CONFIG: SyncProviderConfig = {
   // precisa rebuildar isolado.
 }
 
-const TABS: { key: SyncSource; label: string; subtitle: string; config: SyncProviderConfig }[] = [
+const TABS: { key: SyncSource; label: string; subtitle: string; config: SyncProviderConfig | null }[] = [
   { key: 'clinicorp', label: 'Clinicorp', subtitle: 'agenda · pacientes · receitas · profissionais', config: CLINICORP_CONFIG },
   { key: 'contaazul', label: 'Conta Azul', subtitle: 'pessoas · produtos · serviços · categorias · centros de custo · financeiro · saldos bancários', config: CONTAAZUL_CONFIG },
+  { key: 'meta', label: 'Meta', subtitle: 'Instagram · Facebook · Pixel · Ads (pendente TI)', config: null },
 ]
 
 
@@ -105,7 +107,9 @@ export default function SyncPage() {
       {activeKey === 'contaazul' && <ContaAzulConnectedBanner />}
 
       {/* Panel */}
-      <SyncProviderPanel key={active.key} config={active.config} />
+      {activeKey === 'meta'
+        ? <MetaSyncPanel />
+        : active.config && <SyncProviderPanel key={active.key} config={active.config} />}
     </PageContainer>
   )
 }

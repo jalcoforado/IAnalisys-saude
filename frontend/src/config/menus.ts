@@ -1,5 +1,6 @@
 import type { LucideIcon } from 'lucide-react'
 import {
+  Activity,
   BarChart3,
   Building2,
   Calendar,
@@ -11,6 +12,7 @@ import {
   ShieldCheck,
   Sparkles,
   Stethoscope,
+  TrendingUp,
   Users,
   UserPlus,
   Wallet,
@@ -77,6 +79,14 @@ export const MAIN_MENU: MenuItem[] = [
     permission: 'agenda.read',
   },
   {
+    label: 'Marketing',
+    icon: Activity,
+    permission: 'empresa.settings.read',
+    children: [
+      { label: 'Visão Geral', icon: TrendingUp, path: '/marketing/visao-geral', permission: 'empresa.settings.read' },
+    ],
+  },
+  {
     label: 'Clínico',
     icon: Stethoscope,
     comingSoon: true,
@@ -96,6 +106,7 @@ export const MAIN_MENU: MenuItem[] = [
       { label: 'Empresa', icon: Building2, path: '/empresa/configuracoes', permission: 'empresa.settings.read' },
       { label: 'Usuários', icon: Users, path: '/empresa/usuarios', permission: 'usuarios.read' },
       { label: 'Permissões', icon: ShieldCheck, path: '/empresa/permissoes', permission: 'empresa.permissions.manage' },
+      { label: 'Meta (IG · FB · Ads)', icon: Activity, path: '/empresa/meta-config', permission: 'empresa.settings.read' },
       { label: 'Sincronização', icon: RefreshCw, path: '/admin/sync', permission: 'sync.run' },
       { label: 'Preferências', icon: Settings, path: '/configuracoes' },
     ],

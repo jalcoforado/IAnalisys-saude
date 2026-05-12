@@ -83,7 +83,10 @@ export default function FinanceiroPage() {
     publish({
       pageKey: '/analise/financeiro',
       pageTitle: 'Análise Financeira',
-      data: { insight: buildAnaliseFinanceiroInsight(q.data) },
+      data: {
+        insight: buildAnaliseFinanceiroInsight(q.data),
+        period: { year: q.data.period.year, month: q.data.period.month },
+      },
     })
     return () => clear('/analise/financeiro')
   }, [q.data, publish, clear])

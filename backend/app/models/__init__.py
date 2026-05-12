@@ -62,6 +62,26 @@ from app.models.core_contaazul import (
 from app.models.analytics_contaazul import (
     DimPessoaCa, DimCategoriaCa, DimCentroCustoCa, FatoCaixa,
 )
+from app.models.staging_meta import (
+    StgMetaTokens,
+    StgMetaIgPerfil, StgMetaIgPosts, StgMetaIgPostInsights,
+    StgMetaIgAccountInsights, StgMetaIgStories, StgMetaIgComments,
+    StgMetaFbPage, StgMetaFbPosts, StgMetaFbPostInsights, StgMetaFbPageInsights,
+    StgMetaAdsCampaigns, StgMetaAdsAdsets, StgMetaAdsAds,
+    StgMetaAdsInsightsDiario, StgMetaAdsLeadgenForms, StgMetaAdsLeads,
+    StgMetaPixel, StgMetaPixelEventosDiarios,
+)
+from app.models.core_meta import (
+    CoreMetaCanais, CoreMetaPerfis, CoreMetaPixel,
+    CoreMetaPosts, CoreMetaPostMetricasDiarias, CoreMetaComentarios,
+    CoreMetaCampanhas, CoreMetaAdsets, CoreMetaAds,
+    CoreMetaAdMetricasDiarias, CoreMetaLeads,
+)
+from app.models.analytics_meta import (
+    DimCanalMeta, DimCampanhaMeta, DimPostMeta, DimLeadMeta,
+    FatoMetaOrganicoDiario, FatoMetaPagoDiario, FatoMetaFunilDiario,
+    FatoMetaComentario, FatoMetaLeadJornada,
+)
 
 __all__ = [
     "Tenant", "User", "Role", "UserTenant",
@@ -99,4 +119,21 @@ __all__ = [
     "CoreCaEventosFinanceiros", "CoreCaRateio",
     # Analytics Conta Azul
     "DimPessoaCa", "DimCategoriaCa", "DimCentroCustoCa", "FatoCaixa",
+    # Staging Meta
+    "StgMetaTokens",
+    "StgMetaIgPerfil", "StgMetaIgPosts", "StgMetaIgPostInsights",
+    "StgMetaIgAccountInsights", "StgMetaIgStories", "StgMetaIgComments",
+    "StgMetaFbPage", "StgMetaFbPosts", "StgMetaFbPostInsights", "StgMetaFbPageInsights",
+    "StgMetaAdsCampaigns", "StgMetaAdsAdsets", "StgMetaAdsAds",
+    "StgMetaAdsInsightsDiario", "StgMetaAdsLeadgenForms", "StgMetaAdsLeads",
+    "StgMetaPixel", "StgMetaPixelEventosDiarios",
+    # Core Meta
+    "CoreMetaCanais", "CoreMetaPerfis", "CoreMetaPixel",
+    "CoreMetaPosts", "CoreMetaPostMetricasDiarias", "CoreMetaComentarios",
+    "CoreMetaCampanhas", "CoreMetaAdsets", "CoreMetaAds",
+    "CoreMetaAdMetricasDiarias", "CoreMetaLeads",
+    # Analytics Meta
+    "DimCanalMeta", "DimCampanhaMeta", "DimPostMeta", "DimLeadMeta",
+    "FatoMetaOrganicoDiario", "FatoMetaPagoDiario", "FatoMetaFunilDiario",
+    "FatoMetaComentario", "FatoMetaLeadJornada",
 ]

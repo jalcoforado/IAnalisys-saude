@@ -21,6 +21,8 @@ import DashboardPacientesPage from '@/modules/pacientes/DashboardPacientesPage'
 import CaptacaoPage from '@/modules/pacientes/CaptacaoPage'
 import SettingsPage from '@/modules/settings/SettingsPage'
 import CompanySettingsPage from '@/modules/empresa/CompanySettingsPage'
+import MetaConfigPage from '@/modules/empresa/MetaConfigPage'
+import VisaoGeralPage from '@/modules/marketing/VisaoGeralPage'
 import PermissionsPage from '@/modules/empresa/PermissionsPage'
 import UsersPage from '@/modules/empresa/UsersPage'
 import AgendaPage from '@/modules/agenda/AgendaPage'
@@ -183,6 +185,30 @@ function App() {
                   <AppShell>
                     <RequirePermission permission="usuarios.read">
                       <UsersPage />
+                    </RequirePermission>
+                  </AppShell>
+                </PrivateRoute>
+              }
+            />
+            <Route
+              path="/empresa/meta-config"
+              element={
+                <PrivateRoute>
+                  <AppShell>
+                    <RequirePermission permission="empresa.settings.read">
+                      <MetaConfigPage />
+                    </RequirePermission>
+                  </AppShell>
+                </PrivateRoute>
+              }
+            />
+            <Route
+              path="/marketing/visao-geral"
+              element={
+                <PrivateRoute>
+                  <AppShell>
+                    <RequirePermission permission="empresa.settings.read">
+                      <VisaoGeralPage />
                     </RequirePermission>
                   </AppShell>
                 </PrivateRoute>

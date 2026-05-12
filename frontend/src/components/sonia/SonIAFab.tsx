@@ -20,11 +20,18 @@ export default function SonIAFab() {
     if (!open) return
     setAnalyzing(true)
     setInsight(null)
-    const t = setTimeout(() => {
-      setInsight(analyze(publication))
+    let cancelled = false
+    // Mínimo de 700ms pra animação "thinking" parecer natural mesmo
+    // quando a API responde em <100ms (cache hit, por ex.).
+    const minDelay = new Promise<void>((r) => setTimeout(r, 700))
+    Promise.all([analyze(publication), minDelay]).then(([result]) => {
+      if (cancelled) return
+      setInsight(result)
       setAnalyzing(false)
-    }, 700)
-    return () => clearTimeout(t)
+    })
+    return () => {
+      cancelled = true
+    }
   }, [open, publication, bumpToken])
 
   const subtitle = publication?.pageTitle

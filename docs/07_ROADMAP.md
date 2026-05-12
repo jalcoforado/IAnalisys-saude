@@ -1,5 +1,9 @@
 # Roadmap — IAnalisys Saúde
 
+> **🟢 SPRINT RETOMADA EM 2026-05-11 (fim de dia) com foco em REDES SOCIAIS da Parente.** Sub-PR 21 (módulo Meta — IG/FB/Ads/Pixel) entregue em 4 sub-fases (21a→21d) — fundação técnica completa: 39 tabelas, models, cliente Graph, syncs idempotentes, painel `/marketing/visao-geral`. Próxima ação **bloqueada pela TI da Parente** (6 pendências documentadas em `/tmp/meta_discovery/roteiro_ti_parente.md`). Sub-PRs 21e-g (transformações CORE/analytics, IA de comentários, funil lead→consulta) aguardam essas autorizações.
+
+---
+
 ## Sistema de referência analisado
 
 **URL:** https://fprime.analisys.info/parente/  
@@ -910,19 +914,23 @@ Tela única `/empresa/configuracoes` com seções abaixo. Apenas usuários com
 
 ---
 
-### FASE 7 — AI Gateway + Assistente IA
+### FASE 7 — AI Gateway + Assistente IA 🟡 (SonIA MVP funcional · Gateway formal pendente)
 
 **Objetivo:** Usuário pergunta, sistema responde com dados reais, controlados.
 
+**Status 2026-05-11 (working tree, NÃO commitado):** SonIA com LLM real (DeepSeek primary + Claude Haiku fallback) entregue em 6 páginas via `app/services/sonia_insight_service.py` + rota `GET /api/v1/ai/insight`. Cada página tem snapshot builder próprio que monta KPIs heroes + 2-3 secundários aleatórios; LLM recebe contexto com 3 ângulos de comparação (MoM + YoY + média 6m + flag >2σ) e devolve `SonIAInsightDTO` validado. Frontend cai pra heurística quando API retorna 404.
+
 #### AI Gateway (backend)
 
-- [ ] Roteador de modelo: perguntas simples → DeepSeek, análise executiva → Claude
-- [ ] Pré-processamento: classifica a pergunta
-- [ ] Query engine: monta query controlada em fato_*/dim_*
-- [ ] Injeção de contexto: injeta dados reais no prompt
-- [ ] Pós-processamento: formata resposta
-- [ ] Controle de tokens: debita do limite do tenant
-- [ ] Log de uso: `ai_usage_logs` com tokens_in, tokens_out, custo, modelo
+- [x] **Service `sonia_insight_service.py`** com provider routing (DeepSeek → Claude Haiku → None)
+- [x] **Schema Pydantic** `SonIAInsightDTO` com Literal types + aliases sanitization (`_TONE_ALIASES`, `_MOOD_ALIASES`)
+- [x] **DeepSeek client** (`app/integrations/deepseek/`) httpx async com retry/backoff + `response_format: json_object`
+- [x] **Snapshots por página** (6 builders): `_snapshot_analise_financeiro`, `_snapshot_analise_comercial`, `_snapshot_fluxo_caixa`, `_snapshot_dre`, `_snapshot_analise_pacientes`, `_snapshot_agenda`
+- [x] **Heroes + secundários aleatórios** (pool de ~11 KPIs por página, N=3 random por chamada) — gera variedade
+- [x] **Mês parcial** suprimido (sparkline_12m + projected_value evita MoM enganoso)
+- [ ] AI Gateway **formal** (controle de tokens por tenant, log de uso `ai_usage_logs`) — pendente
+- [ ] Query engine que monta queries livres em `fato_*/dim_*` (hoje cada snapshot busca direto via service específico)
+- [ ] Pré-processamento que classifica pergunta (hoje é roteamento estático por `page_key`)
 
 #### Tipos de perguntas suportadas (MVP)
 
@@ -998,11 +1006,14 @@ A IA do sistema é personificada como **SonIA** — grafia destacando `IA` (Sôn
 - `AINarrative` ("Gerar análise IA dos próximos 3 dias") de /agenda
 - `BannerChoque` ("⚡ você está perdendo dado de marketing") de /pacientes/captacao
 
-**Próximos passos (Fase 7)**:
-- Plugar LLM real no FAB — endpoint `/ai/insight?page=...` com Sonnet 4.6
-- Página dedicada `/sonia` (chat conversacional multi-turn) com Opus 4.7
-- Recortar fundo dos PNGs via remove.bg + variar visual quando avatar grande
-- Cache por sessão (mesmo page + filtros = mesmo insight por 5min)
+**Próximos passos (Fase 7)** — ao retomar:
+- ✅ **LLM real no FAB** — endpoint `GET /ai/insight?page_key=&year=&month=` com **DeepSeek primary + Claude Haiku fallback** (não Sonnet — escolha de custo, Pedro pediu DeepSeek free tier). Working tree, **não commitado**.
+- [ ] Commit consolidado das mudanças SonIA + DeepSeek
+- [ ] Investigar sync CA abr/2026 (R$ 92 entradas é irreal — fonte vazia, não bug IA)
+- [ ] Página dedicada `/sonia` (chat conversacional multi-turn) com Opus 4.7 — adiada
+- [ ] Recortar fundo dos PNGs via remove.bg + variar visual quando avatar grande
+- [ ] Cache por sessão (mesmo page + filtros = mesmo insight por 5min)
+- [ ] AI Gateway formal (controle de tokens por tenant, log de uso)
 
 **Pendências de UI conhecidas (não-bloqueantes)**:
 - Avatares ainda têm fundo (escritório + hologramas) e marca d'água ✦ do Gemini no canto. Pedro adiou recorte transparente.
@@ -1013,10 +1024,10 @@ A IA do sistema é personificada como **SonIA** — grafia destacando `IA` (Sôn
 
 Duas superfícies distintas, mesma persona:
 
-| Superfície | Escopo | Modelo recomendado | Status |
+| Superfície | Escopo | Modelo em uso (2026-05-11) | Status |
 |---|---|---|---|
-| **FAB contextual** (canto inferior direito, sempre presente) | Insight rápido sobre a página atual (1 KPI block, ~5-15 métricas). Clique = "varredura" + observação. | **Claude Sonnet 4.6** (~US$ 0,016/insight) | ✅ Estrutura pronta, heurística front · LLM pendente (Fase 7) |
-| **Página `/sonia`** (a criar) | Agente conversacional pleno, multi-turn, análise cross-página, histórico de conversa. | **Claude Opus 4.7 (1M ctx)** | ⏳ Adiada para depois — escopo robusto, depende de AI Gateway |
+| **FAB contextual** (canto inferior direito, sempre presente) | Insight rápido sobre a página atual (1 KPI block, ~5-15 métricas). Clique = "varredura" + observação. | **DeepSeek-Chat** primary (free tier) + **Claude Haiku 4.5** fallback + heurística front se ambos falharem | ✅ **LLM real plugado em 6 páginas** (working tree, não commitado) |
+| **Página `/sonia`** (a criar) | Agente conversacional pleno, multi-turn, análise cross-página, histórico de conversa. | **Claude Opus 4.7 (1M ctx)** | ⏳ Adiada — depende de AI Gateway formal |
 | Tarefas triviais (resumir 1 frase, classificar) | Sub-rotinas internas | **Haiku 4.5** ou **DeepSeek-Chat** | n/a |
 
 **Regra crítica:** Haiku **não** deve fazer análise de números — ele alucina em raciocínio analítico. Sonnet é o piso para qualquer insight com KPIs.
@@ -1045,6 +1056,87 @@ Personalidade: mulher de ~30 anos, **doce, discreta, cordial e gentil**. Reflete
 - Self-reference: "Pode contar comigo", "Sempre por perto"
 
 Detalhe em `feedback_pedro_decisoes` e `project_sonia_persona` (memória).
+
+---
+
+### FASE 9 — Redes Sociais (Meta) 🟡 (foundation 21a-d ✅ · 21e-g bloqueados por TI)
+
+**Objetivo:** Painel executivo de Instagram + Facebook + Ads + Pixel + IA de comentários + funil de leads cruzando com pacientes Clinicorp.
+
+**Inspiração:** módulo existente em https://fprime.analisys.info/pages/meta/painel_executivo2.php?demo=1 (Dr. Plutarco) — referência conceitual, NÃO portado (esse foi feito em React do zero).
+
+**Tokens em produção (Parente Odontologia):**
+- App: IANALISYS (827516216650543) · System User: DashboardToken (122096324289320408)
+- Business: Centro odontologico (1701440180159990) · IG: @parenteodontologia (17841402106581590)
+- FB Page: Parente Odontologia Integrada (764771720299927) · Pixel: 1369627670250088
+- Ad Account: act_781047300441900 (não autorizada)
+
+#### Sub-PR 21a — Foundation (schema + models) ✅ entregue 2026-05-11
+
+**Migrations 0033/0034/0035** — 39 tabelas em 3 camadas:
+- 19 staging (raw JSON audit trail): tokens + IG×6 + FB×4 + Ads×6 + Pixel×2
+- 11 core (relacional limpo): canais lookup + perfis + posts + comentários (11 flags IA) + campanhas + adsets + ads + métricas diárias + leads
+- 9 analytics (star schema): 4 dim + 5 fato (organico_diario, pago_diario, funil_diario, comentario, lead_jornada)
+
+**Models SQLAlchemy** em `backend/app/models/staging_meta.py`, `core_meta.py`, `analytics_meta.py` — 39 classes, todas registradas no `__init__.py`. `alembic check` sem divergências.
+
+#### Sub-PR 21b — UI de Tokens ✅ entregue 2026-05-11
+
+**Backend:**
+- `backend/app/integrations/meta/client.py` — `MetaGraphClient` async (debug_token, get_me, get_my_pages, business, ad_account, pixel)
+- `backend/app/schemas/meta.py` — schemas Pydantic
+- `backend/app/api/v1/routes/meta.py` — `GET /meta/status`, `PUT /meta/token`, `POST /meta/validate`, `DELETE /meta/token`
+
+**Frontend:**
+- `frontend/src/modules/empresa/MetaConfigPage.tsx` — form + StatusBanner + ValidationPanel com semáforo por check
+- Rota `/empresa/meta-config` + item Admin → "Meta (IG · FB · Ads)" no menu
+
+**Validação contra Graph API real validou:**
+- ✅ Token (8 scopes), FB Page, IG auto-vinculado, Business, Pixel
+- ❌ Ad Account #200 (não autorizada — pendência TI)
+- ✅ Pixel encontrado, last_fired 22/04/2024 (parado há 749 dias — pendência TI)
+
+#### Sub-PR 21c — Aba Sync Meta + sync de 3 entidades ✅ entregue 2026-05-11
+
+**Backend:**
+- `MetaSyncService` (sync_ig_profile, sync_ig_media, sync_fb_page, sync_fb_posts, sync_pixel, sync_all_available)
+- Upserts idempotentes via `INSERT ... ON DUPLICATE KEY UPDATE` (mesmo padrão CC/CA — testado 3 rodadas seguidas mantém 1 linha)
+- Endpoints `POST /meta/sync/all` e `POST /meta/sync/{entity}`
+- SyncJobs registrados em `sync_jobs` com `source='meta'` — reusa `/sync/jobs?source=meta` existente
+
+**Frontend:**
+- `MetaSyncPanel.tsx` — mesmo padrão visual de CC/CA: banner de status, grid de 5 cards (2 marcados "TI pendente"), tabela "Últimas execuções" idêntica
+- 3ª aba "Meta" no `/admin/sync` ao lado de Clinicorp/Conta Azul
+
+**Smoke-test real:**
+- ✅ ig_profile: 1 linha em `stg_meta_ig_perfil` (23.501 seguidores, 1.599 posts)
+- ✅ fb_page: 1 linha em `stg_meta_fb_page` (6.594 fãs, "Dentista geral")
+- ✅ pixel: 1 linha em `stg_meta_pixel` (last_fired 22/04/2024)
+- ❌ ig_media: erro `instagram_basic` (TI)
+- ❌ fb_posts: erro `pages_read_engagement` (TI)
+
+#### Sub-PR 21d — Visão Geral Meta ✅ entregue 2026-05-11
+
+**Backend:** `GET /meta/dashboard` lê os 3 snapshots mais recentes + monta checklist dinâmica de 6 pendências TI (cada item somente aparece se o requisito ainda não estiver satisfeito).
+
+**Frontend:** `/marketing/visao-geral` — página executiva com:
+- 3 cards top (IG/FB/Pixel) com dados reais: foto, números grandes, bio, website
+- Card Pixel fica VERMELHO se >365 dias sem disparar
+- Seção "Pendente TI" com 6 itens da checklist
+- Placeholders "Coming soon" para Alcance/Engajamento, Comentários+IA, Funil Ads→Consulta
+- Novo menu lateral "Marketing → Visão Geral"
+
+#### Sub-PR 21e-g — Pendentes (bloqueados por TI)
+
+- **21e (Posts + Insights)** — depende de `instagram_basic` + `instagram_manage_insights` + `read_insights` + `pages_read_engagement`
+- **21f (IA de Comentários)** — depende de `instagram_manage_comments`. Classifica em 11 flags (sentimento, lead_quente, depoimento, duvida_clinica, objecao, reclamacao, procedimento, urgencia, requer_resposta, respondido, horas_para_resposta)
+- **21g (Funil Ads → Consulta)** — depende de autorização Ad Account no BM + reinstalação Pixel. Cruza leads do Meta com pacientes Clinicorp via `telefone_e164`/`email`
+
+**Tarefas que VALEM fazer mesmo sem TI (mantidas como work paralelo):**
+1. Cron diário automático (motor de histórico — sem isso, snapshots diários não acumulam) — ~30min
+2. Botão "exportar checklist TI" na Visão Geral (Pedro cola no WhatsApp da TI) — ~15min
+
+Ambas postergadas para depois ("isso a gente faz em produção" — Pedro 2026-05-12).
 
 ---
 
