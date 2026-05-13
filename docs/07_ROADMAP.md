@@ -1,6 +1,18 @@
 # Roadmap — IAnalisys Saúde
 
-> **🟢 SPRINT RETOMADA EM 2026-05-11 (fim de dia) com foco em REDES SOCIAIS da Parente.** Sub-PR 21 (módulo Meta — IG/FB/Ads/Pixel) entregue em 4 sub-fases (21a→21d) — fundação técnica completa: 39 tabelas, models, cliente Graph, syncs idempotentes, painel `/marketing/visao-geral`. Próxima ação **bloqueada pela TI da Parente** (6 pendências documentadas em `/tmp/meta_discovery/roteiro_ti_parente.md`). Sub-PRs 21e-g (transformações CORE/analytics, IA de comentários, funil lead→consulta) aguardam essas autorizações.
+> **🟢 ATUALIZADO 2026-05-13 — Validação CA completa · MERGE CA+Clinicorp desbloqueado.**
+>
+> **Estado atual:**
+> - Meta foundation (Sub-PR 21a-d) ✅ — Sub-PRs 21e-g bloqueados pela TI Parente
+> - SonIA MVP funcional em 6 páginas com DeepSeek ✅ (commit `ca6ba59` em 12/05)
+> - Sub-PR 20d frontend `/pacientes` ✅ (concluído 09-10/05 · 912 linhas)
+> - **Validação CA × DBF Parente em 6 ondas — 100 % aprovada** ✅ (commit `03d09ab` em 12/05)
+> - **25 categorias órfãs vinculadas ao DRE → 100 % cobertura** ✅ (commit `cb67fa2` em 13/05)
+> - **3 saldos negativos diagnosticados** ✅ — não é bug, é uso real (cofres só pra saída)
+>
+> **🎯 Próxima ação (não-bloqueada):** **MERGE CA + Clinicorp no `/financeiro`** — receitas vêm de Clinicorp `fato_financeiro` (validado), despesas vêm de CA `fato_caixa` (validado). Todas pré-condições atendidas. Detalhes em `reference_ca_uso_real_parente.md` (memória) e `backend/scripts/validacao_ca/PENDENCIAS_TI_RESOLVIDAS.md` (implicações de UI).
+>
+> **Git:** 3 commits ahead do origin/main aguardando push: `ca6ba59` (SonIA+Meta), `03d09ab` (validação CA), `cb67fa2` (resolução pendências TI).
 
 ---
 
@@ -1185,20 +1197,33 @@ Fase 1 ✅ → Fase 2 ✅ → Fase 3 ✅ (staging) → Fase 4 ✅ (OAuth) → Fa
 
 ---
 
-## Próxima ação imediata
+## Próxima ação imediata (2026-05-13)
 
-**PR-12 — Recuperação de senha (Gmail SMTP)** — implementado, em smoke-test pelo Pedro (commit pendente após validação).
+**Sub-PR 22 — Merge CA + Clinicorp no `/financeiro` (refator do DRE consolidado)**
 
-**PR-13 — RBAC granular + CRUD de usuários (DECIDIDO em 2026-05-03)**
+Todas as pré-condições foram atendidas após a validação CA de 12/05 e a resolução das pendências TI em 13/05:
+- ✅ CA despesas validadas ao centavo (commit `03d09ab`)
+- ✅ Clinicorp `fato_financeiro` validado em produção (memória anterior)
+- ✅ 100% cobertura DRE em CA (commit `cb67fa2`)
+- ✅ Saldos negativos diagnosticados (3 contas com −R$ 370k somados — não é bug, é uso real)
 
-Decisão estratégica: fazer ANTES dos demais módulos (Pacientes, Agenda, Clínico, Financeiro, IA), pra que cada módulo novo já nasça protegido. Custo estimado ~2-3 dias; retrofit depois custaria ~1 semana de trabalho mecânico em ~50 endpoints + ~30 telas.
+**Modelo final do `/financeiro`:**
+```
+RECEITAS  ← Clinicorp fato_financeiro WHERE is_received=1  (fonte ÚNICA — CA não baixa 95-98% das receitas)
+DESPESAS  ← CA fato_caixa WHERE tipo='DESPESA'             (validado ao centavo contra Solution)
+DRE       ← receitas Clinicorp (linha única) + despesas CA por categoria DRE
+SALDO     ← consolidado das 10 contas CA, segregando:
+           • "💰 Caixa & bancos disponíveis"  (positivos · R$ 285k)
+           • "⚠️  Pendências registradas"     (cofres negativos · −R$ 370k)
+           • "🏁 Saldo líquido"               (−R$ 85k)
+```
 
-Granularidade do PR-13: **simples** (`modulo.read` + `modulo.write` por módulo). Refinamento (`export`, sub-permissions) vira PR futuro conforme cada módulo amadurece.
-
-Pós-PR-13, decidir entre:
-- Fase 4 Conta Azul completo — staging + transform + unificação financeira
-- Fase 6.2 Módulo Financeiro — só com Clinicorp (sem despesas)
-- Fase 3 sync incremental + APScheduler — automação operacional
+**Próximos passos sugeridos depois do Sub-PR 22:**
+- Cron diário Meta em prod (~30min) + botão "Exportar checklist TI" (~15min) — Pedro decidiu fazer em prod
+- TI Parente destravar 6 pendências Meta → libera Sub-PRs 21e-g
+- PR-15 Etapa 2 — re-discussão drill-down auditável (stand-by por feedback divergente)
+- Polimentos SonIA: cache de insight por sessão (5min), página `/sonia` multi-turn (Opus 4.7)
+- Fase 8 — Admin SaaS (multi-tenant management)
 
 ### PR-13 — Plano detalhado
 
