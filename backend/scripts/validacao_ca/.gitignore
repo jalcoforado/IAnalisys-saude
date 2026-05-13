@@ -1,0 +1,5 @@
+# Relatórios CA da Parente (dados sensíveis - NÃO commitar)
+*.xls
+*.xlsx
+*.pdf
+*.csv

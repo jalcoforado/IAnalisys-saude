@@ -1,0 +1,163 @@
+{
+  "A": {
+    "xls_n": 201,
+    "xls_pago": 231874.29,
+    "xls_total_pago": 233146.21,
+    "dbf_n": 201,
+    "dbf_pago": 231874.29,
+    "diff": 0.0,
+    "veredito": "\u2705 MATCH PERFEITO"
+  },
+  "B": {
+    "estrutura_dre": {
+      "total_dre": 32,
+      "totalizadores": 8,
+      "raiz": 16,
+      "profundidade_max": 1
+    },
+    "cobertura_rateios": {
+      "total_rateios": 14471.0,
+      "com_categoria": 14471.0,
+      "pct": 100.0
+    },
+    "categorias_no_dre": {
+      "total_categorias": 145.0,
+      "categorias_no_dre": 120.0,
+      "pct": 82.8
+    },
+    "soma_top15_dre_abr": 233146.28000000003
+  },
+  "C": {
+    "tr_total": {
+      "n": 271.0,
+      "v": 2685052.38
+    },
+    "tr_em_fato_caixa": {
+      "n": 0.0,
+      "v": 0.0
+    },
+    "n_contas_financeiras": 10
+  },
+  "D": {
+    "xls": {
+      "juros": 121.4,
+      "multa": 1150.52,
+      "desconto": 0.0,
+      "liquido_encargo": 1271.92
+    },
+    "dbf": {
+      "juros": 121.4,
+      "multa": 1150.52,
+      "desconto": 0.0,
+      "liquido_encargo": 1271.92
+    },
+    "diff_liquido": 0.0
+  },
+  "E": {
+    "eventos_acquitted_sem_baixa": 0,
+    "coerencia_rateio": {
+      "total_eventos": 3649.0,
+      "coerentes": 3649.0,
+      "incoerentes": 0.0,
+      "gap_total": 0.0
+    },
+    "coerencia_baixas_por_mes": [
+      {
+        "mes": "2026-01",
+        "v_evento": 431521.01,
+        "v_baixa": 432089.64,
+        "diff": -568.63
+      },
+      {
+        "mes": "2026-02",
+        "v_evento": 277529.51,
+        "v_baixa": 277530.6,
+        "diff": -1.09
+      },
+      {
+        "mes": "2026-03",
+        "v_evento": 241848.72,
+        "v_baixa": 242068.69,
+        "diff": -219.97
+      },
+      {
+        "mes": "2026-04",
+        "v_evento": 231966.29,
+        "v_baixa": 233238.21,
+        "diff": -1271.92
+      },
+      {
+        "mes": "2026-05",
+        "v_evento": 82013.73,
+        "v_baixa": 81805.73,
+        "diff": 208.0
+      }
+    ]
+  },
+  "F": {
+    "ca_receita_por_mes": [
+      {
+        "mes": "2026-01",
+        "v_pago": 54984.75,
+        "v_total": 424135.77,
+        "n": 780
+      },
+      {
+        "mes": "2026-02",
+        "v_pago": 6513.0,
+        "v_total": 153033.37,
+        "n": 343
+      },
+      {
+        "mes": "2026-03",
+        "v_pago": 166.0,
+        "v_total": 115964.71,
+        "n": 302
+      },
+      {
+        "mes": "2026-04",
+        "v_pago": 92.0,
+        "v_total": 84669.41,
+        "n": 248
+      },
+      {
+        "mes": "2026-05",
+        "v_pago": 0.0,
+        "v_total": 73236.18,
+        "n": 185
+      }
+    ],
+    "clinicorp_por_mes": [
+      {
+        "mes": "2026-01",
+        "v_total": 326477.77,
+        "v_recebido": 325547.77,
+        "n": 546
+      },
+      {
+        "mes": "2026-02",
+        "v_total": 328606.36,
+        "v_recebido": 328606.36,
+        "n": 538
+      },
+      {
+        "mes": "2026-03",
+        "v_total": 470035.75,
+        "v_recebido": 470035.75,
+        "n": 764
+      },
+      {
+        "mes": "2026-04",
+        "v_total": 375127.33,
+        "v_recebido": 375127.33,
+        "n": 506
+      },
+      {
+        "mes": "2026-05",
+        "v_total": 62307.0,
+        "v_recebido": 62307.0,
+        "n": 94
+      }
+    ]
+  }
+}
