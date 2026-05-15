@@ -22,6 +22,7 @@ import { useSonIA, type SonIAInsight } from '@/components/sonia/SonIAContext'
 import type {
   MetaDashboard, MetaDashboardCard, MetaPendingItem, MetaTopPost,
 } from '@/types/meta'
+import { CommentsInsightsSection } from './CommentsInsightsSection'
 
 // ─── Formatadores ─────────────────────────────────────────────
 
@@ -139,6 +140,7 @@ export default function VisaoGeralPage() {
           {q.data.instagram.top_posts.length > 0 && (
             <HeroPost top={q.data.instagram.top_posts[0]} />
           )}
+          <CommentsInsightsSection />
           <ChannelsCard ig={q.data.instagram} fb={q.data.facebook} pixel={q.data.pixel} />
           {q.data.pending.length > 0 && <PendingTI items={q.data.pending} />}
         </>

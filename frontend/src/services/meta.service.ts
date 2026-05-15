@@ -7,6 +7,7 @@ import type {
   MetaSyncEntityResult,
   MetaSyncAllResult,
   MetaDashboard,
+  MetaCommentsInsights,
 } from '@/types/meta'
 
 export const metaService = {
@@ -30,4 +31,14 @@ export const metaService = {
 
   dashboard: () =>
     api.get<MetaDashboard>('/meta/dashboard').then((r) => r.data),
+
+  commentsInsights: (days = 30) =>
+    api.get<MetaCommentsInsights>('/meta/comments/insights', { params: { days } }).then((r) => r.data),
+
+  classifyComments: (limit = 200) =>
+    api.post<{ processed: number; fast_path: number; ia: number; errors: number }>(
+      '/meta/comments/classify',
+      null,
+      { params: { limit } },
+    ).then((r) => r.data),
 }

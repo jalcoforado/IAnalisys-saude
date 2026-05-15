@@ -70,6 +70,7 @@ export type MetaSyncEntity =
   | 'ig_media'
   | 'ig_post_insights'
   | 'ig_account_insights'
+  | 'ig_comments'
   | 'fb_page'
   | 'fb_posts'
   | 'fb_post_insights'
@@ -150,4 +151,32 @@ export interface MetaDashboard {
   facebook: MetaDashboardCard
   pixel: MetaDashboardCard
   pending: MetaPendingItem[]
+}
+
+// ─── Comentários IA (Sub-PR 21f) ──────────────────────────────────
+export interface MetaComment {
+  external_id: string
+  autor: string | null
+  texto: string
+  commented_at: string | null
+  post_external_id: string | null
+  procedimento: string | null
+  urgencia: 'alta' | 'media' | 'baixa' | null
+}
+
+export interface MetaCommentsInsights {
+  period_days: number
+  counts: {
+    total: number
+    leads_quentes: number
+    duvidas_clinicas: number
+    depoimentos: number
+    reclamacoes: number
+    objecoes: number
+  }
+  sentimento: Record<string, number>
+  top_procedimentos: { procedimento: string; total: number }[]
+  leads_quentes: MetaComment[]
+  duvidas_clinicas: MetaComment[]
+  reclamacoes: MetaComment[]
 }

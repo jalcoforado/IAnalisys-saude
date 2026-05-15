@@ -697,3 +697,113 @@ async def meta_sync_entity(
         return await syncer(db, current_user.tenant_id)
     except MetaSyncError as exc:
         raise HTTPException(status_code=502, detail=str(exc))
+
+
+# ============================================================
+# Sub-PR 21f — Classificação IA de comentários
+# ============================================================
+
+@router.post("/comments/classify")
+async def meta_classify_comments(
+    limit: int = 200,
+    current_user: UserMe = Depends(requires("sync.run")),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Classifica até `limit` comentários ainda não classificados via DeepSeek + fast-path.
+
+    Idempotente — re-rodar processa só os pendentes. Default 200 evita rate limit.
+    """
+    from app.services.meta_comments_classifier import classify_pending_comments
+    return await classify_pending_comments(db, current_user.tenant_id, limit=limit)
+
+
+@router.get("/comments/insights")
+async def meta_comments_insights(
+    days: int = 30,
+    current_user: UserMe = Depends(requires("empresa.settings.read")),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Agregados + listas top de comentários classificados nos últimos N dias.
+
+    Retorna:
+    - counts: total, leads_quentes, dúvidas, depoimentos, reclamações, objeções
+    - sentimento: pct positivo/neutro/negativo
+    - top_procedimentos: lista de procedimentos mais mencionados
+    - leads_quentes: até 10 comentários com lead_quente_flag=True (mais recentes)
+    - duvidas_clinicas: até 10 dúvidas (mais recentes)
+    - reclamacoes: até 5 reclamações (mais recentes)
+    """
+    from app.models.core_meta import CoreMetaComentarios as C
+    from sqlalchemy import func, and_, Integer
+
+    tenant_id = current_user.tenant_id
+    cutoff = datetime.utcnow() - timedelta(days=days)
+    base = and_(C.tenant_id == tenant_id, C.commented_at >= cutoff)
+
+    totais = (await db.execute(
+        select(
+            func.count().label("total"),
+            func.sum(C.lead_quente_flag.cast(Integer)).label("leads_quentes"),
+            func.sum(C.duvida_clinica_flag.cast(Integer)).label("duvidas"),
+            func.sum(C.depoimento_flag.cast(Integer)).label("depoimentos"),
+            func.sum(C.reclamacao_flag.cast(Integer)).label("reclamacoes"),
+            func.sum(C.objecao_flag.cast(Integer)).label("objecoes"),
+        ).where(base)
+    )).one()
+
+    sentimento_rows = (await db.execute(
+        select(C.sentimento, func.count())
+        .where(base).group_by(C.sentimento)
+    )).all()
+    sentimento = {s or "indef": int(n) for s, n in sentimento_rows}
+
+    procedimentos_rows = (await db.execute(
+        select(C.procedimento_mencionado, func.count())
+        .where(and_(base, C.procedimento_mencionado.isnot(None)))
+        .group_by(C.procedimento_mencionado)
+        .order_by(func.count().desc())
+        .limit(10)
+    )).all()
+    top_procedimentos = [
+        {"procedimento": p, "total": int(n)} for p, n in procedimentos_rows
+    ]
+
+    async def _list(flag, lim: int) -> list[dict]:
+        rows = (await db.execute(
+            select(
+                C.external_id, C.autor_username, C.texto, C.commented_at,
+                C.post_external_id, C.procedimento_mencionado, C.urgencia_atendimento,
+            )
+            .where(and_(base, flag.is_(True)))
+            .order_by(C.commented_at.desc())
+            .limit(lim)
+        )).all()
+        return [
+            {
+                "external_id": r[0],
+                "autor": r[1],
+                "texto": (r[2] or "")[:280],
+                "commented_at": r[3].isoformat() if r[3] else None,
+                "post_external_id": r[4],
+                "procedimento": r[5],
+                "urgencia": r[6],
+            }
+            for r in rows
+        ]
+
+    return {
+        "period_days": days,
+        "counts": {
+            "total": int(totais.total or 0),
+            "leads_quentes": int(totais.leads_quentes or 0),
+            "duvidas_clinicas": int(totais.duvidas or 0),
+            "depoimentos": int(totais.depoimentos or 0),
+            "reclamacoes": int(totais.reclamacoes or 0),
+            "objecoes": int(totais.objecoes or 0),
+        },
+        "sentimento": sentimento,
+        "top_procedimentos": top_procedimentos,
+        "leads_quentes": await _list(C.lead_quente_flag, 10),
+        "duvidas_clinicas": await _list(C.duvida_clinica_flag, 10),
+        "reclamacoes": await _list(C.reclamacao_flag, 5),
+    }

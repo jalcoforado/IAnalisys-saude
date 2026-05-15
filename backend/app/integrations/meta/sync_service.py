@@ -32,6 +32,7 @@ from app.models.staging_meta import (
     StgMetaFbPostInsights,
     StgMetaFbPosts,
     StgMetaIgAccountInsights,
+    StgMetaIgComments,
     StgMetaIgPerfil,
     StgMetaIgPostInsights,
     StgMetaIgPosts,
@@ -559,6 +560,88 @@ async def sync_fb_page_insights(db: AsyncSession, tenant_id: str, *, days: int =
 
 
 # ============================================================
+# 10. IG COMMENTS — comentários por post (Sub-PR 21f)
+# ============================================================
+async def sync_ig_comments(
+    db: AsyncSession, tenant_id: str, *, posts_limit: int = 25, comments_per_post: int = 50,
+) -> dict[str, Any]:
+    """Para cada post IG em staging, busca comentários e grava em stg_meta_ig_comments.
+
+    Idempotente por (tenant, external_id) — re-rodar não duplica. Tolera erro
+    por post (alguns podem ter comentários desabilitados via `is_comment_enabled`).
+    """
+    rec = await _get_token_record(db, tenant_id)
+    posts = (await db.execute(
+        select(StgMetaIgPosts.external_id, StgMetaIgPosts.raw_data)
+        .where(StgMetaIgPosts.tenant_id == tenant_id)
+        .order_by(StgMetaIgPosts.posted_at.desc())
+        .limit(posts_limit)
+    )).all()
+    if not posts:
+        raise MetaSyncError("Nenhum post IG em staging — rode sync_ig_media antes.")
+
+    job = await _open_job(db, tenant_id, "ig_comments")
+    client = MetaGraphClient(rec.system_user_token)
+    count = 0
+    errors: list[str] = []
+    try:
+        for post_external_id, post_raw in posts:
+            # Pula posts com comentários desabilitados (evita 400 do Graph)
+            if (post_raw or {}).get("is_comment_enabled") is False:
+                continue
+            try:
+                resp = await client.get_ig_post_comments(post_external_id, limit=comments_per_post)
+                items = resp.get("data") or []
+                for c in items:
+                    commented_at = _parse_iso(c.get("timestamp"))
+                    stmt = mysql_insert(StgMetaIgComments).values(
+                        tenant_id=tenant_id,
+                        external_id=str(c["id"]),
+                        post_external_id=post_external_id,
+                        commented_at=commented_at,
+                        external_updated_at=commented_at,
+                        raw_data=c,
+                        sync_job_id=job.id,
+                    )
+                    stmt = stmt.on_duplicate_key_update(
+                        commented_at=stmt.inserted.commented_at,
+                        raw_data=stmt.inserted.raw_data,
+                        sync_job_id=stmt.inserted.sync_job_id,
+                        synced_at=datetime.utcnow(),
+                    )
+                    await db.execute(stmt)
+                    count += 1
+                    # Replies inline (1 nível)
+                    replies = (c.get("replies") or {}).get("data") or []
+                    for r in replies:
+                        r_at = _parse_iso(r.get("timestamp"))
+                        stmt_r = mysql_insert(StgMetaIgComments).values(
+                            tenant_id=tenant_id,
+                            external_id=str(r["id"]),
+                            post_external_id=post_external_id,
+                            commented_at=r_at,
+                            external_updated_at=r_at,
+                            raw_data={**r, "parent_id": c["id"]},
+                            sync_job_id=job.id,
+                        )
+                        stmt_r = stmt_r.on_duplicate_key_update(
+                            commented_at=stmt_r.inserted.commented_at,
+                            raw_data=stmt_r.inserted.raw_data,
+                            sync_job_id=stmt_r.inserted.sync_job_id,
+                            synced_at=datetime.utcnow(),
+                        )
+                        await db.execute(stmt_r)
+                        count += 1
+            except MetaGraphError as exc:
+                errors.append(f"{post_external_id}: {exc}")
+        await _close_job(db, job, records=count, error="; ".join(errors[:3]) if errors and count == 0 else None)
+        await db.commit()
+        return {"entity": "ig_comments", "records": count, "job_id": job.id, "errors": len(errors)}
+    finally:
+        await client.aclose()
+
+
+# ============================================================
 # Orquestrador: roda tudo o que funciona com permissions atuais
 # ============================================================
 SYNCERS = {
@@ -566,6 +649,7 @@ SYNCERS = {
     "ig_media": sync_ig_media,
     "ig_post_insights": sync_ig_post_insights,
     "ig_account_insights": sync_ig_account_insights,
+    "ig_comments": sync_ig_comments,
     "fb_page": sync_fb_page,
     "fb_posts": sync_fb_posts,
     "fb_post_insights": sync_fb_post_insights,

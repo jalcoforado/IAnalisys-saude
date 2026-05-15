@@ -204,6 +204,18 @@ class MetaGraphClient:
             params={"metric": ",".join(metrics)},
         )
 
+    async def get_ig_post_comments(
+        self, post_id: str, *, limit: int = 50,
+    ) -> dict[str, Any]:
+        """Comentários de um post IG (header — text, username, timestamp, likes)."""
+        return await self._get(
+            f"/{post_id}/comments",
+            params={
+                "fields": "id,text,username,timestamp,like_count,replies{id,text,username,timestamp}",
+                "limit": str(limit),
+            },
+        )
+
     async def get_fb_post_insights(
         self, post_id: str, page_token: str, metrics: list[str]
     ) -> dict[str, Any]:
