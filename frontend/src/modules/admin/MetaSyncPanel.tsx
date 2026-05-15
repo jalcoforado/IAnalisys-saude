@@ -51,6 +51,8 @@ const ENTITIES: EntityDef[] = [
     description: 'Alcance e ganho de seguidores por dia (últimos 30d)' },
   { key: 'ig_comments', label: 'Instagram — Comentários',
     description: 'Comentários (header + replies) dos posts recentes — insumo pra classificação IA' },
+  { key: 'ig_stories', label: 'Instagram — Stories',
+    description: 'Stories ativos + reach/replies/navigation (efêmeros — captura antes de expirar)' },
   { key: 'fb_page', label: 'Facebook — Página',
     description: 'Snapshot diário · fans, info, contato' },
   { key: 'fb_posts', label: 'Facebook — Posts',

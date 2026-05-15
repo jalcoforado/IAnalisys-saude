@@ -46,6 +46,32 @@ export const metaService = {
   runAll: () =>
     api.post<Record<string, unknown>>('/meta/run-all').then((r) => r.data),
 
+  /** Stories IG capturados nos últimos N dias + agregados. */
+  stories: (days = 7) =>
+    api.get<{
+      period_days: number
+      totals: {
+        stories: number
+        reach_total: number
+        navigation_total: number
+        replies_total: number
+        avg_reach: number
+        n_image: number
+        n_video: number
+      }
+      items: Array<{
+        external_id: string
+        posted_at: string | null
+        expires_at: string | null
+        media_type: 'IMAGE' | 'VIDEO' | string | null
+        thumbnail_url: string | null
+        permalink: string | null
+        reach: number
+        replies: number
+        navigation: number
+      }>
+    }>('/meta/stories', { params: { days } }).then((r) => r.data),
+
   /** Estado do APScheduler (próxima execução de cada job). */
   schedulerStatus: () =>
     api.get<{

@@ -70,6 +70,7 @@ export type MetaSyncEntity =
   | 'ig_media'
   | 'ig_post_insights'
   | 'ig_account_insights'
+  | 'ig_stories'
   | 'ig_comments'
   | 'fb_page'
   | 'fb_posts'

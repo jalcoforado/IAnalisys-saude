@@ -36,6 +36,7 @@ from app.models.staging_meta import (
     StgMetaIgPerfil,
     StgMetaIgPostInsights,
     StgMetaIgPosts,
+    StgMetaIgStories,
     StgMetaPixel,
     StgMetaTokens,
 )
@@ -947,3 +948,85 @@ async def meta_scheduler_status(
     from app.services.scheduler_service import get_scheduler_status
     _ = current_user  # auth-only
     return get_scheduler_status()
+
+
+# ============================================================
+# Stories da semana — Sub-PR 21f.1
+# ============================================================
+
+@router.get("/stories")
+async def meta_stories(
+    days: int = 7,
+    current_user: UserMe = Depends(requires("empresa.settings.read")),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Stories IG capturados nos últimos N dias + agregados (reach, navigation, replies).
+
+    Stories expiram em 24h, então o histórico depende da captura diária (cron
+    ou botão manual). Quanto mais regular o sync, mais completo o histórico.
+    """
+    tenant_id = current_user.tenant_id
+    cutoff = datetime.utcnow() - timedelta(days=days)
+
+    rows = (await db.execute(
+        select(
+            StgMetaIgStories.external_id,
+            StgMetaIgStories.posted_at,
+            StgMetaIgStories.expires_at,
+            StgMetaIgStories.raw_data,
+        )
+        .where(StgMetaIgStories.tenant_id == tenant_id)
+        .where(StgMetaIgStories.posted_at >= cutoff)
+        .order_by(StgMetaIgStories.posted_at.desc())
+    )).all()
+
+    items: list[dict[str, Any]] = []
+    reach_total = 0
+    nav_total = 0
+    replies_total = 0
+    n_image = 0
+    n_video = 0
+
+    for r in rows:
+        sid, posted_at, expires_at, raw = r
+        raw = raw or {}
+        metrics = raw.get("metrics") or {}
+        reach = int(metrics.get("reach") or 0)
+        replies = int(metrics.get("replies") or 0)
+        navigation = int(metrics.get("navigation") or 0)
+        media_type = raw.get("media_type")
+        if media_type == "VIDEO":
+            n_video += 1
+        elif media_type == "IMAGE":
+            n_image += 1
+        reach_total += reach
+        nav_total += navigation
+        replies_total += replies
+
+        items.append({
+            "external_id": sid,
+            "posted_at": posted_at.isoformat() if posted_at else None,
+            "expires_at": expires_at.isoformat() if expires_at else None,
+            "media_type": media_type,
+            "thumbnail_url": raw.get("thumbnail_url") or raw.get("media_url"),
+            "permalink": raw.get("permalink"),
+            "reach": reach,
+            "replies": replies,
+            "navigation": navigation,
+        })
+
+    avg_reach = round(reach_total / len(items)) if items else 0
+
+    return {
+        "period_days": days,
+        "totals": {
+            "stories": len(items),
+            "reach_total": reach_total,
+            "navigation_total": nav_total,
+            "replies_total": replies_total,
+            "avg_reach": avg_reach,
+            "n_image": n_image,
+            "n_video": n_video,
+        },
+        "items": items[:24],  # cap visual no front
+    }

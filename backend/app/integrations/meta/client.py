@@ -216,6 +216,25 @@ class MetaGraphClient:
             },
         )
 
+    async def get_ig_stories(self, ig_account_id: str) -> dict[str, Any]:
+        """Stories ativos do IG (efêmeros — expiram em 24h)."""
+        return await self._get(
+            f"/{ig_account_id}/stories",
+            params={
+                "fields": "id,media_type,media_url,permalink,timestamp,thumbnail_url",
+            },
+        )
+
+    async def get_ig_story_insights(
+        self, story_id: str, metrics: list[str]
+    ) -> dict[str, Any]:
+        """Métricas de um story (period=lifetime). Algumas métricas só funcionam
+        enquanto o story está ativo — após expirar pode retornar erro."""
+        return await self._get(
+            f"/{story_id}/insights",
+            params={"metric": ",".join(metrics)},
+        )
+
     async def get_fb_post_insights(
         self, post_id: str, page_token: str, metrics: list[str]
     ) -> dict[str, Any]:

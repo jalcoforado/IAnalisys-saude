@@ -32,6 +32,7 @@ from app.integrations.meta.sync_service import (
     MetaSyncError,
     sync_all_available,
     sync_ig_comments,
+    sync_ig_stories,
 )
 from app.models.staging_meta import StgMetaTokens
 from app.services.meta_comments_classifier import classify_pending_comments
@@ -78,6 +79,24 @@ async def _job_meta_ig_comments() -> None:
             logger.warning("[scheduler] tenant=%s ig_comments pulado: %s", tid, exc)
         except Exception as exc:
             logger.exception("[scheduler] meta_ig_comments FALHOU tenant=%s: %s", tid, exc)
+
+
+async def _job_meta_ig_stories() -> None:
+    """Job: rodar sync_ig_stories pra cada tenant Meta.
+
+    Stories duram 24h — sem captura diária os dados se perdem.
+    """
+    tenants = await _list_tenants_with_meta()
+    logger.info("[scheduler] meta_ig_stories iniciando — %d tenants", len(tenants))
+    for tid in tenants:
+        try:
+            async with async_session() as db:
+                result = await sync_ig_stories(db, tid)
+                logger.info("[scheduler] tenant=%s ig_stories: %d records", tid, result.get("records", 0))
+        except MetaSyncError as exc:
+            logger.warning("[scheduler] tenant=%s ig_stories pulado: %s", tid, exc)
+        except Exception as exc:
+            logger.exception("[scheduler] meta_ig_stories FALHOU tenant=%s: %s", tid, exc)
 
 
 async def _job_classify_comments() -> None:
@@ -138,6 +157,16 @@ def start_scheduler() -> AsyncIOScheduler | None:
         replace_existing=True,
     )
     sched.add_job(
+        _job_meta_ig_stories,
+        CronTrigger(hour=4, minute=5),
+        id="meta_ig_stories",
+        name="Meta: sync_ig_stories (efêmero — captura antes de expirar)",
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=grace,
+        replace_existing=True,
+    )
+    sched.add_job(
         _job_meta_ig_comments,
         CronTrigger(hour=4, minute=15),
         id="meta_ig_comments",
@@ -159,7 +188,7 @@ def start_scheduler() -> AsyncIOScheduler | None:
     )
     sched.start()
     _scheduler = sched
-    logger.info("[scheduler] iniciado em America/Sao_Paulo · 3 jobs Meta às 04:00/04:15/04:30")
+    logger.info("[scheduler] iniciado em America/Sao_Paulo · 4 jobs Meta às 04:00/04:05/04:15/04:30")
     return sched
 
 

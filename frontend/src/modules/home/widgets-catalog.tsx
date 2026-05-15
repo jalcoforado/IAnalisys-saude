@@ -61,6 +61,8 @@ import { SaudeBaseCard } from './widgets/SaudeBaseCard'
 import { TopLtvCard } from './widgets/TopLtvCard'
 import { ParaResgatarCard } from './widgets/ParaResgatarCard'
 import { SaldoPorBancoCard } from './widgets/SaldoPorBancoCard'
+import { CurvaABCCard } from './widgets/CurvaABCCard'
+import { TopProfsFaturamentoCard } from './widgets/TopProfsFaturamentoCard'
 import {
   MarketingResumoCard,
   MarketingStatusPixelCard,
@@ -404,6 +406,28 @@ export const WIDGET_CATALOG: WidgetMeta[] = [
     minSize: { w: 3, h: 4 },
     icon: TrendingUp,
     render: () => <TopProcedimentosCard />,
+  },
+  {
+    id: 'curva_abc_procedimentos',
+    name: 'Curva ABC procedimentos',
+    description: 'Concentração de faturamento por procedimento — classes A/B/C (regra 80/95).',
+    category: 'Comercial',
+    permission: 'dashboard.read',
+    defaultSize: { w: 6, h: 6 },
+    minSize: { w: 4, h: 4 },
+    icon: Filter,
+    render: () => <CurvaABCCard />,
+  },
+  {
+    id: 'top_profs_faturamento',
+    name: 'Top profissionais por faturamento (mês)',
+    description: 'Ranking mensal por valor recebido — converte aprovação em caixa.',
+    category: 'Comercial',
+    permission: 'dashboard.read',
+    defaultSize: { w: 6, h: 6 },
+    minSize: { w: 4, h: 4 },
+    icon: Trophy,
+    render: () => <TopProfsFaturamentoCard />,
   },
 
   // ── Pacientes — visão estratégica ──────────────────────────
