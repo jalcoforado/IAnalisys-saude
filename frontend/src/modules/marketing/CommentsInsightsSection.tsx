@@ -10,14 +10,16 @@
  * Quando o sentimento ou as listas estiverem vazias, suprime o bloco —
  * evita estado "tudo zero" parecendo erro.
  */
+import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import {
-  AlertCircle, Flame, HelpCircle, Heart, MessageSquare, Smile,
+  AlertCircle, Eye, Flame, HelpCircle, Heart, MessageSquare, Smile,
   ThumbsDown,
 } from 'lucide-react'
 
 import { metaService } from '@/services/meta.service'
 import type { MetaComment } from '@/types/meta'
+import { CommentsAuditModal } from './CommentsAuditModal'
 
 const fmtNum = (n: number | null | undefined): string =>
   n == null ? '—' : new Intl.NumberFormat('pt-BR').format(n)
@@ -28,6 +30,7 @@ const fmtDate = (iso: string | null): string => {
 }
 
 export function CommentsInsightsSection() {
+  const [audit, setAudit] = useState<{ open: boolean; flag?: string }>({ open: false })
   const q = useQuery({
     queryKey: ['meta', 'comments-insights', 30],
     queryFn: () => metaService.commentsInsights(30),
@@ -56,15 +59,29 @@ export function CommentsInsightsSection() {
 
   return (
     <section className="bg-white border rounded-xl shadow-sm overflow-hidden">
-      <header className="px-5 py-3 border-b flex items-center justify-between">
-        <div>
+      <header className="px-5 py-3 border-b flex items-center justify-between gap-3">
+        <div className="min-w-0">
           <h2 className="text-sm font-semibold text-neutral-800">Comentários da semana</h2>
           <p className="text-[11px] text-neutral-500">
             {fmtNum(c.total)} comentários classificados pela SonIA · últimos {d.period_days} dias
           </p>
         </div>
-        <span className="text-[10px] uppercase tracking-wider text-fuchsia-600 font-medium">IA · DeepSeek</span>
+        <div className="flex items-center gap-2 shrink-0">
+          <button
+            onClick={() => setAudit({ open: true })}
+            className="text-[11px] inline-flex items-center gap-1 px-2.5 py-1 rounded-md border bg-white hover:bg-neutral-50 text-neutral-700"
+          >
+            <Eye size={12} /> Auditar todos
+          </button>
+          <span className="text-[10px] uppercase tracking-wider text-fuchsia-600 font-medium">IA · DeepSeek</span>
+        </div>
       </header>
+
+      <CommentsAuditModal
+        open={audit.open}
+        initialFlag={audit.flag}
+        onClose={() => setAudit({ open: false })}
+      />
 
       <div className="p-5">
         {/* Contadores */}

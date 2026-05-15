@@ -41,4 +41,51 @@ export const metaService = {
       null,
       { params: { limit } },
     ).then((r) => r.data),
+
+  /** Botão "Atualizar tudo": sync_all + ig_comments + classify em sequência. */
+  runAll: () =>
+    api.post<Record<string, unknown>>('/meta/run-all').then((r) => r.data),
+
+  /** Estado do APScheduler (próxima execução de cada job). */
+  schedulerStatus: () =>
+    api.get<{
+      running: boolean
+      timezone?: string
+      jobs: { id: string; name: string; next_run: string | null }[]
+      server_time?: string
+    }>('/meta/scheduler/status').then((r) => r.data),
+
+  /** Listagem paginada de comentários classificados (modal de auditoria). */
+  commentsList: (params: {
+    limit?: number
+    offset?: number
+    sentimento?: string
+    flag?: string
+    q?: string
+    days?: number
+  }) =>
+    api.get<{
+      total: number
+      limit: number
+      offset: number
+      items: Array<{
+        external_id: string
+        autor: string | null
+        texto: string
+        commented_at: string | null
+        post_external_id: string | null
+        sentimento: 'positivo' | 'neutro' | 'negativo' | null
+        flags: {
+          lead_quente: boolean
+          depoimento: boolean
+          duvida_clinica: boolean
+          objecao: boolean
+          reclamacao: boolean
+        }
+        procedimento: string | null
+        urgencia: 'alta' | 'media' | 'baixa' | null
+        modelo_ia: string | null
+        classificado_em: string | null
+      }>
+    }>('/meta/comments', { params }).then((r) => r.data),
 }

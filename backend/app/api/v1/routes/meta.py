@@ -13,6 +13,7 @@ A tabela `stg_meta_tokens` é multi-tenant — UK por (tenant_id) garante 1 linh
 por clínica. O token NÃO é retornado em nenhum response.
 """
 from datetime import datetime, timedelta, timezone
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select, delete
@@ -807,3 +808,142 @@ async def meta_comments_insights(
         "duvidas_clinicas": await _list(C.duvida_clinica_flag, 10),
         "reclamacoes": await _list(C.reclamacao_flag, 5),
     }
+
+
+# ============================================================
+# Listagem paginada pra modal de auditoria (Sub-PR 21f)
+# ============================================================
+
+@router.get("/comments")
+async def meta_comments_list(
+    limit: int = 50,
+    offset: int = 0,
+    sentimento: str | None = None,   # 'positivo' | 'neutro' | 'negativo'
+    flag: str | None = None,         # 'lead_quente' | 'depoimento' | 'duvida' | 'objecao' | 'reclamacao'
+    q: str | None = None,            # busca livre em texto/autor
+    days: int = 30,
+    current_user: UserMe = Depends(requires("empresa.settings.read")),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Lista paginada de comentários classificados (modal de auditoria).
+
+    Filtros aplicados em AND. Default: últimos 30 dias, 50 por página, ordem
+    por data de comentário decrescente.
+    """
+    from app.models.core_meta import CoreMetaComentarios as C
+    from sqlalchemy import func, and_, or_
+
+    tenant_id = current_user.tenant_id
+    cutoff = datetime.utcnow() - timedelta(days=days)
+    conditions = [C.tenant_id == tenant_id, C.commented_at >= cutoff]
+    if sentimento in ("positivo", "neutro", "negativo"):
+        conditions.append(C.sentimento == sentimento)
+    if flag == "lead_quente":
+        conditions.append(C.lead_quente_flag.is_(True))
+    elif flag == "depoimento":
+        conditions.append(C.depoimento_flag.is_(True))
+    elif flag == "duvida":
+        conditions.append(C.duvida_clinica_flag.is_(True))
+    elif flag == "objecao":
+        conditions.append(C.objecao_flag.is_(True))
+    elif flag == "reclamacao":
+        conditions.append(C.reclamacao_flag.is_(True))
+    if q:
+        like = f"%{q.lower()}%"
+        conditions.append(or_(
+            func.lower(C.texto).like(like),
+            func.lower(C.autor_username).like(like),
+        ))
+    base = and_(*conditions)
+
+    total = (await db.execute(select(func.count()).where(base))).scalar_one()
+
+    rows = (await db.execute(
+        select(
+            C.external_id, C.autor_username, C.texto, C.commented_at,
+            C.post_external_id, C.sentimento,
+            C.lead_quente_flag, C.depoimento_flag, C.duvida_clinica_flag,
+            C.objecao_flag, C.reclamacao_flag,
+            C.procedimento_mencionado, C.urgencia_atendimento,
+            C.classificacao_ia_modelo, C.classificacao_ia_at,
+        )
+        .where(base)
+        .order_by(C.commented_at.desc())
+        .limit(min(limit, 200))
+        .offset(max(offset, 0))
+    )).all()
+
+    items = [{
+        "external_id": r[0],
+        "autor": r[1],
+        "texto": r[2],
+        "commented_at": r[3].isoformat() if r[3] else None,
+        "post_external_id": r[4],
+        "sentimento": r[5],
+        "flags": {
+            "lead_quente": bool(r[6]),
+            "depoimento": bool(r[7]),
+            "duvida_clinica": bool(r[8]),
+            "objecao": bool(r[9]),
+            "reclamacao": bool(r[10]),
+        },
+        "procedimento": r[11],
+        "urgencia": r[12],
+        "modelo_ia": r[13],
+        "classificado_em": r[14].isoformat() if r[14] else None,
+    } for r in rows]
+
+    return {
+        "total": int(total or 0),
+        "limit": limit,
+        "offset": offset,
+        "items": items,
+    }
+
+
+# ============================================================
+# Manual run: sync_all + ig_comments + classify (botão "Atualizar tudo")
+# ============================================================
+
+@router.post("/run-all")
+async def meta_run_all(
+    current_user: UserMe = Depends(requires("sync.run")),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Roda em sequência: sync_all_available → sync_ig_comments → classify.
+
+    Substitui o cron quando o usuário quer atualizar tudo na hora. Usado pelo
+    botão "Atualizar tudo" no /admin/sync.
+    """
+    from app.integrations.meta.sync_service import sync_all_available, sync_ig_comments
+    from app.services.meta_comments_classifier import classify_pending_comments
+
+    tenant_id = current_user.tenant_id
+    out: dict[str, Any] = {}
+    try:
+        out["sync_all"] = await sync_all_available(db, tenant_id)
+    except Exception as exc:
+        out["sync_all_error"] = str(exc)
+    try:
+        out["ig_comments"] = await sync_ig_comments(db, tenant_id)
+    except MetaSyncError as exc:
+        out["ig_comments_error"] = str(exc)
+    try:
+        out["classify"] = await classify_pending_comments(db, tenant_id, limit=300)
+    except Exception as exc:
+        out["classify_error"] = str(exc)
+    return out
+
+
+# ============================================================
+# Status do scheduler (próxima execução de cada job)
+# ============================================================
+
+@router.get("/scheduler/status")
+async def meta_scheduler_status(
+    current_user: UserMe = Depends(requires("sync.run")),
+) -> dict:
+    """Mostra estado do APScheduler — jobs ativos e próxima execução."""
+    from app.services.scheduler_service import get_scheduler_status
+    _ = current_user  # auth-only
+    return get_scheduler_status()

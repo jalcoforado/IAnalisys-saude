@@ -10,7 +10,7 @@
  * mostra 5 cards (1 por entidade) com botão "Sincronizar agora".
  */
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { ArrowRight } from 'lucide-react'
+import { ArrowRight, Calendar, Sparkles, Zap } from 'lucide-react'
 import { Link } from 'react-router-dom'
 
 import { metaService } from '@/services/meta.service'
@@ -84,9 +84,36 @@ export function MetaSyncPanel() {
     },
   })
 
+  const runAllMut = useMutation({
+    mutationFn: metaService.runAll,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['meta'] })
+      qc.invalidateQueries({ queryKey: ['sync', 'meta'] })
+    },
+  })
+
+  const schedulerQ = useQuery({
+    queryKey: ['meta', 'scheduler', 'status'],
+    queryFn: metaService.schedulerStatus,
+    refetchInterval: 60_000,
+  })
+
   return (
     <div className="space-y-4">
       <StatusBanner connected={isConnected} hasRecord={hasRecord} status={statusQ.data} />
+
+      {/* Scheduler + ação manual completa */}
+      <SchedulerCard
+        scheduler={schedulerQ.data}
+        onRunAll={() => runAllMut.mutate()}
+        runState={{
+          isPending: runAllMut.isPending,
+          data: runAllMut.data,
+          isError: runAllMut.isError,
+          error: runAllMut.error,
+        }}
+        disabled={!isConnected}
+      />
 
       {/* Sync all + grid de entidades */}
       <section className="bg-white border rounded-lg overflow-hidden">
@@ -94,7 +121,7 @@ export function MetaSyncPanel() {
           <div>
             <h2 className="text-sm font-semibold text-neutral-900">Entidades Meta</h2>
             <p className="text-xs text-neutral-500 mt-0.5">
-              Cada card sincroniza uma fonte. Use “Sincronizar tudo” pra rodar todas em sequência.
+              Cada card sincroniza uma fonte específica. Use “Sincronizar tudo” pra rodar as 10 em sequência (sem classificar comentários).
             </p>
           </div>
           <button
@@ -293,6 +320,140 @@ function SyncAllResult({ result }: { result: MetaSyncAllResult }) {
       ))}
     </div>
   )
+}
+
+
+// ─── SchedulerCard ──────────────────────────────────────────────
+
+interface SchedulerJob { id: string; name: string; next_run: string | null }
+interface SchedulerStatus {
+  running: boolean
+  timezone?: string
+  jobs: SchedulerJob[]
+  server_time?: string
+}
+
+function SchedulerCard({
+  scheduler,
+  onRunAll,
+  runState,
+  disabled,
+}: {
+  scheduler?: SchedulerStatus
+  onRunAll: () => void
+  runState: { isPending: boolean; data: any; isError: boolean; error: unknown }
+  disabled: boolean
+}) {
+  const fmtNext = (iso: string | null) => {
+    if (!iso) return '—'
+    const d = new Date(iso)
+    return d.toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
+  }
+  return (
+    <section className="bg-white border rounded-lg overflow-hidden">
+      <div className="px-4 py-3 border-b flex items-center justify-between gap-3 flex-wrap">
+        <div className="min-w-0">
+          <h2 className="text-sm font-semibold text-neutral-900 inline-flex items-center gap-2">
+            <Calendar size={14} className="text-violet-600" />
+            Agendamento automático
+          </h2>
+          <p className="text-xs text-neutral-500 mt-0.5">
+            Roda toda madrugada quando a máquina está ligada. Se ficou off, executa 1× ao subir (grace de 1 dia).
+          </p>
+        </div>
+        <button
+          onClick={onRunAll}
+          disabled={disabled || runState.isPending}
+          className="text-xs bg-violet-600 hover:bg-violet-700 disabled:bg-neutral-300 text-white font-medium px-3 py-1.5 rounded inline-flex items-center gap-1.5"
+        >
+          <Zap size={12} />
+          {runState.isPending ? 'Executando…' : 'Atualizar tudo agora'}
+        </button>
+      </div>
+
+      <div className="p-4 grid grid-cols-1 md:grid-cols-3 gap-3">
+        {scheduler?.jobs?.length ? (
+          scheduler.jobs.map((j) => (
+            <div key={j.id} className="border rounded-md p-3 bg-neutral-50/50">
+              <div className="flex items-center gap-2 text-xs font-medium text-neutral-800">
+                <Sparkles size={12} className="text-violet-500" />
+                {j.name}
+              </div>
+              <div className="text-[11px] text-neutral-500 mt-2">
+                Próxima execução: <span className="text-neutral-700 font-medium">{fmtNext(j.next_run)}</span>
+              </div>
+            </div>
+          ))
+        ) : (
+          <div className="col-span-3 text-xs text-neutral-400 italic px-1 py-3">
+            Scheduler desligado ou sem jobs configurados.
+          </div>
+        )}
+      </div>
+
+      {runState.data && (
+        <div className="border-t bg-neutral-50 px-4 py-3 text-xs text-neutral-700 space-y-1">
+          <div className="font-semibold text-neutral-800 mb-1">Execução completa:</div>
+          <RunAllResultLine label="sync_all" payload={runState.data.sync_all} errorPayload={runState.data.sync_all_error} />
+          <RunAllResultLine label="ig_comments" payload={runState.data.ig_comments} errorPayload={runState.data.ig_comments_error} />
+          <RunAllResultLine label="classify" payload={runState.data.classify} errorPayload={runState.data.classify_error} />
+        </div>
+      )}
+      {runState.isError && (
+        <div className="border-t bg-error-bg px-4 py-2 text-xs text-error-text">
+          Erro: {String((runState.error as any)?.response?.data?.detail || runState.error)}
+        </div>
+      )}
+    </section>
+  )
+}
+
+function RunAllResultLine({ label, payload, errorPayload }: { label: string; payload: any; errorPayload?: string }) {
+  if (errorPayload) {
+    return (
+      <div className="flex items-start gap-2">
+        <StatusBadge status="error" />
+        <span className="font-mono text-neutral-600 w-24 shrink-0">{label}</span>
+        <span className="text-error-text break-words">{errorPayload}</span>
+      </div>
+    )
+  }
+  if (!payload) return null
+  // sync_all retorna { ok: {...}, errors: {...} }
+  if (payload.ok) {
+    const okCount = Object.keys(payload.ok).length
+    const errCount = Object.keys(payload.errors || {}).length
+    return (
+      <div className="flex items-center gap-2">
+        <StatusBadge status={errCount ? 'error' : 'success'} />
+        <span className="font-mono text-neutral-600 w-24">{label}</span>
+        <span className="text-neutral-700">{okCount} ok · {errCount} erro(s)</span>
+      </div>
+    )
+  }
+  // classify retorna { processed, fast_path, ia, errors }
+  if (typeof payload.processed === 'number') {
+    return (
+      <div className="flex items-center gap-2">
+        <StatusBadge status="success" />
+        <span className="font-mono text-neutral-600 w-24">{label}</span>
+        <span className="text-neutral-700">
+          {payload.processed} processados (fast {payload.fast_path} · IA {payload.ia} · erros {payload.errors})
+        </span>
+      </div>
+    )
+  }
+  // ig_comments retorna { entity, records, job_id }
+  if (typeof payload.records === 'number') {
+    return (
+      <div className="flex items-center gap-2">
+        <StatusBadge status="success" />
+        <span className="font-mono text-neutral-600 w-24">{label}</span>
+        <span className="text-neutral-700">{payload.records} comentários · job #{payload.job_id}</span>
+      </div>
+    )
+  }
+  return null
 }
 
 

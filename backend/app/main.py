@@ -7,13 +7,16 @@ from contextlib import asynccontextmanager
 
 from app.core.config import settings
 from app.api.v1.router import api_router
+from app.services.scheduler_service import shutdown_scheduler, start_scheduler
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
+    start_scheduler()
     yield
     # Shutdown
+    shutdown_scheduler()
 
 
 app = FastAPI(
