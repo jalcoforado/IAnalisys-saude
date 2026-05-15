@@ -20,8 +20,10 @@ from app.api.v1.dependencies.auth import get_current_user
 from app.core.config import settings
 from app.db.session import get_db
 from app.models.tenant import Tenant
+from app.repositories.home_layout_repository import get_layout, upsert_layout
 from app.schemas.auth import UserMe
 from app.schemas.home import AgendaSection, HomeDashboardResponse, StrategicOverview
+from app.schemas.home_layout import HomeLayoutResponse, HomeLayoutUpdate
 from app.services.ai_service import generate_agenda_narrative
 from app.services.home_service import (
     get_agenda_section,
@@ -157,3 +159,47 @@ async def home_agenda_ai_summary(
         raise HTTPException(status_code=502, detail=str(e))
 
     return AgendaAISummaryResponse(narrative=narrative, model=settings.ANTHROPIC_MODEL)
+
+
+# ── My-Analisys (home customizável) ───────────────────────────
+
+
+@router.get("/layout", response_model=HomeLayoutResponse)
+async def get_home_layout(
+    current_user: UserMe = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> HomeLayoutResponse:
+    """Retorna o layout customizado do usuário no "Meu IAnalisys" (My-Analisys).
+
+    Se nunca customizou, retorna `layout=None`. O frontend deve aplicar o
+    default da role atual e abrir o onboarding.
+    """
+    if not current_user.tenant_id:
+        raise HTTPException(status_code=400, detail="Usuário sem tenant associado.")
+    row = await get_layout(db, current_user.tenant_id, current_user.id)
+    if row is None:
+        return HomeLayoutResponse(layout=None, version=0, updated_at=None)
+    return HomeLayoutResponse(
+        layout=row.layout_json,
+        version=row.version,
+        updated_at=row.updated_at,
+    )
+
+
+@router.put("/layout", response_model=HomeLayoutResponse)
+async def update_home_layout(
+    payload: HomeLayoutUpdate,
+    current_user: UserMe = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> HomeLayoutResponse:
+    """Salva o layout do "Meu IAnalisys". Incrementa version a cada PUT."""
+    if not current_user.tenant_id:
+        raise HTTPException(status_code=400, detail="Usuário sem tenant associado.")
+    items = [item.model_dump() for item in payload.layout]
+    row = await upsert_layout(db, current_user.tenant_id, current_user.id, items)
+    await db.commit()
+    return HomeLayoutResponse(
+        layout=row.layout_json,
+        version=row.version,
+        updated_at=row.updated_at,
+    )

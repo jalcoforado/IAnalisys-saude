@@ -49,6 +49,7 @@ from app.models.sync_checkpoint import SyncCheckpoint
 from app.models.contaazul_token import ContaAzulToken
 from app.models.permission import Permission, RolePermission
 from app.models.password_reset_token import PasswordResetToken
+from app.models.user_home_layout import UserHomeLayout
 from app.models.staging_contaazul import (
     StgCaPessoas, StgCaProdutos, StgCaServicos, StgCaVendedores,
     StgCaContasReceber, StgCaContasPagar,
@@ -109,6 +110,8 @@ __all__ = [
     "SyncJob", "SyncCheckpoint", "ContaAzulToken",
     # Auth/RBAC
     "Permission", "RolePermission", "PasswordResetToken",
+    # My-Analisys (home customizável)
+    "UserHomeLayout",
     # Staging Conta Azul
     "StgCaPessoas", "StgCaProdutos", "StgCaServicos", "StgCaVendedores",
     "StgCaContasReceber", "StgCaContasPagar",
