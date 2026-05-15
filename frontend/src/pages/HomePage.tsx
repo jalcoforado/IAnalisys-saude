@@ -5,17 +5,11 @@ import { Loader2, Sparkles } from 'lucide-react'
 import { useAuth } from '@/modules/auth/AuthContext'
 import { usePageTitle } from '@/contexts/PageTitleContext'
 import { homeService } from '@/services/home.service'
-import { AgendaSummaryCard } from '@/modules/agenda/AgendaSummaryCard'
-import { StrategicAgendaSection } from '@/modules/agenda/StrategicAgendaCard'
-import { PendenciasCard } from '@/modules/agenda/PendenciasCard'
 import { PageContainer } from '@/components/layout/PageContainer'
 import { PageHeader } from '@/components/layout/PageHeader'
 import SonIAInsightBanner from '@/components/sonia/SonIAInsightBanner'
 import { useSonIA } from '@/components/sonia/SonIAContext'
-import { InadimplenciaCriticaCard } from '@/modules/home/cards/InadimplenciaCriticaCard'
-import { OrcamentosParadosCard } from '@/modules/home/cards/OrcamentosParadosCard'
-import { RecallCard } from '@/modules/home/cards/RecallCard'
-import { TopProfsCard } from '@/modules/home/cards/TopProfsCard'
+import { CustomizableGrid } from '@/modules/home/CustomizableGrid'
 import type { HomeDashboardResponse } from '@/types/home'
 
 const fmtDateLong = (iso: string) => {
@@ -30,7 +24,7 @@ const fmtWeekday = (iso: string) => {
 const WELCOME_KEY = 'sonia.welcome.shown'
 
 export default function HomePage() {
-  usePageTitle('Início', 'Cockpit operacional', 'INÍCIO')
+  usePageTitle('Início', 'MY-Analisys · seu painel personalizado', 'INÍCIO')
   const { user } = useAuth()
   const firstName = (user?.full_name || user?.email || '').split(/[\s.@]+/)[0]
 
@@ -96,15 +90,22 @@ export default function HomePage() {
 
         {q.isLoading && (
           <div className="bg-white border rounded-xl p-12 text-center text-neutral-500 text-sm shadow-sm flex items-center justify-center gap-2">
-            <Loader2 size={16} className="animate-spin" /> Carregando seu cockpit…
+            <Loader2 size={16} className="animate-spin" /> Carregando seu painel…
           </div>
         )}
         {q.isError && (
           <div className="bg-error-bg border border-error-border rounded-xl p-6 text-error-text text-sm">
-            Erro ao carregar o cockpit. Tente atualizar a página.
+            Erro ao carregar o painel. Tente atualizar a página.
           </div>
         )}
-        {q.data && <CockpitGrid data={q.data} />}
+        {q.data && user && (
+          <CustomizableGrid
+            homeData={q.data}
+            userRole={q.data.role}
+            userPermissions={user.permissions}
+            firstName={firstName}
+          />
+        )}
       </PageContainer>
     </main>
   )
@@ -130,24 +131,5 @@ function Greeting({ name, data }: { name: string; data: HomeDashboardResponse | 
         </div>
       )}
     />
-  )
-}
-
-function CockpitGrid({ data }: { data: HomeDashboardResponse }) {
-  // Donos/gestores veem a visão estratégica (3 dias agregados + top riscos +
-  // profs ociosos). Outros roles continuam com o resumo compacto de hoje.
-  const isManager = ['manager', 'tenant_admin', 'saas_admin'].includes(data.role)
-
-  return (
-    <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-      {isManager
-        ? <StrategicAgendaSection />
-        : data.agenda && <AgendaSummaryCard data={data.agenda} />}
-      {data.pendencias && <PendenciasCard data={data.pendencias} />}
-      {data.recall && <RecallCard data={data.recall} />}
-      {data.top_profs_semana && <TopProfsCard data={data.top_profs_semana} />}
-      {data.orcamentos_parados && <OrcamentosParadosCard data={data.orcamentos_parados} />}
-      {data.inadimplencia_critica && <InadimplenciaCriticaCard data={data.inadimplencia_critica} />}
-    </div>
   )
 }

@@ -10,6 +10,22 @@ export interface AgendaAISummaryResponse {
   model: string
 }
 
+/** Item de layout do "Meu IAnalisys" (My-Analisys) — compatível react-grid-layout. */
+export interface HomeLayoutItem {
+  widget_id: string
+  x: number
+  y: number
+  w: number
+  h: number
+}
+
+export interface HomeLayoutResponse {
+  /** null = usuário nunca customizou (front aplica default da role). */
+  layout: HomeLayoutItem[] | null
+  version: number
+  updated_at: string | null
+}
+
 export const homeService = {
   dashboard: () =>
     api.get<HomeDashboardResponse>('/home/dashboard').then((r) => r.data),
@@ -31,5 +47,15 @@ export const homeService = {
   agendaAISummary: () =>
     api
       .post<AgendaAISummaryResponse>('/home/agenda/ai-summary')
+      .then((r) => r.data),
+
+  /** Layout customizado do "Meu IAnalisys" do usuário logado. */
+  getLayout: () =>
+    api.get<HomeLayoutResponse>('/home/layout').then((r) => r.data),
+
+  /** Persiste o layout customizado. Incrementa version no backend. */
+  saveLayout: (layout: HomeLayoutItem[]) =>
+    api
+      .put<HomeLayoutResponse>('/home/layout', { layout })
       .then((r) => r.data),
 }
