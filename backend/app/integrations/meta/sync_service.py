@@ -28,8 +28,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.integrations.meta.client import MetaGraphClient, MetaGraphError
 from app.models.staging_meta import (
     StgMetaFbPage,
+    StgMetaFbPageInsights,
+    StgMetaFbPostInsights,
     StgMetaFbPosts,
+    StgMetaIgAccountInsights,
     StgMetaIgPerfil,
+    StgMetaIgPostInsights,
     StgMetaIgPosts,
     StgMetaPixel,
     StgMetaTokens,
@@ -296,13 +300,276 @@ async def sync_pixel(db: AsyncSession, tenant_id: str) -> dict[str, Any]:
 
 
 # ============================================================
+# 6. IG POST INSIGHTS — métricas por post (lifetime, cumulativo)
+# ============================================================
+# Métricas validadas em v19 (REELS retornam algumas a mais; comuns a todos os
+# tipos de mídia: reach, saved, likes, comments, shares, total_interactions).
+_IG_POST_METRICS = ["reach", "saved", "likes", "comments", "shares", "total_interactions"]
+
+
+def _epoch(d: date) -> int:
+    from datetime import datetime as _dt
+    return int(_dt(d.year, d.month, d.day).timestamp())
+
+
+def _insights_values_to_dict(payload: dict) -> dict[str, Any]:
+    """Achata `{data:[{name,values:[{value}]},...]}` para `{metric_name: value}`."""
+    out: dict[str, Any] = {}
+    for entry in payload.get("data") or []:
+        name = entry.get("name")
+        values = entry.get("values") or []
+        if not name or not values:
+            continue
+        # post insights: 1 valor (lifetime). account/page insights: lista por dia (tratado separado)
+        out[name] = values[-1].get("value") if values else None
+    return out
+
+
+async def sync_ig_post_insights(db: AsyncSession, tenant_id: str, *, limit: int = 25) -> dict[str, Any]:
+    """Para cada post IG já em staging, busca métricas. Idempotente por (tenant, post, hoje)."""
+    rec = await _get_token_record(db, tenant_id)
+
+    # Pega últimos N posts do staging (precisamos buscar insights dos posts conhecidos)
+    posts = (await db.execute(
+        select(StgMetaIgPosts.external_id, StgMetaIgPosts.raw_data)
+        .where(StgMetaIgPosts.tenant_id == tenant_id)
+        .order_by(StgMetaIgPosts.posted_at.desc())
+        .limit(limit)
+    )).all()
+
+    if not posts:
+        raise MetaSyncError("Nenhum post IG em staging — rode sync_ig_media antes.")
+
+    job = await _open_job(db, tenant_id, "ig_post_insights")
+    client = MetaGraphClient(rec.system_user_token)
+    today = date.today()
+    count = 0
+    errors: list[str] = []
+    try:
+        for post_external_id, _ in posts:
+            try:
+                resp = await client.get_ig_post_insights(post_external_id, _IG_POST_METRICS)
+                metrics = _insights_values_to_dict(resp)
+                stmt = mysql_insert(StgMetaIgPostInsights).values(
+                    tenant_id=tenant_id,
+                    external_id=f"{post_external_id}:{today.isoformat()}",
+                    data_referencia=today,
+                    post_external_id=post_external_id,
+                    raw_data={"metrics": metrics, "raw": resp},
+                    sync_job_id=job.id,
+                )
+                stmt = stmt.on_duplicate_key_update(
+                    raw_data=stmt.inserted.raw_data,
+                    sync_job_id=stmt.inserted.sync_job_id,
+                    synced_at=datetime.utcnow(),
+                )
+                await db.execute(stmt)
+                count += 1
+            except MetaGraphError as exc:
+                # Post pode não suportar todas as métricas (ex: foto vs reel) — registra e segue
+                errors.append(f"{post_external_id}: {exc}")
+        await _close_job(db, job, records=count, error="; ".join(errors[:3]) if errors and count == 0 else None)
+        await db.commit()
+        return {"entity": "ig_post_insights", "records": count, "job_id": job.id, "errors": len(errors)}
+    finally:
+        await client.aclose()
+
+
+# ============================================================
+# 7. FB POST INSIGHTS
+# ============================================================
+_FB_POST_METRICS = [
+    "post_impressions_unique",
+    "post_clicks",
+    "post_reactions_by_type_total",
+    "post_video_views",
+]
+
+
+async def sync_fb_post_insights(db: AsyncSession, tenant_id: str, *, limit: int = 25) -> dict[str, Any]:
+    rec = await _get_token_record(db, tenant_id)
+    if not rec.fb_page_token:
+        raise MetaSyncError("fb_page_token não configurado — rode /meta/validate.")
+
+    posts = (await db.execute(
+        select(StgMetaFbPosts.external_id, StgMetaFbPosts.raw_data)
+        .where(StgMetaFbPosts.tenant_id == tenant_id)
+        .order_by(StgMetaFbPosts.posted_at.desc())
+        .limit(limit)
+    )).all()
+
+    if not posts:
+        raise MetaSyncError("Nenhum post FB em staging — rode sync_fb_posts antes.")
+
+    job = await _open_job(db, tenant_id, "fb_post_insights")
+    client = MetaGraphClient(rec.system_user_token)
+    today = date.today()
+    count = 0
+    errors: list[str] = []
+    try:
+        for post_external_id, _ in posts:
+            try:
+                resp = await client.get_fb_post_insights(
+                    post_external_id, rec.fb_page_token, _FB_POST_METRICS
+                )
+                metrics = _insights_values_to_dict(resp)
+                stmt = mysql_insert(StgMetaFbPostInsights).values(
+                    tenant_id=tenant_id,
+                    external_id=f"{post_external_id}:{today.isoformat()}",
+                    data_referencia=today,
+                    post_external_id=post_external_id,
+                    raw_data={"metrics": metrics, "raw": resp},
+                    sync_job_id=job.id,
+                )
+                stmt = stmt.on_duplicate_key_update(
+                    raw_data=stmt.inserted.raw_data,
+                    sync_job_id=stmt.inserted.sync_job_id,
+                    synced_at=datetime.utcnow(),
+                )
+                await db.execute(stmt)
+                count += 1
+            except MetaGraphError as exc:
+                errors.append(f"{post_external_id}: {exc}")
+        await _close_job(db, job, records=count, error="; ".join(errors[:3]) if errors and count == 0 else None)
+        await db.commit()
+        return {"entity": "fb_post_insights", "records": count, "job_id": job.id, "errors": len(errors)}
+    finally:
+        await client.aclose()
+
+
+# ============================================================
+# 8. IG ACCOUNT INSIGHTS — métricas diárias da conta (alcance, follower_count)
+# ============================================================
+_IG_ACCOUNT_METRICS = ["reach", "follower_count"]
+
+
+async def sync_ig_account_insights(db: AsyncSession, tenant_id: str, *, days: int = 30) -> dict[str, Any]:
+    rec = await _get_token_record(db, tenant_id)
+    if not rec.ig_account_id:
+        raise MetaSyncError("ig_account_id não configurado.")
+
+    job = await _open_job(db, tenant_id, "ig_account_insights")
+    client = MetaGraphClient(rec.system_user_token)
+    today = date.today()
+    since = _epoch(date.fromordinal(today.toordinal() - days))
+    until = _epoch(today)
+    count = 0
+    try:
+        # Cada métrica gera 1 série diária; achatamos pra 1 row (tenant, data, metric)
+        for metric in _IG_ACCOUNT_METRICS:
+            try:
+                resp = await client.get_ig_account_insights_daily(
+                    rec.ig_account_id, [metric], since_epoch=since, until_epoch=until
+                )
+                entries = resp.get("data") or []
+                if not entries:
+                    continue
+                values = entries[0].get("values") or []
+                for v in values:
+                    end_time = v.get("end_time")
+                    dt_ref = _parse_iso(end_time)
+                    data_ref = dt_ref.date() if dt_ref else None
+                    if not data_ref:
+                        continue
+                    stmt = mysql_insert(StgMetaIgAccountInsights).values(
+                        tenant_id=tenant_id,
+                        external_id=f"{rec.ig_account_id}:{metric}:{data_ref.isoformat()}",
+                        data_referencia=data_ref,
+                        metric_name=metric,
+                        raw_data={"value": v.get("value"), "end_time": end_time, "metric": metric},
+                        sync_job_id=job.id,
+                    )
+                    stmt = stmt.on_duplicate_key_update(
+                        raw_data=stmt.inserted.raw_data,
+                        sync_job_id=stmt.inserted.sync_job_id,
+                        synced_at=datetime.utcnow(),
+                    )
+                    await db.execute(stmt)
+                    count += 1
+            except MetaGraphError:
+                pass  # tolera métrica deprecada / sem dado
+        await _close_job(db, job, records=count)
+        await db.commit()
+        return {"entity": "ig_account_insights", "records": count, "job_id": job.id}
+    finally:
+        await client.aclose()
+
+
+# ============================================================
+# 9. FB PAGE INSIGHTS — métricas diárias da Page
+# ============================================================
+_FB_PAGE_METRICS = [
+    "page_impressions_unique",
+    "page_post_engagements",
+    "page_views_total",
+    "page_video_views",
+]
+
+
+async def sync_fb_page_insights(db: AsyncSession, tenant_id: str, *, days: int = 30) -> dict[str, Any]:
+    rec = await _get_token_record(db, tenant_id)
+    if not rec.fb_page_id or not rec.fb_page_token:
+        raise MetaSyncError("fb_page_id/fb_page_token não configurados.")
+
+    job = await _open_job(db, tenant_id, "fb_page_insights")
+    client = MetaGraphClient(rec.system_user_token)
+    today = date.today()
+    since = _epoch(date.fromordinal(today.toordinal() - days))
+    until = _epoch(today)
+    count = 0
+    try:
+        for metric in _FB_PAGE_METRICS:
+            try:
+                resp = await client.get_fb_page_insights_daily(
+                    rec.fb_page_id, rec.fb_page_token, [metric],
+                    since_epoch=since, until_epoch=until,
+                )
+                entries = resp.get("data") or []
+                if not entries:
+                    continue
+                values = entries[0].get("values") or []
+                for v in values:
+                    end_time = v.get("end_time")
+                    dt_ref = _parse_iso(end_time)
+                    data_ref = dt_ref.date() if dt_ref else None
+                    if not data_ref:
+                        continue
+                    stmt = mysql_insert(StgMetaFbPageInsights).values(
+                        tenant_id=tenant_id,
+                        external_id=f"{rec.fb_page_id}:{metric}:{data_ref.isoformat()}",
+                        data_referencia=data_ref,
+                        metric_name=metric,
+                        raw_data={"value": v.get("value"), "end_time": end_time, "metric": metric},
+                        sync_job_id=job.id,
+                    )
+                    stmt = stmt.on_duplicate_key_update(
+                        raw_data=stmt.inserted.raw_data,
+                        sync_job_id=stmt.inserted.sync_job_id,
+                        synced_at=datetime.utcnow(),
+                    )
+                    await db.execute(stmt)
+                    count += 1
+            except MetaGraphError:
+                pass
+        await _close_job(db, job, records=count)
+        await db.commit()
+        return {"entity": "fb_page_insights", "records": count, "job_id": job.id}
+    finally:
+        await client.aclose()
+
+
+# ============================================================
 # Orquestrador: roda tudo o que funciona com permissions atuais
 # ============================================================
 SYNCERS = {
     "ig_profile": sync_ig_profile,
     "ig_media": sync_ig_media,
+    "ig_post_insights": sync_ig_post_insights,
+    "ig_account_insights": sync_ig_account_insights,
     "fb_page": sync_fb_page,
     "fb_posts": sync_fb_posts,
+    "fb_post_insights": sync_fb_post_insights,
+    "fb_page_insights": sync_fb_page_insights,
     "pixel": sync_pixel,
 }
 

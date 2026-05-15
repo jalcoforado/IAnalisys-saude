@@ -89,6 +89,20 @@ class MetaValidationResponse(BaseModel):
 # ============================================================
 # Dashboard /marketing/visao-geral — Sub-PR 21d (versão mínima)
 # ============================================================
+class MetaTopPost(BaseModel):
+    """Top post por reach (IG ou FB)."""
+    post_external_id: str
+    posted_at: Optional[datetime] = None
+    caption: Optional[str] = None
+    permalink: Optional[str] = None
+    media_url: Optional[str] = None
+    reach: Optional[int] = None
+    likes: Optional[int] = None
+    comments: Optional[int] = None
+    shares: Optional[int] = None
+    engagement_total: Optional[int] = None
+
+
 class MetaDashboardCard(BaseModel):
     """Um card de canal (IG/FB/Pixel) com o que dá pra mostrar hoje."""
     available: bool                          # tem snapshot recente?
@@ -105,6 +119,11 @@ class MetaDashboardCard(BaseModel):
     verification_status: Optional[str] = None
     website: Optional[str] = None
     biografia: Optional[str] = None
+    # Insights agregados (últimos 7 dias)
+    reach_7d: Optional[int] = None           # alcance somado nos últimos 7d
+    engagement_7d: Optional[int] = None      # interações somadas (FB) ou likes+comments+shares (IG)
+    followers_gained_7d: Optional[int] = None  # ganho líquido de seguidores 7d (só IG)
+    top_posts: list[MetaTopPost] = []        # top 3 posts por reach (lifetime)
     # Pixel
     pixel_name: Optional[str] = None
     pixel_last_fired_at: Optional[datetime] = None

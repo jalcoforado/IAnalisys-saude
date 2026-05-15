@@ -12,6 +12,7 @@ import { useQuery, type UseQueryResult } from '@tanstack/react-query'
 
 import { analiseService } from '@/services/analise.service'
 import { financeiroService } from '@/services/financeiro.service'
+import { metaService } from '@/services/meta.service'
 import { KpiCardEnriched } from '@/modules/analise/components/KpiCardEnriched'
 import type { KpiCard } from '@/types/analise'
 
@@ -116,6 +117,14 @@ export function useFinanceiroOverviewAtual() {
   return useQuery({
     queryKey: ['financeiro', 'overview', year, month],
     queryFn: () => financeiroService.overview(year, month),
+    staleTime: 5 * 60_000,
+  })
+}
+
+export function useMetaDashboard() {
+  return useQuery({
+    queryKey: ['meta', 'dashboard'],
+    queryFn: () => metaService.dashboard(),
     staleTime: 5 * 60_000,
   })
 }

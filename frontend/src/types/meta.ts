@@ -68,8 +68,12 @@ export interface MetaValidation {
 export type MetaSyncEntity =
   | 'ig_profile'
   | 'ig_media'
+  | 'ig_post_insights'
+  | 'ig_account_insights'
   | 'fb_page'
   | 'fb_posts'
+  | 'fb_post_insights'
+  | 'fb_page_insights'
   | 'pixel'
 
 export interface MetaSyncEntityResult {
@@ -85,6 +89,19 @@ export interface MetaSyncAllResult {
 }
 
 // ─── Dashboard /marketing/visao-geral ─────────────────────────────
+export interface MetaTopPost {
+  post_external_id: string
+  posted_at: string | null
+  caption: string | null
+  permalink: string | null
+  media_url: string | null
+  reach: number | null
+  likes: number | null
+  comments: number | null
+  shares: number | null
+  engagement_total: number | null
+}
+
 export interface MetaDashboardCard {
   available: boolean
   snapshot_date: string | null
@@ -100,6 +117,11 @@ export interface MetaDashboardCard {
   verification_status: string | null
   website: string | null
   biografia: string | null
+  // Insights agregados
+  reach_7d: number | null
+  engagement_7d: number | null
+  followers_gained_7d: number | null
+  top_posts: MetaTopPost[]
   // Pixel
   pixel_name: string | null
   pixel_last_fired_at: string | null

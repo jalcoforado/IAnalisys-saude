@@ -175,15 +175,71 @@ class MetaGraphClient:
         )
 
     async def get_fb_posts(self, page_id: str, page_token: str, *, limit: int = 25) -> dict[str, Any]:
-        """Posts publicados pela Page (header)."""
+        """Posts publicados pela Page (header).
+
+        likes.summary(true) e comments.summary(true) foram removidos porque exigem
+        a permission Page Public Content Access (App Review) — engagement orgânico
+        agora vem via /{post}/insights na transformação 21e.
+        """
         return await self._get(
             f"/{page_id}/posts",
             params={
                 "fields": (
-                    "id,message,created_time,permalink_url,full_picture,"
-                    "shares,likes.summary(true),comments.summary(true)"
+                    "id,message,created_time,permalink_url,full_picture,shares"
                 ),
                 "limit": str(limit),
+            },
+            token_override=page_token,
+        )
+
+    # ------------------------------------------------------------
+    # Insights — Sub-PR 21e
+    # ------------------------------------------------------------
+    async def get_ig_post_insights(
+        self, post_id: str, metrics: list[str]
+    ) -> dict[str, Any]:
+        """Métricas por post IG (period=lifetime — cumulativo desde a publicação)."""
+        return await self._get(
+            f"/{post_id}/insights",
+            params={"metric": ",".join(metrics)},
+        )
+
+    async def get_fb_post_insights(
+        self, post_id: str, page_token: str, metrics: list[str]
+    ) -> dict[str, Any]:
+        """Métricas por post FB (period=lifetime). Usa Page Token."""
+        return await self._get(
+            f"/{post_id}/insights",
+            params={"metric": ",".join(metrics)},
+            token_override=page_token,
+        )
+
+    async def get_ig_account_insights_daily(
+        self, ig_account_id: str, metrics: list[str], *, since_epoch: int, until_epoch: int
+    ) -> dict[str, Any]:
+        """Métricas da conta IG por dia (since/until em epoch)."""
+        return await self._get(
+            f"/{ig_account_id}/insights",
+            params={
+                "metric": ",".join(metrics),
+                "period": "day",
+                "since": str(since_epoch),
+                "until": str(until_epoch),
+            },
+        )
+
+    async def get_fb_page_insights_daily(
+        self, page_id: str, page_token: str, metrics: list[str],
+        *, since_epoch: int, until_epoch: int,
+    ) -> dict[str, Any]:
+        """Métricas da Page FB por dia (since/until em epoch). Usa Page Token."""
+        return await self._get(
+            f"/{page_id}/insights",
+            params={
+                "metric": ",".join(metrics),
+                "period": "day",
+                "since": str(since_epoch),
+                "until": str(until_epoch),
             },
             token_override=page_token,
         )

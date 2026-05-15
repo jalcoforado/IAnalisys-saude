@@ -28,7 +28,13 @@ from app.integrations.meta.sync_service import (
 )
 from app.models.staging_meta import (
     StgMetaFbPage,
+    StgMetaFbPageInsights,
+    StgMetaFbPostInsights,
+    StgMetaFbPosts,
+    StgMetaIgAccountInsights,
     StgMetaIgPerfil,
+    StgMetaIgPostInsights,
+    StgMetaIgPosts,
     StgMetaPixel,
     StgMetaTokens,
 )
@@ -39,6 +45,7 @@ from app.schemas.meta import (
     MetaPendingItem,
     MetaStatusResponse,
     MetaTokenIn,
+    MetaTopPost,
     MetaValidationCheck,
     MetaValidationResponse,
 )
@@ -335,6 +342,134 @@ async def meta_sync_all(
 # ============================================================
 # Dashboard /marketing/visao-geral — Sub-PR 21d
 # ============================================================
+async def _ig_insights_7d(db: AsyncSession, tenant_id: str) -> tuple[int | None, int | None]:
+    """Soma reach e ganho líquido de seguidores dos últimos 7 dias (stg_meta_ig_account_insights)."""
+    rows = (await db.execute(
+        select(StgMetaIgAccountInsights.metric_name, StgMetaIgAccountInsights.raw_data)
+        .where(StgMetaIgAccountInsights.tenant_id == tenant_id)
+        .order_by(StgMetaIgAccountInsights.data_referencia.desc())
+        .limit(60)
+    )).all()
+    if not rows:
+        return None, None
+    reach_total = 0
+    follower_gain = 0
+    seen_reach = 0
+    seen_follower = 0
+    for metric, raw in rows:
+        val = (raw or {}).get("value")
+        if val is None:
+            continue
+        if metric == "reach" and seen_reach < 7:
+            reach_total += int(val)
+            seen_reach += 1
+        elif metric == "follower_count" and seen_follower < 7:
+            follower_gain += int(val)
+            seen_follower += 1
+    return (reach_total if seen_reach else None, follower_gain if seen_follower else None)
+
+
+async def _fb_insights_7d(db: AsyncSession, tenant_id: str) -> tuple[int | None, int | None]:
+    """Soma page_impressions_unique e page_post_engagements dos últimos 7 dias."""
+    rows = (await db.execute(
+        select(StgMetaFbPageInsights.metric_name, StgMetaFbPageInsights.raw_data)
+        .where(StgMetaFbPageInsights.tenant_id == tenant_id)
+        .order_by(StgMetaFbPageInsights.data_referencia.desc())
+        .limit(120)
+    )).all()
+    if not rows:
+        return None, None
+    reach_total = 0
+    eng_total = 0
+    seen_reach = 0
+    seen_eng = 0
+    for metric, raw in rows:
+        val = (raw or {}).get("value")
+        if val is None:
+            continue
+        if metric == "page_impressions_unique" and seen_reach < 7:
+            reach_total += int(val)
+            seen_reach += 1
+        elif metric == "page_post_engagements" and seen_eng < 7:
+            eng_total += int(val)
+            seen_eng += 1
+    return (reach_total if seen_reach else None, eng_total if seen_eng else None)
+
+
+async def _ig_top_posts(db: AsyncSession, tenant_id: str, limit: int = 3) -> list[MetaTopPost]:
+    """Top N posts IG por reach (lifetime). Junta com stg_meta_ig_posts pra caption/permalink."""
+    insights = (await db.execute(
+        select(StgMetaIgPostInsights.post_external_id, StgMetaIgPostInsights.raw_data)
+        .where(StgMetaIgPostInsights.tenant_id == tenant_id)
+    )).all()
+    if not insights:
+        return []
+    posts = (await db.execute(
+        select(StgMetaIgPosts.external_id, StgMetaIgPosts.posted_at, StgMetaIgPosts.raw_data)
+        .where(StgMetaIgPosts.tenant_id == tenant_id)
+    )).all()
+    posts_map = {row[0]: (row[1], row[2] or {}) for row in posts}
+    items: list[MetaTopPost] = []
+    for post_id, raw in insights:
+        m = (raw or {}).get("metrics") or {}
+        reach = m.get("reach")
+        if reach is None:
+            continue
+        posted_at, post_raw = posts_map.get(post_id, (None, {}))
+        items.append(MetaTopPost(
+            post_external_id=post_id,
+            posted_at=posted_at,
+            caption=(post_raw.get("caption") or "")[:280] or None,
+            permalink=post_raw.get("permalink"),
+            media_url=post_raw.get("thumbnail_url") or post_raw.get("media_url"),
+            reach=int(reach),
+            likes=int(m.get("likes") or 0),
+            comments=int(m.get("comments") or 0),
+            shares=int(m.get("shares") or 0),
+            engagement_total=int(m.get("total_interactions") or 0) or None,
+        ))
+    items.sort(key=lambda p: p.reach or 0, reverse=True)
+    return items[:limit]
+
+
+async def _fb_top_posts(db: AsyncSession, tenant_id: str, limit: int = 3) -> list[MetaTopPost]:
+    """Top N posts FB por post_impressions_unique."""
+    insights = (await db.execute(
+        select(StgMetaFbPostInsights.post_external_id, StgMetaFbPostInsights.raw_data)
+        .where(StgMetaFbPostInsights.tenant_id == tenant_id)
+    )).all()
+    if not insights:
+        return []
+    posts = (await db.execute(
+        select(StgMetaFbPosts.external_id, StgMetaFbPosts.posted_at, StgMetaFbPosts.raw_data)
+        .where(StgMetaFbPosts.tenant_id == tenant_id)
+    )).all()
+    posts_map = {row[0]: (row[1], row[2] or {}) for row in posts}
+    items: list[MetaTopPost] = []
+    for post_id, raw in insights:
+        m = (raw or {}).get("metrics") or {}
+        reach = m.get("post_impressions_unique")
+        if reach is None:
+            continue
+        reactions = m.get("post_reactions_by_type_total") or {}
+        likes_total = sum(int(v) for v in reactions.values() if isinstance(v, (int, float)))
+        posted_at, post_raw = posts_map.get(post_id, (None, {}))
+        items.append(MetaTopPost(
+            post_external_id=post_id,
+            posted_at=posted_at,
+            caption=(post_raw.get("message") or "")[:280] or None,
+            permalink=post_raw.get("permalink_url"),
+            media_url=post_raw.get("full_picture"),
+            reach=int(reach),
+            likes=likes_total or None,
+            comments=None,
+            shares=None,
+            engagement_total=int(m.get("post_clicks") or 0) + likes_total or None,
+        ))
+    items.sort(key=lambda p: p.reach or 0, reverse=True)
+    return items[:limit]
+
+
 async def _latest_snapshot(db: AsyncSession, model, tenant_id: str):
     """Snapshot mais recente (maior data_referencia) p/ um canal do tenant."""
     result = await db.execute(
@@ -485,6 +620,16 @@ async def meta_dashboard(
     ig_card = _ig_card(ig_snap)
     fb_card = _fb_card(fb_snap)
     pixel_card = _pixel_card(pixel_snap)
+
+    # Enriquece com insights 7d + top posts (sub-PR 21e)
+    ig_reach, ig_follower_gain = await _ig_insights_7d(db, tenant_id)
+    fb_reach, fb_eng = await _fb_insights_7d(db, tenant_id)
+    ig_card.reach_7d = ig_reach
+    ig_card.followers_gained_7d = ig_follower_gain
+    ig_card.top_posts = await _ig_top_posts(db, tenant_id)
+    fb_card.reach_7d = fb_reach
+    fb_card.engagement_7d = fb_eng
+    fb_card.top_posts = await _fb_top_posts(db, tenant_id)
 
     scopes = (token.token_scopes or []) if token else []
     if not isinstance(scopes, list):

@@ -25,9 +25,11 @@ import {
   DollarSign,
   FileText,
   Filter,
+  Camera,
   Heart,
   Landmark,
   ListTodo,
+  Megaphone,
   Percent,
   Phone,
   PhoneCall,
@@ -60,6 +62,11 @@ import { TopLtvCard } from './widgets/TopLtvCard'
 import { ParaResgatarCard } from './widgets/ParaResgatarCard'
 import { SaldoPorBancoCard } from './widgets/SaldoPorBancoCard'
 import {
+  MarketingResumoCard,
+  MarketingStatusPixelCard,
+  MarketingTopPostsCard,
+} from './widgets/MarketingCards'
+import {
   KpiConversaoFinanceira,
   KpiFaturamento,
   KpiRecebido,
@@ -84,6 +91,7 @@ export type WidgetCategory =
   | 'Comercial'
   | 'Financeiro'
   | 'Operações'
+  | 'Marketing'
   | 'KPIs Financeiros'
   | 'KPIs Comerciais'
   | 'KPIs Pacientes'
@@ -431,6 +439,44 @@ export const WIDGET_CATALOG: WidgetMeta[] = [
     minSize: { w: 5, h: 4 },
     icon: PhoneCall,
     render: () => <ParaResgatarCard />,
+  },
+
+  // ─────────────────── MARKETING (Meta) ────────────────────
+  {
+    id: 'marketing_resumo_7d',
+    name: 'Marketing — últimos 7 dias',
+    description:
+      'Alcance + ganho de seguidores IG/FB nos últimos 7 dias (orgânico).',
+    category: 'Marketing',
+    permission: 'empresa.settings.read',
+    defaultSize: { w: 6, h: 4 },
+    minSize: { w: 4, h: 3 },
+    icon: Megaphone,
+    render: () => <MarketingResumoCard />,
+  },
+  {
+    id: 'marketing_top_posts',
+    name: 'Top posts (IG + FB)',
+    description:
+      'Top 3 posts Instagram e Facebook por alcance (lifetime).',
+    category: 'Marketing',
+    permission: 'empresa.settings.read',
+    defaultSize: { w: 6, h: 6 },
+    minSize: { w: 4, h: 4 },
+    icon: Camera,
+    render: () => <MarketingTopPostsCard />,
+  },
+  {
+    id: 'marketing_pixel_status',
+    name: 'Pixel & pendências TI',
+    description:
+      'Status do Pixel da clínica + checklist do que falta destravar com a TI.',
+    category: 'Marketing',
+    permission: 'empresa.settings.read',
+    defaultSize: { w: 4, h: 5 },
+    minSize: { w: 3, h: 4 },
+    icon: AlertCircle,
+    render: () => <MarketingStatusPixelCard />,
   },
 ]
 
