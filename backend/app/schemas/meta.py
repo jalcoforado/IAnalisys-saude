@@ -123,6 +123,12 @@ class MetaDashboardCard(BaseModel):
     reach_7d: Optional[int] = None           # alcance somado nos últimos 7d
     engagement_7d: Optional[int] = None      # interações somadas (FB) ou likes+comments+shares (IG)
     followers_gained_7d: Optional[int] = None  # ganho líquido de seguidores 7d (só IG)
+    posts_7d: Optional[int] = None           # quantidade de posts publicados nos últimos 7d
+    # Comparativo semana anterior (dias 8-14 atrás)
+    reach_7d_prev: Optional[int] = None
+    engagement_7d_prev: Optional[int] = None
+    followers_gained_7d_prev: Optional[int] = None
+    posts_7d_prev: Optional[int] = None
     top_posts: list[MetaTopPost] = []        # top 3 posts por reach (lifetime)
     # Pixel
     pixel_name: Optional[str] = None

@@ -28,6 +28,7 @@ import logging
 import random
 from typing import Any, Optional
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -47,6 +48,7 @@ _SUPPORTED_PAGES = {
     "/pacientes",
     "/agenda",
     "/",  # MY-Analisys (home customizada) — exige user_id pra ler layout do user
+    "/marketing/visao-geral",  # painel executivo Meta (Sub-PR 21e+)
 }
 
 
@@ -218,6 +220,8 @@ async def _build_snapshot(
         if user_id is None:
             return None  # home exige user_id pra ler layout
         return await _snapshot_home(db, tenant_id, user_id, year, month)
+    if page_key == "/marketing/visao-geral":
+        return await _snapshot_marketing(db, tenant_id)
     return None
 
 
@@ -921,6 +925,122 @@ async def _snapshot_agenda(
     }
 
 
+# ── Snapshot: /marketing/visao-geral (painel executivo Meta) ─────
+
+
+def _wow_pct(cur: Optional[int], prev: Optional[int]) -> Optional[float]:
+    """Calcula variação % week-over-week. None se prev é 0 ou ausente."""
+    if cur is None or prev is None or prev == 0:
+        return None
+    return round((cur - prev) / prev * 100, 1)
+
+
+def _fmt_wow(cur: Optional[int], prev: Optional[int], unit: str = "") -> str:
+    """Formata `cur (vs prev) — Δ%`. Ex: '78.786 (vs 61.586) — +27,9% WoW'."""
+    if cur is None:
+        return "—"
+    base = f"{cur:,}".replace(",", ".") + (f" {unit}" if unit else "")
+    pct = _wow_pct(cur, prev)
+    if pct is None or prev is None:
+        return base
+    prev_label = f"{prev:,}".replace(",", ".") + (f" {unit}" if unit else "")
+    sign = "+" if pct >= 0 else ""
+    return f"{base} (vs {prev_label} 7d antes) — {sign}{pct}% WoW"
+
+
+async def _snapshot_marketing(
+    db: AsyncSession, tenant_id: str,
+) -> Optional[dict[str, Any]]:
+    """Snapshot do painel executivo Meta (7d atual vs 7d anterior).
+
+    Não usa comparativos mensais — é uma visão SEMANAL. Inclui alcance,
+    engajamento, ganho de seguidores e top post pra DeepSeek narrar.
+    """
+    # Reusa os helpers do endpoint /meta/dashboard pra não duplicar SQL
+    from app.api.v1.routes.meta import (
+        _ig_insights_window, _fb_insights_window, _posts_count_window,
+        _ig_top_posts, _fb_top_posts,
+    )
+    from app.models.staging_meta import StgMetaFbPosts, StgMetaIgPerfil, StgMetaIgPosts
+
+    # Snapshots básicos pra obter @username / nome
+    ig_perfil = (await db.execute(
+        select(StgMetaIgPerfil)
+        .where(StgMetaIgPerfil.tenant_id == tenant_id)
+        .order_by(StgMetaIgPerfil.data_referencia.desc())
+        .limit(1)
+    )).scalar_one_or_none()
+
+    ig_win = await _ig_insights_window(db, tenant_id)
+    fb_win = await _fb_insights_window(db, tenant_id)
+    ig_posts_cur, ig_posts_prev = await _posts_count_window(db, StgMetaIgPosts, tenant_id)
+    fb_posts_cur, fb_posts_prev = await _posts_count_window(db, StgMetaFbPosts, tenant_id)
+    top_ig = await _ig_top_posts(db, tenant_id, limit=1)
+    top_fb = await _fb_top_posts(db, tenant_id, limit=1)
+
+    # Sem dados de insights = sem snapshot (SonIA cairá pra heurística front)
+    if not ig_win and not fb_win:
+        return None
+
+    ig_username = (ig_perfil.raw_data or {}).get("username") if ig_perfil else None
+    followers_total = (ig_perfil.raw_data or {}).get("followers_count") if ig_perfil else None
+
+    kpis_principais: dict[str, dict[str, Any]] = {
+        "alcance_ig_7d": {"valor": _fmt_wow(ig_win.get("reach_7d"), ig_win.get("reach_7d_prev"), "contas")},
+        "alcance_fb_7d": {"valor": _fmt_wow(fb_win.get("reach_7d"), fb_win.get("reach_7d_prev"), "contas")},
+        "seguidores_ig_ganho_7d": {
+            "valor": _fmt_wow(ig_win.get("followers_gained_7d"), ig_win.get("followers_gained_7d_prev"), "novos")
+            + (f" · total {followers_total:,}".replace(",", ".") if followers_total else ""),
+        },
+        "engajamento_fb_7d": {"valor": _fmt_wow(fb_win.get("engagement_7d"), fb_win.get("engagement_7d_prev"), "interações")},
+    }
+
+    secundarios: dict[str, dict[str, Any]] = {
+        "ritmo_publicacao_ig": {
+            "label": "Ritmo de publicação Instagram",
+            "valor": f"{ig_posts_cur} posts em 7d (vs {ig_posts_prev} na semana anterior)",
+            "nota": "frequência de publicações orgânicas no IG",
+        },
+        "ritmo_publicacao_fb": {
+            "label": "Ritmo de publicação Facebook",
+            "valor": f"{fb_posts_cur} posts em 7d (vs {fb_posts_prev} na semana anterior)",
+            "nota": "frequência de publicações orgânicas no FB",
+        },
+    }
+
+    if top_ig:
+        p = top_ig[0]
+        legenda = (p.caption or "").replace("\n", " ").strip()[:120]
+        secundarios["top_post_ig"] = {
+            "label": "Top post Instagram (lifetime)",
+            "valor": f"{p.reach:,} contas alcançadas".replace(",", ".") +
+                     (f" · {p.likes} curtidas" if p.likes else "") +
+                     (f" · {p.shares} compart." if p.shares else ""),
+            "nota": f"legenda: \"{legenda}\"" if legenda else "post sem legenda",
+        }
+    if top_fb:
+        p = top_fb[0]
+        legenda = (p.caption or "").replace("\n", " ").strip()[:120]
+        secundarios["top_post_fb"] = {
+            "label": "Top post Facebook (lifetime)",
+            "valor": f"{p.reach:,} pessoas alcançadas".replace(",", ".") +
+                     (f" · {p.likes} reações" if p.likes else ""),
+            "nota": f"legenda: \"{legenda}\"" if legenda else "post sem legenda",
+        }
+
+    return {
+        "periodo": "últimos 7 dias (comparado com 7 dias anteriores)",
+        "is_partial": False,
+        "is_semanal_marketing": True,  # flag nova pro prompt builder
+        "partial_days": None,
+        "partial_days_in_month": None,
+        "projected_label": None,
+        "ig_username": ig_username,
+        "kpis_principais": kpis_principais,
+        "kpis_secundarios": secundarios,
+    }
+
+
 # ── Snapshot: / (MY-Analisys — home customizada por user) ───────
 
 
@@ -1310,6 +1430,12 @@ def _build_user_prompt(
             "total_agenda": "Total de agendamentos", "confirmados": "Confirmados",
             "ja_realizadas": "Já em atendimento/atendidas", "ocupacao": "Ocupação vs teto histórico (P95)",
         },
+        "/marketing/visao-geral": {
+            "alcance_ig_7d": "Alcance Instagram (7d)",
+            "alcance_fb_7d": "Alcance Facebook (7d)",
+            "seguidores_ig_ganho_7d": "Ganho de seguidores Instagram (7d)",
+            "engajamento_fb_7d": "Engajamento Facebook (7d)",
+        },
     }
     labels = KPI_LABELS.get(page_key, {})
 
@@ -1319,6 +1445,18 @@ def _build_user_prompt(
             "(não um mês). Não use comparações com média de 6 meses. Compare contra "
             "baseline da clínica (P95 dos últimos 90 dias) que vem nos próprios KPIs."
         )
+        lines.append("")
+
+    if snapshot.get("is_semanal_marketing"):
+        ig_username = snapshot.get("ig_username")
+        lines.append(
+            "Esta é a VISÃO SEMANAL do painel de redes sociais (Instagram + Facebook orgânico). "
+            "Toda métrica vem com comparativo WoW (semana atual vs 7 dias anteriores). "
+            "NÃO use comparações mensais nem média 6m. Tom executivo: foco em direção (sobe/desce/estável) e em qual canal performou melhor."
+        )
+        if ig_username:
+            lines.append(f"O perfil é @{ig_username}.")
+        lines.append("Quando o crescimento WoW for > +20%, destaque como momentum. Quando for negativo, mencione com calma (semana pode oscilar).")
         lines.append("")
 
     if snapshot.get("is_home_customizada"):

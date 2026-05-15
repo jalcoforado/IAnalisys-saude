@@ -12,7 +12,7 @@ mutações (mesma matriz usada por Conta Azul).
 A tabela `stg_meta_tokens` é multi-tenant — UK por (tenant_id) garante 1 linha
 por clínica. O token NÃO é retornado em nenhum response.
 """
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select, delete
@@ -342,58 +342,78 @@ async def meta_sync_all(
 # ============================================================
 # Dashboard /marketing/visao-geral — Sub-PR 21d
 # ============================================================
-async def _ig_insights_7d(db: AsyncSession, tenant_id: str) -> tuple[int | None, int | None]:
-    """Soma reach e ganho líquido de seguidores dos últimos 7 dias (stg_meta_ig_account_insights)."""
+def _sum_metric_window(rows: list, metric: str, start: int, end: int) -> int | None:
+    """Soma `value` da `metric` na janela [start, end) de linhas já ordenadas por data DESC.
+    Retorna None quando a janela está totalmente vazia."""
+    seen = 0
+    total = 0
+    cnt = 0
+    for m, raw in rows:
+        if m != metric:
+            continue
+        if seen >= end:
+            break
+        if seen >= start:
+            val = (raw or {}).get("value")
+            if val is not None:
+                total += int(val)
+                cnt += 1
+        seen += 1
+    return total if cnt > 0 else None
+
+
+async def _ig_insights_window(db: AsyncSession, tenant_id: str) -> dict:
+    """Calcula reach/follower_count em 2 janelas: últimos 7d e 7d anteriores (8-14)."""
     rows = (await db.execute(
         select(StgMetaIgAccountInsights.metric_name, StgMetaIgAccountInsights.raw_data)
         .where(StgMetaIgAccountInsights.tenant_id == tenant_id)
         .order_by(StgMetaIgAccountInsights.data_referencia.desc())
-        .limit(60)
+        .limit(120)
     )).all()
     if not rows:
-        return None, None
-    reach_total = 0
-    follower_gain = 0
-    seen_reach = 0
-    seen_follower = 0
-    for metric, raw in rows:
-        val = (raw or {}).get("value")
-        if val is None:
-            continue
-        if metric == "reach" and seen_reach < 7:
-            reach_total += int(val)
-            seen_reach += 1
-        elif metric == "follower_count" and seen_follower < 7:
-            follower_gain += int(val)
-            seen_follower += 1
-    return (reach_total if seen_reach else None, follower_gain if seen_follower else None)
+        return {}
+    return {
+        "reach_7d": _sum_metric_window(rows, "reach", 0, 7),
+        "reach_7d_prev": _sum_metric_window(rows, "reach", 7, 14),
+        "followers_gained_7d": _sum_metric_window(rows, "follower_count", 0, 7),
+        "followers_gained_7d_prev": _sum_metric_window(rows, "follower_count", 7, 14),
+    }
 
 
-async def _fb_insights_7d(db: AsyncSession, tenant_id: str) -> tuple[int | None, int | None]:
-    """Soma page_impressions_unique e page_post_engagements dos últimos 7 dias."""
+async def _fb_insights_window(db: AsyncSession, tenant_id: str) -> dict:
+    """Calcula reach/engagement FB em 2 janelas: últimos 7d e 7d anteriores."""
     rows = (await db.execute(
         select(StgMetaFbPageInsights.metric_name, StgMetaFbPageInsights.raw_data)
         .where(StgMetaFbPageInsights.tenant_id == tenant_id)
         .order_by(StgMetaFbPageInsights.data_referencia.desc())
-        .limit(120)
+        .limit(240)
     )).all()
     if not rows:
-        return None, None
-    reach_total = 0
-    eng_total = 0
-    seen_reach = 0
-    seen_eng = 0
-    for metric, raw in rows:
-        val = (raw or {}).get("value")
-        if val is None:
-            continue
-        if metric == "page_impressions_unique" and seen_reach < 7:
-            reach_total += int(val)
-            seen_reach += 1
-        elif metric == "page_post_engagements" and seen_eng < 7:
-            eng_total += int(val)
-            seen_eng += 1
-    return (reach_total if seen_reach else None, eng_total if seen_eng else None)
+        return {}
+    return {
+        "reach_7d": _sum_metric_window(rows, "page_impressions_unique", 0, 7),
+        "reach_7d_prev": _sum_metric_window(rows, "page_impressions_unique", 7, 14),
+        "engagement_7d": _sum_metric_window(rows, "page_post_engagements", 0, 7),
+        "engagement_7d_prev": _sum_metric_window(rows, "page_post_engagements", 7, 14),
+    }
+
+
+async def _posts_count_window(db: AsyncSession, model, tenant_id: str) -> tuple[int | None, int | None]:
+    """Quantidade de posts publicados em 0-7d e 8-14d (janelas WoW)."""
+    from datetime import datetime as _dt
+    from sqlalchemy import func as _func, and_ as _and
+    today = _dt.utcnow()
+    cur_start = today - timedelta(days=7)
+    prev_start = today - timedelta(days=14)
+    cur = (await db.execute(
+        select(_func.count())
+        .where(_and(model.tenant_id == tenant_id, model.posted_at >= cur_start, model.posted_at < today))
+    )).scalar_one()
+    prev = (await db.execute(
+        select(_func.count())
+        .where(_and(model.tenant_id == tenant_id, model.posted_at >= prev_start, model.posted_at < cur_start))
+    )).scalar_one()
+    return (int(cur) if cur else 0, int(prev) if prev else 0)
 
 
 async def _ig_top_posts(db: AsyncSession, tenant_id: str, limit: int = 3) -> list[MetaTopPost]:
@@ -621,15 +641,23 @@ async def meta_dashboard(
     fb_card = _fb_card(fb_snap)
     pixel_card = _pixel_card(pixel_snap)
 
-    # Enriquece com insights 7d + top posts (sub-PR 21e)
-    ig_reach, ig_follower_gain = await _ig_insights_7d(db, tenant_id)
-    fb_reach, fb_eng = await _fb_insights_7d(db, tenant_id)
-    ig_card.reach_7d = ig_reach
-    ig_card.followers_gained_7d = ig_follower_gain
+    # Enriquece com insights 7d + WoW + top posts + posts publicados (sub-PR 21e/21e+)
+    ig_win = await _ig_insights_window(db, tenant_id)
+    fb_win = await _fb_insights_window(db, tenant_id)
+    ig_card.reach_7d = ig_win.get("reach_7d")
+    ig_card.reach_7d_prev = ig_win.get("reach_7d_prev")
+    ig_card.followers_gained_7d = ig_win.get("followers_gained_7d")
+    ig_card.followers_gained_7d_prev = ig_win.get("followers_gained_7d_prev")
     ig_card.top_posts = await _ig_top_posts(db, tenant_id)
-    fb_card.reach_7d = fb_reach
-    fb_card.engagement_7d = fb_eng
+    fb_card.reach_7d = fb_win.get("reach_7d")
+    fb_card.reach_7d_prev = fb_win.get("reach_7d_prev")
+    fb_card.engagement_7d = fb_win.get("engagement_7d")
+    fb_card.engagement_7d_prev = fb_win.get("engagement_7d_prev")
     fb_card.top_posts = await _fb_top_posts(db, tenant_id)
+    ig_posts_cur, ig_posts_prev = await _posts_count_window(db, StgMetaIgPosts, tenant_id)
+    fb_posts_cur, fb_posts_prev = await _posts_count_window(db, StgMetaFbPosts, tenant_id)
+    ig_card.posts_7d, ig_card.posts_7d_prev = ig_posts_cur, ig_posts_prev
+    fb_card.posts_7d, fb_card.posts_7d_prev = fb_posts_cur, fb_posts_prev
 
     scopes = (token.token_scopes or []) if token else []
     if not isinstance(scopes, list):

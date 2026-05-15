@@ -117,10 +117,16 @@ export interface MetaDashboardCard {
   verification_status: string | null
   website: string | null
   biografia: string | null
-  // Insights agregados
+  // Insights agregados (últimos 7d)
   reach_7d: number | null
   engagement_7d: number | null
   followers_gained_7d: number | null
+  posts_7d: number | null
+  // WoW (7d anteriores)
+  reach_7d_prev: number | null
+  engagement_7d_prev: number | null
+  followers_gained_7d_prev: number | null
+  posts_7d_prev: number | null
   top_posts: MetaTopPost[]
   // Pixel
   pixel_name: string | null

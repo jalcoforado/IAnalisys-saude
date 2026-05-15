@@ -1,39 +1,123 @@
 /**
- * Visão Geral Meta (/marketing/visao-geral) — Sub-PR 21d.
+ * Painel Executivo — /marketing/visao-geral (Sub-PR 21e+).
  *
- * Página de "primeira impressão" do módulo Marketing. Usa os snapshots
- * mais recentes (perfil IG, página FB, pixel) já gravados por sync e
- * mostra:
- *   1. 3 cards grandes (IG, FB, Pixel) com números reais
- *   2. Checklist de pendências da TI (preenchido pelo backend)
- *   3. Placeholders das seções que vão aparecer quando TI destravar
+ * Estilo executivo inspirado no painel do Dr. Plutarco (PHP) — moderno,
+ * com saudação contextual, KPIs grandes com delta WoW visual, post hero
+ * com imagem, status multicanal compacto e análise narrativa SonIA.
  *
- * Conforme syncs forem rodando, os blocos preenchidos vão crescendo
- * automaticamente — sem mexer no código.
+ * Dados: `/meta/dashboard` (snapshots + insights 7d/7d_prev + top_posts).
+ * SonIA: page_key `/marketing/visao-geral` (DeepSeek).
  */
+import { useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import {
-  Activity, AlertTriangle, ArrowRight, Camera, CheckCircle2, ExternalLink,
-  Globe, Heart, Image as ImageIcon, MessageCircle, MessageSquare, Share2,
-  TrendingUp, Users, XCircle,
+  Activity, AlertTriangle, ArrowDownRight, ArrowRight, ArrowUpRight,
+  Camera, CheckCircle2, ExternalLink, FileEdit, Heart, Image as ImageIcon,
+  MessageCircle, MessageSquare, Minus, Share2, Sparkles, TrendingUp,
+  Users, XCircle,
 } from 'lucide-react'
 import { Link } from 'react-router-dom'
 
 import { metaService } from '@/services/meta.service'
 import { usePageTitle } from '@/contexts/PageTitleContext'
 import { PageContainer } from '@/components/layout/PageContainer'
-import { PageHeader } from '@/components/layout/PageHeader'
-import type { MetaDashboardCard, MetaPendingItem, MetaTopPost } from '@/types/meta'
+import { useAuth } from '@/modules/auth/AuthContext'
+import { useSonIA, type SonIAInsight } from '@/components/sonia/SonIAContext'
+import type {
+  MetaDashboard, MetaDashboardCard, MetaPendingItem, MetaTopPost,
+} from '@/types/meta'
 
-const fmtNum = (n: number | null | undefined) =>
+// ─────────────────────────────────────────────────────────────────
+// Formatadores
+// ─────────────────────────────────────────────────────────────────
+
+const fmtNum = (n: number | null | undefined): string =>
   n == null ? '—' : new Intl.NumberFormat('pt-BR').format(n)
 
-const fmtDate = (iso: string | null | undefined) =>
-  iso ? new Date(iso).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' }) : '—'
+const fmtCompact = (n: number | null | undefined): string => {
+  if (n == null) return '—'
+  if (Math.abs(n) >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
+  if (Math.abs(n) >= 1_000) return `${(n / 1_000).toFixed(1)}k`
+  return String(n)
+}
+
+const wowPct = (cur: number | null, prev: number | null): number | null => {
+  if (cur == null || prev == null || prev === 0) return null
+  return Number((((cur - prev) / prev) * 100).toFixed(1))
+}
+
+const saudacao = (now: Date, firstName?: string | null): string => {
+  const h = now.getHours()
+  const base = h < 6 ? 'Boa madrugada' : h < 12 ? 'Bom dia' : h < 18 ? 'Boa tarde' : 'Boa noite'
+  return firstName ? `${base}, ${firstName}` : base
+}
+
+const semanaLabel = (now: Date): string => {
+  const fim = now.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' })
+  const inicio = new Date(now.getTime() - 6 * 86400_000).toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' })
+  return `${inicio} – ${fim}`
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Heurística SonIA (fallback se DeepSeek estiver fora)
+// ─────────────────────────────────────────────────────────────────
+
+function buildMarketingInsight(d: MetaDashboard): SonIAInsight {
+  const ig = d.instagram, fb = d.facebook
+  const wow_ig = wowPct(ig.reach_7d, ig.reach_7d_prev)
+  const wow_fb = wowPct(fb.reach_7d, fb.reach_7d_prev)
+  const bullets: NonNullable<SonIAInsight['bullets']> = []
+
+  if (ig.reach_7d != null) {
+    const tone = wow_ig != null && wow_ig > 10 ? 'positive' : wow_ig != null && wow_ig < -10 ? 'warning' : 'neutral'
+    const delta = wow_ig != null ? ` (${wow_ig >= 0 ? '+' : ''}${wow_ig}% WoW)` : ''
+    bullets.push({ text: `Instagram alcançou ${fmtNum(ig.reach_7d)} contas nos últimos 7 dias${delta}.`, tone })
+  }
+  if (fb.reach_7d != null) {
+    const tone = wow_fb != null && wow_fb > 10 ? 'positive' : wow_fb != null && wow_fb < -10 ? 'warning' : 'neutral'
+    const delta = wow_fb != null ? ` (${wow_fb >= 0 ? '+' : ''}${wow_fb}% WoW)` : ''
+    bullets.push({ text: `Facebook alcançou ${fmtNum(fb.reach_7d)} pessoas${delta}.`, tone })
+  }
+  if (ig.followers_gained_7d != null) {
+    bullets.push({
+      text: `${ig.followers_gained_7d >= 0 ? '+' : ''}${fmtNum(ig.followers_gained_7d)} novos seguidores no Instagram (total ${fmtNum(ig.followers)}).`,
+      tone: ig.followers_gained_7d > 0 ? 'positive' : 'neutral',
+    })
+  }
+  const top = ig.top_posts[0]
+  if (top) {
+    bullets.push({
+      text: `Top post da semana: ${fmtNum(top.reach)} contas alcançadas — "${(top.caption || '').slice(0, 60)}…"`,
+      tone: 'positive',
+    })
+  }
+  return {
+    mood: 'happy',
+    headline: 'Olhei sua semana nas redes.',
+    detail: 'Resumo executivo dos últimos 7 dias contra a semana anterior — pra você ver tendência sem abrir cada canal.',
+    bullets,
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Página
+// ─────────────────────────────────────────────────────────────────
 
 export default function VisaoGeralPage() {
-  usePageTitle('Visão Geral', 'Instagram · Facebook · Pixel — snapshot atual', 'MARKETING')
+  usePageTitle('Painel Executivo', 'Redes Sociais · semana atual vs anterior', 'MARKETING')
   const q = useQuery({ queryKey: ['meta', 'dashboard'], queryFn: metaService.dashboard })
+  const { user } = useAuth()
+  const { publish, clear } = useSonIA()
+
+  useEffect(() => {
+    if (!q.data) return
+    publish({
+      pageKey: '/marketing/visao-geral',
+      pageTitle: 'Painel Executivo · Redes Sociais',
+      data: { insight: buildMarketingInsight(q.data) },
+    })
+    return () => clear('/marketing/visao-geral')
+  }, [q.data, publish, clear])
 
   if (q.isLoading) {
     return (
@@ -48,233 +132,83 @@ export default function VisaoGeralPage() {
     return (
       <PageContainer>
         <div className="bg-error-bg border border-error-border rounded-xl p-6 text-error-text text-sm">
-          Erro ao carregar dashboard Meta.
+          Erro ao carregar painel.
         </div>
       </PageContainer>
     )
   }
 
   const d = q.data
+  const firstName = (user?.full_name || user?.email || '').split(' ')[0] || ''
+  const now = new Date()
+
   return (
     <PageContainer gap={6}>
-      <PageHeader
-        eyebrow="MARKETING"
-        title="Visão Geral"
-        subtitle={
-          d.business_name
-            ? `${d.business_name} · snapshot atual das redes`
-            : 'Snapshot atual das redes sociais'
-        }
-        icon={<TrendingUp size={20} />}
-      />
+      {/* ─── Hero header executivo (gradient) ────────────────────── */}
+      <header className="bg-gradient-to-br from-violet-600 via-fuchsia-600 to-pink-600 rounded-2xl p-6 md:p-8 text-white shadow-lg">
+        <div className="flex items-start justify-between gap-4 flex-wrap">
+          <div className="min-w-0">
+            <div className="text-xs uppercase tracking-[0.2em] opacity-80 mb-1">
+              Painel Executivo · Redes Sociais
+            </div>
+            <h1 className="text-2xl md:text-3xl font-bold leading-tight">
+              {saudacao(now, firstName)}.
+            </h1>
+            <p className="text-white/90 mt-1 text-sm md:text-base">
+              Sua semana em uma olhada — <span className="opacity-90">{semanaLabel(now)}</span>
+              {d.business_name && <> · {d.business_name}</>}
+            </p>
+          </div>
+          <div className="flex items-center gap-2 text-xs">
+            <span className="bg-white/15 backdrop-blur px-3 py-1 rounded-full inline-flex items-center gap-1">
+              <Sparkles size={12} /> SonIA · análise viva
+            </span>
+          </div>
+        </div>
+      </header>
 
       {!d.has_connection && <ConnectionWarning />}
 
-      {/* Barra de KPIs agregados últimos 7 dias */}
-      <KpisSevenDays ig={d.instagram} fb={d.facebook} />
+      {/* ─── 4 KPIs primários com WoW ─────────────────────────────── */}
+      <KpiGrid ig={d.instagram} fb={d.facebook} />
 
-      {/* Top 3 cards grandes */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <InstagramCard card={d.instagram} />
-        <FacebookCard card={d.facebook} />
-        <PixelCard card={d.pixel} />
-      </div>
-
-      {/* Top posts IG + FB */}
-      {(d.instagram.top_posts.length > 0 || d.facebook.top_posts.length > 0) && (
-        <TopPostsSection ig={d.instagram.top_posts} fb={d.facebook.top_posts} />
+      {/* ─── Top post hero + lista ────────────────────────────────── */}
+      {d.instagram.top_posts.length > 0 && (
+        <HeroPost top={d.instagram.top_posts[0]} igRest={d.instagram.top_posts.slice(1)} fb={d.facebook.top_posts} />
       )}
 
-      {/* Pendências TI */}
+      {/* ─── Painéis IG + FB + Pixel (compactos, sem repetir KPIs) ─ */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <ChannelCard
+          icon={<ImageIcon size={18} className="text-pink-600" />}
+          accent="bg-pink-50 text-pink-700 border-pink-200"
+          channel="Instagram"
+          card={d.instagram}
+          followersLabel="Seguidores"
+          postsLabel="Publicações"
+        />
+        <ChannelCard
+          icon={<MessageSquare size={18} className="text-blue-700" />}
+          accent="bg-blue-50 text-blue-700 border-blue-200"
+          channel="Facebook"
+          card={d.facebook}
+          followersLabel="Fãs"
+          postsLabel="Engajamento 7d"
+        />
+        <PixelMiniCard card={d.pixel} />
+      </div>
+
+      {/* ─── Pendências TI ────────────────────────────────────────── */}
       {d.pending.length > 0 && <PendingTI items={d.pending} />}
 
-      {/* Placeholders do que vem */}
-      <ComingSoon hasPending={d.pending.length > 0} />
+      {/* ─── Em construção ────────────────────────────────────────── */}
+      <ComingSoon />
     </PageContainer>
   )
 }
 
 // ─────────────────────────────────────────────────────────────────
-// KPIs agregados (últimos 7 dias)
-// ─────────────────────────────────────────────────────────────────
-
-function KpisSevenDays({ ig, fb }: { ig: MetaDashboardCard; fb: MetaDashboardCard }) {
-  const reachTotal = (ig.reach_7d ?? 0) + (fb.reach_7d ?? 0)
-  const hasAny =
-    ig.reach_7d != null || fb.reach_7d != null ||
-    ig.followers_gained_7d != null || fb.engagement_7d != null
-  if (!hasAny) return null
-
-  return (
-    <section className="bg-white border rounded-xl p-5 shadow-sm">
-      <div className="flex items-center justify-between mb-4">
-        <div>
-          <h2 className="text-sm font-semibold text-neutral-800">Performance — últimos 7 dias</h2>
-          <p className="text-[11px] text-neutral-500">Reach orgânico, ganho de seguidores e engajamento agregados</p>
-        </div>
-        <span className="text-[10px] uppercase tracking-wider text-neutral-400">Lifetime · 7d</span>
-      </div>
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <KpiBlock
-          label="Alcance total"
-          value={fmtNum(reachTotal)}
-          hint="IG + FB combinados"
-          icon={<Activity size={18} />}
-          iconBg="bg-blue-50"
-          iconColor="text-blue-600"
-        />
-        <KpiBlock
-          label="Alcance Instagram"
-          value={fmtNum(ig.reach_7d)}
-          hint={ig.username ? `@${ig.username}` : undefined}
-          icon={<ImageIcon size={18} />}
-          iconBg="bg-pink-50"
-          iconColor="text-pink-600"
-        />
-        <KpiBlock
-          label="+Seguidores IG"
-          value={ig.followers_gained_7d != null ? `+${fmtNum(ig.followers_gained_7d)}` : '—'}
-          hint={ig.followers != null ? `total ${fmtNum(ig.followers)}` : undefined}
-          icon={<Users size={18} />}
-          iconBg="bg-violet-50"
-          iconColor="text-violet-600"
-        />
-        <KpiBlock
-          label="Engajamento Facebook"
-          value={fmtNum(fb.engagement_7d)}
-          hint={fb.reach_7d != null ? `${fmtNum(fb.reach_7d)} de alcance` : undefined}
-          icon={<Globe size={18} />}
-          iconBg="bg-blue-50"
-          iconColor="text-blue-700"
-        />
-      </div>
-    </section>
-  )
-}
-
-function KpiBlock({
-  label, value, hint, icon, iconBg, iconColor,
-}: {
-  label: string
-  value: string
-  hint?: string
-  icon: React.ReactNode
-  iconBg: string
-  iconColor: string
-}) {
-  return (
-    <div className="flex items-center gap-3">
-      <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${iconBg} ${iconColor} shrink-0`}>
-        {icon}
-      </div>
-      <div className="min-w-0">
-        <div className="text-[10px] uppercase tracking-wider text-neutral-500 truncate">{label}</div>
-        <div className="text-lg font-semibold text-neutral-900 truncate tabular-nums">{value}</div>
-        {hint && <div className="text-[11px] text-neutral-400 truncate">{hint}</div>}
-      </div>
-    </div>
-  )
-}
-
-// ─────────────────────────────────────────────────────────────────
-// Top Posts
-// ─────────────────────────────────────────────────────────────────
-
-function TopPostsSection({ ig, fb }: { ig: MetaTopPost[]; fb: MetaTopPost[] }) {
-  return (
-    <section className="bg-white border rounded-xl p-5 shadow-sm">
-      <div className="flex items-center justify-between mb-4">
-        <div>
-          <h2 className="text-sm font-semibold text-neutral-800">Top posts por alcance</h2>
-          <p className="text-[11px] text-neutral-500">3 maiores Instagram + 3 maiores Facebook (lifetime)</p>
-        </div>
-      </div>
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-        <div>
-          <div className="text-[10px] uppercase tracking-wider text-pink-600 font-medium mb-2">Instagram</div>
-          {ig.length === 0 ? (
-            <div className="text-xs text-neutral-400 italic">Sem dados.</div>
-          ) : (
-            <ul className="space-y-2">
-              {ig.map((p) => <TopPostRow key={p.post_external_id} post={p} channel="ig" />)}
-            </ul>
-          )}
-        </div>
-        <div>
-          <div className="text-[10px] uppercase tracking-wider text-blue-600 font-medium mb-2">Facebook</div>
-          {fb.length === 0 ? (
-            <div className="text-xs text-neutral-400 italic">Sem dados.</div>
-          ) : (
-            <ul className="space-y-2">
-              {fb.map((p) => <TopPostRow key={p.post_external_id} post={p} channel="fb" />)}
-            </ul>
-          )}
-        </div>
-      </div>
-    </section>
-  )
-}
-
-function TopPostRow({ post, channel }: { post: MetaTopPost; channel: 'ig' | 'fb' }) {
-  const caption = (post.caption || 'Sem legenda').replace(/\s+/g, ' ').slice(0, 110)
-  const date = post.posted_at
-    ? new Date(post.posted_at).toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' })
-    : null
-  return (
-    <li className="flex items-start gap-3 p-2 rounded-lg hover:bg-neutral-50 transition">
-      {post.media_url ? (
-        <img
-          src={post.media_url}
-          alt=""
-          className="w-14 h-14 rounded-md object-cover border shrink-0"
-          referrerPolicy="no-referrer"
-        />
-      ) : (
-        <div className="w-14 h-14 rounded-md bg-neutral-100 flex items-center justify-center text-neutral-400 shrink-0">
-          {channel === 'ig' ? <ImageIcon size={20} /> : <Globe size={20} />}
-        </div>
-      )}
-      <div className="min-w-0 flex-1">
-        <p className="text-xs text-neutral-700 line-clamp-2">{caption}</p>
-        <div className="flex items-center gap-3 mt-1 text-[11px] text-neutral-500 tabular-nums">
-          <span className="inline-flex items-center gap-1">
-            <Activity size={11} /> {fmtNum(post.reach)}
-          </span>
-          {post.likes != null && post.likes > 0 && (
-            <span className="inline-flex items-center gap-1">
-              <Heart size={11} /> {fmtNum(post.likes)}
-            </span>
-          )}
-          {post.comments != null && post.comments > 0 && (
-            <span className="inline-flex items-center gap-1">
-              <MessageCircle size={11} /> {fmtNum(post.comments)}
-            </span>
-          )}
-          {post.shares != null && post.shares > 0 && (
-            <span className="inline-flex items-center gap-1">
-              <Share2 size={11} /> {fmtNum(post.shares)}
-            </span>
-          )}
-          {date && <span className="text-neutral-400 ml-auto">{date}</span>}
-        </div>
-      </div>
-      {post.permalink && (
-        <a
-          href={post.permalink}
-          target="_blank"
-          rel="noreferrer"
-          className="text-neutral-400 hover:text-neutral-700 mt-1 shrink-0"
-          aria-label="Abrir post"
-        >
-          <ExternalLink size={14} />
-        </a>
-      )}
-    </li>
-  )
-}
-
-// ─────────────────────────────────────────────────────────────────
-// Banner sem conexão
+// Connection warning
 // ─────────────────────────────────────────────────────────────────
 
 function ConnectionWarning() {
@@ -284,8 +218,7 @@ function ConnectionWarning() {
       <div className="flex-1">
         <strong className="text-warning-text">Sem conexão Meta ativa.</strong>{' '}
         <span className="text-neutral-700">
-          Os dados abaixo podem estar desatualizados ou ausentes. Configure o token e valide
-          em <Link to="/empresa/meta-config" className="underline">/empresa/meta-config</Link>.
+          Configure o token e valide em <Link to="/empresa/meta-config" className="underline">/empresa/meta-config</Link>.
         </span>
       </div>
     </div>
@@ -293,245 +226,365 @@ function ConnectionWarning() {
 }
 
 // ─────────────────────────────────────────────────────────────────
-// Cards principais
+// Grid de 4 KPIs primários grandes com delta WoW
 // ─────────────────────────────────────────────────────────────────
 
-function InstagramCard({ card }: { card: MetaDashboardCard }) {
+function KpiGrid({ ig, fb }: { ig: MetaDashboardCard; fb: MetaDashboardCard }) {
+  return (
+    <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      <KpiCard
+        label="Alcance Instagram"
+        sublabel="contas únicas · 7d"
+        value={fmtNum(ig.reach_7d)}
+        valueCompact={fmtCompact(ig.reach_7d)}
+        prev={ig.reach_7d_prev}
+        cur={ig.reach_7d}
+        icon={<ImageIcon size={20} />}
+        accent="from-pink-500 to-fuchsia-500"
+      />
+      <KpiCard
+        label="Alcance Facebook"
+        sublabel="pessoas únicas · 7d"
+        value={fmtNum(fb.reach_7d)}
+        valueCompact={fmtCompact(fb.reach_7d)}
+        prev={fb.reach_7d_prev}
+        cur={fb.reach_7d}
+        icon={<MessageSquare size={20} />}
+        accent="from-blue-500 to-blue-700"
+      />
+      <KpiCard
+        label="+Seguidores Instagram"
+        sublabel={`total ${fmtNum(ig.followers)} · 7d`}
+        value={ig.followers_gained_7d != null ? `+${fmtNum(ig.followers_gained_7d)}` : '—'}
+        valueCompact={ig.followers_gained_7d != null ? `+${fmtCompact(ig.followers_gained_7d)}` : '—'}
+        prev={ig.followers_gained_7d_prev}
+        cur={ig.followers_gained_7d}
+        icon={<Users size={20} />}
+        accent="from-violet-500 to-purple-600"
+      />
+      <KpiCard
+        label="Engajamento Facebook"
+        sublabel="interações em posts · 7d"
+        value={fmtNum(fb.engagement_7d)}
+        valueCompact={fmtCompact(fb.engagement_7d)}
+        prev={fb.engagement_7d_prev}
+        cur={fb.engagement_7d}
+        icon={<Heart size={20} />}
+        accent="from-rose-500 to-pink-600"
+      />
+    </section>
+  )
+}
+
+function KpiCard({
+  label, sublabel, value, valueCompact, cur, prev, icon, accent,
+}: {
+  label: string
+  sublabel: string
+  value: string
+  valueCompact: string
+  cur: number | null
+  prev: number | null
+  icon: React.ReactNode
+  accent: string
+}) {
+  const pct = wowPct(cur, prev)
+  const tone = pct == null ? 'neutral' : pct >= 5 ? 'up' : pct <= -5 ? 'down' : 'flat'
+  const toneStyles = {
+    up: 'text-emerald-700 bg-emerald-50 border-emerald-200',
+    down: 'text-rose-700 bg-rose-50 border-rose-200',
+    flat: 'text-neutral-600 bg-neutral-50 border-neutral-200',
+    neutral: 'text-neutral-400 bg-neutral-50 border-neutral-200',
+  }[tone]
+  const ToneIcon = tone === 'up' ? ArrowUpRight : tone === 'down' ? ArrowDownRight : Minus
+
+  return (
+    <div className="bg-white border rounded-xl p-5 shadow-sm relative overflow-hidden">
+      <div className={`absolute top-0 left-0 right-0 h-1 bg-gradient-to-r ${accent}`} aria-hidden />
+      <div className="flex items-start justify-between gap-2 mb-3">
+        <div className="min-w-0">
+          <div className="text-xs uppercase tracking-wider text-neutral-500 font-medium">{label}</div>
+          <div className="text-[11px] text-neutral-400 mt-0.5">{sublabel}</div>
+        </div>
+        <div className={`w-9 h-9 rounded-lg bg-gradient-to-br ${accent} text-white flex items-center justify-center shrink-0 shadow-sm`}>
+          {icon}
+        </div>
+      </div>
+      <div
+        className="text-3xl md:text-4xl font-bold tabular-nums text-neutral-900 truncate"
+        title={value}
+      >
+        {/* Mostra forma compacta em larguras pequenas via title fallback */}
+        <span className="lg:hidden">{valueCompact}</span>
+        <span className="hidden lg:inline">{value}</span>
+      </div>
+      <div className="flex items-center gap-2 mt-3">
+        <span className={`inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-full border ${toneStyles}`}>
+          <ToneIcon size={11} />
+          {pct == null ? 'sem comparativo' : `${pct >= 0 ? '+' : ''}${pct}% WoW`}
+        </span>
+        {prev != null && (
+          <span className="text-[11px] text-neutral-400 tabular-nums">
+            vs {fmtCompact(prev)} 7d antes
+          </span>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Hero post + listas
+// ─────────────────────────────────────────────────────────────────
+
+function HeroPost({ top, igRest, fb }: { top: MetaTopPost; igRest: MetaTopPost[]; fb: MetaTopPost[] }) {
+  const caption = (top.caption || 'Sem legenda').replace(/\s+/g, ' ').slice(0, 220)
+  return (
+    <section className="bg-white border rounded-xl overflow-hidden shadow-sm">
+      <div className="px-5 py-3 border-b flex items-center justify-between">
+        <div>
+          <h2 className="text-sm font-semibold text-neutral-800">Conteúdo destaque</h2>
+          <p className="text-[11px] text-neutral-500">Post com maior alcance no período</p>
+        </div>
+        <span className="text-[10px] uppercase tracking-wider text-pink-600 font-medium">@ Instagram</span>
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-5 gap-0">
+        {/* Imagem hero */}
+        <div className="md:col-span-2 aspect-square md:aspect-auto bg-neutral-100 relative">
+          {top.media_url ? (
+            <img
+              src={top.media_url}
+              alt=""
+              className="w-full h-full object-cover"
+              referrerPolicy="no-referrer"
+            />
+          ) : (
+            <div className="w-full h-full flex items-center justify-center text-neutral-400">
+              <ImageIcon size={40} />
+            </div>
+          )}
+          {top.permalink && (
+            <a
+              href={top.permalink}
+              target="_blank"
+              rel="noreferrer"
+              className="absolute bottom-3 right-3 bg-white/95 hover:bg-white text-neutral-700 text-[11px] px-2.5 py-1.5 rounded-full shadow inline-flex items-center gap-1 backdrop-blur"
+            >
+              Ver post <ExternalLink size={11} />
+            </a>
+          )}
+        </div>
+        {/* Texto + métricas + sidebar com outros tops */}
+        <div className="md:col-span-3 p-5 flex flex-col">
+          <p className="text-sm text-neutral-700 line-clamp-5 mb-4">{caption}</p>
+          <div className="grid grid-cols-4 gap-3 mb-4">
+            <BigStat label="Alcance" value={fmtCompact(top.reach)} icon={<Activity size={14} />} />
+            <BigStat label="Curtidas" value={fmtCompact(top.likes)} icon={<Heart size={14} />} />
+            <BigStat label="Comentários" value={fmtCompact(top.comments)} icon={<MessageCircle size={14} />} />
+            <BigStat label="Compart." value={fmtCompact(top.shares)} icon={<Share2 size={14} />} />
+          </div>
+
+          {/* Mini ranking */}
+          <div className="mt-auto grid grid-cols-1 md:grid-cols-2 gap-3 pt-3 border-t">
+            <MiniRanking title="Outros tops Instagram" channel="ig" posts={igRest} />
+            <MiniRanking title="Top Facebook" channel="fb" posts={fb} />
+          </div>
+        </div>
+      </div>
+    </section>
+  )
+}
+
+function BigStat({ label, value, icon }: { label: string; value: string; icon: React.ReactNode }) {
+  return (
+    <div className="bg-neutral-50 rounded-lg p-3">
+      <div className="text-[10px] uppercase tracking-wider text-neutral-500 inline-flex items-center gap-1">
+        {icon} {label}
+      </div>
+      <div className="text-lg font-bold text-neutral-900 tabular-nums mt-0.5">{value}</div>
+    </div>
+  )
+}
+
+function MiniRanking({ title, channel, posts }: { title: string; channel: 'ig' | 'fb'; posts: MetaTopPost[] }) {
+  if (posts.length === 0) return null
+  const dot = channel === 'ig' ? 'bg-pink-500' : 'bg-blue-600'
+  return (
+    <div>
+      <div className="text-[10px] uppercase tracking-wider text-neutral-500 font-medium mb-1.5">{title}</div>
+      <ul className="space-y-1.5">
+        {posts.slice(0, 2).map((p) => (
+          <li key={p.post_external_id} className="flex items-center gap-2 text-xs">
+            <span className={`w-1.5 h-1.5 rounded-full ${dot} shrink-0`} aria-hidden />
+            <span className="text-neutral-600 truncate flex-1">
+              {(p.caption || 'Sem legenda').replace(/\s+/g, ' ').slice(0, 38)}
+            </span>
+            <span className="text-neutral-500 tabular-nums shrink-0">{fmtCompact(p.reach)}</span>
+            {p.permalink && (
+              <a href={p.permalink} target="_blank" rel="noreferrer" className="text-neutral-400 hover:text-neutral-700">
+                <ExternalLink size={11} />
+              </a>
+            )}
+          </li>
+        ))}
+      </ul>
+    </div>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Canal compacto (IG/FB)
+// ─────────────────────────────────────────────────────────────────
+
+function ChannelCard({
+  icon, accent, channel, card, followersLabel, postsLabel,
+}: {
+  icon: React.ReactNode
+  accent: string
+  channel: string
+  card: MetaDashboardCard
+  followersLabel: string
+  postsLabel: string
+}) {
   if (!card.available) {
-    return <EmptyCard title="Instagram" icon={<ImageIcon size={20} />} hint="Sem snapshot — rode o sync IG Perfil" />
+    return (
+      <div className="bg-neutral-50 border border-dashed rounded-xl p-5 flex flex-col items-center text-center text-neutral-400">
+        {icon}
+        <div className="text-sm font-medium text-neutral-600 mt-2">{channel}</div>
+        <div className="text-xs mt-1">Sem snapshot — rode os syncs</div>
+      </div>
+    )
   }
+  const followers = card.fan_count ?? card.followers
+  const postsValue = channel === 'Facebook' ? card.engagement_7d : card.posts_7d
   return (
     <div className="bg-white border rounded-xl p-5 shadow-sm">
-      <div className="flex items-center gap-2 mb-3 text-xs font-medium text-neutral-500 uppercase tracking-wider">
-        <ImageIcon size={14} /> Instagram
+      <div className="flex items-center justify-between mb-3">
+        <span className={`inline-flex items-center gap-2 text-[11px] uppercase tracking-wider font-medium px-2 py-1 rounded-full border ${accent}`}>
+          {icon} {channel}
+        </span>
+        {card.verification_status === 'verified' && (
+          <CheckCircle2 size={14} className="text-emerald-600" />
+        )}
       </div>
-
-      <div className="flex items-start gap-3 mb-4">
+      <div className="flex items-start gap-3 mb-3">
         {card.profile_picture_url ? (
           <img
             src={card.profile_picture_url}
-            alt={card.username || ''}
-            className="w-14 h-14 rounded-full object-cover border"
+            alt=""
+            className="w-12 h-12 rounded-full object-cover border shrink-0"
             referrerPolicy="no-referrer"
           />
         ) : (
-          <div className="w-14 h-14 rounded-full bg-neutral-100 flex items-center justify-center">
-            <ImageIcon size={20} className="text-neutral-400" />
+          <div className="w-12 h-12 rounded-full bg-neutral-100 flex items-center justify-center text-neutral-400 shrink-0">
+            {icon}
           </div>
         )}
         <div className="min-w-0">
-          {card.username && (
-            <div className="text-base font-semibold text-neutral-800 truncate">@{card.username}</div>
-          )}
-          {card.display_name && (
-            <div className="text-xs text-neutral-500 truncate">{card.display_name}</div>
-          )}
+          <div className="text-sm font-semibold text-neutral-900 truncate">
+            {card.display_name || card.username || '—'}
+          </div>
+          {card.username && <div className="text-xs text-neutral-500 truncate">@{card.username}</div>}
         </div>
       </div>
-
-      <div className="grid grid-cols-3 gap-2 mb-3">
-        <Stat label="Seguidores" value={fmtNum(card.followers)} highlight />
-        <Stat label="Seguindo" value={fmtNum(card.follows)} />
-        <Stat label="Posts" value={fmtNum(card.total_posts)} />
+      <div className="grid grid-cols-2 gap-2 pt-3 border-t">
+        <CompactStat label={followersLabel} value={fmtNum(followers)} />
+        <CompactStat label={postsLabel} value={fmtNum(postsValue)} />
       </div>
-
-      {(card.reach_7d != null || card.followers_gained_7d != null) && (
-        <div className="grid grid-cols-2 gap-2 mb-4 pt-3 border-t border-neutral-100">
-          <Stat
-            label="Alcance 7d"
-            value={fmtNum(card.reach_7d)}
-          />
-          <Stat
-            label="+Seguidores 7d"
-            value={card.followers_gained_7d != null ? `+${fmtNum(card.followers_gained_7d)}` : '—'}
-          />
-        </div>
-      )}
-
       {card.biografia && (
-        <p className="text-xs text-neutral-600 line-clamp-3 mb-3">{card.biografia}</p>
+        <p className="text-[11px] text-neutral-500 line-clamp-2 mt-3">{card.biografia}</p>
       )}
-
-      {card.website && (
-        <a
-          href={card.website}
-          target="_blank"
-          rel="noreferrer"
-          className="text-xs text-blue-600 hover:underline inline-flex items-center gap-1"
-        >
-          {card.website.replace(/^https?:\/\//, '').slice(0, 40)} <ExternalLink size={11} />
-        </a>
-      )}
-
-      <SnapshotFooter date={card.snapshot_date} />
     </div>
   )
 }
 
-function FacebookCard({ card }: { card: MetaDashboardCard }) {
-  if (!card.available) {
-    return <EmptyCard title="Facebook" icon={<Globe size={20} />} hint="Sem snapshot — rode o sync FB Page" />
-  }
-  return (
-    <div className="bg-white border rounded-xl p-5 shadow-sm">
-      <div className="flex items-center gap-2 mb-3 text-xs font-medium text-neutral-500 uppercase tracking-wider">
-        <Globe size={14} /> Facebook
-      </div>
-
-      <div className="mb-4">
-        <div className="text-base font-semibold text-neutral-800 truncate">
-          {card.display_name || '—'}
-        </div>
-        <div className="flex items-center gap-2 mt-0.5 text-xs text-neutral-500">
-          {card.username && <span>@{card.username}</span>}
-          {card.category && <span className="px-1.5 py-0.5 bg-neutral-100 rounded text-[10px]">{card.category}</span>}
-          {card.verification_status === 'verified' && (
-            <span className="text-success-text inline-flex items-center gap-0.5 text-[10px]">
-              <CheckCircle2 size={10} /> verificada
-            </span>
-          )}
-        </div>
-      </div>
-
-      <div className="grid grid-cols-2 gap-2 mb-3">
-        <Stat label="Fãs" value={fmtNum(card.fan_count)} highlight />
-        <Stat label="Seguidores" value={fmtNum(card.followers)} />
-      </div>
-
-      {(card.reach_7d != null || card.engagement_7d != null) && (
-        <div className="grid grid-cols-2 gap-2 mb-4 pt-3 border-t border-neutral-100">
-          <Stat label="Alcance 7d" value={fmtNum(card.reach_7d)} />
-          <Stat label="Engajamento 7d" value={fmtNum(card.engagement_7d)} />
-        </div>
-      )}
-
-      {card.biografia && (
-        <p className="text-xs text-neutral-600 line-clamp-3 mb-3">{card.biografia}</p>
-      )}
-
-      {card.website && (
-        <a
-          href={card.website}
-          target="_blank"
-          rel="noreferrer"
-          className="text-xs text-blue-600 hover:underline inline-flex items-center gap-1"
-        >
-          {card.website.replace(/^https?:\/\//, '').slice(0, 40)} <ExternalLink size={11} />
-        </a>
-      )}
-
-      <SnapshotFooter date={card.snapshot_date} />
-    </div>
-  )
-}
-
-function PixelCard({ card }: { card: MetaDashboardCard }) {
-  if (!card.available) {
-    return <EmptyCard title="Pixel" icon={<Camera size={20} />} hint="Sem snapshot — rode o sync Pixel" />
-  }
-  const isStale = (card.pixel_days_idle || 0) > 30
-  const isDead = (card.pixel_days_idle || 0) > 365
-
-  return (
-    <div className={`border rounded-xl p-5 shadow-sm ${isDead ? 'bg-error-bg border-error-border' : isStale ? 'bg-warning-bg border-warning-border' : 'bg-white'}`}>
-      <div className="flex items-center gap-2 mb-3 text-xs font-medium text-neutral-500 uppercase tracking-wider">
-        <Camera size={14} /> Pixel
-      </div>
-
-      <div className="mb-4">
-        <div className="text-base font-semibold text-neutral-800 truncate">
-          {card.pixel_name || '—'}
-        </div>
-      </div>
-
-      <div className="space-y-2 mb-4">
-        <Stat label="Último disparo" value={fmtDate(card.pixel_last_fired_at)} />
-        {card.pixel_days_idle != null && (
-          <Stat
-            label="Dias sem disparar"
-            value={fmtNum(card.pixel_days_idle)}
-            highlight={isStale}
-            severe={isDead}
-          />
-        )}
-      </div>
-
-      {isDead && (
-        <div className="text-xs text-error-text flex items-start gap-1.5 bg-white border border-error-border rounded-lg p-2">
-          <XCircle size={13} className="mt-0.5 shrink-0" />
-          <span>Pixel inativo há mais de 1 ano. Conversões zeradas — pedir reinstalação à TI.</span>
-        </div>
-      )}
-      {isStale && !isDead && (
-        <div className="text-xs text-warning-text flex items-start gap-1.5 bg-white border border-warning-border rounded-lg p-2">
-          <AlertTriangle size={13} className="mt-0.5 shrink-0" />
-          <span>Pixel parou de disparar recentemente. Verificar tag no site.</span>
-        </div>
-      )}
-
-      <SnapshotFooter date={card.snapshot_date} />
-    </div>
-  )
-}
-
-function EmptyCard({ title, icon, hint }: { title: string; icon: React.ReactNode; hint: string }) {
-  return (
-    <div className="bg-neutral-50 border border-dashed border-neutral-300 rounded-xl p-5 flex flex-col items-center text-center text-neutral-400">
-      <div className="mb-2">{icon}</div>
-      <div className="text-sm font-medium text-neutral-600">{title}</div>
-      <div className="text-xs mt-1">{hint}</div>
-      <Link to="/admin/sync" className="text-[11px] text-blue-600 hover:underline mt-3 inline-flex items-center gap-1">
-        Ir para Sincronização <ArrowRight size={11} />
-      </Link>
-    </div>
-  )
-}
-
-function Stat({
-  label, value, highlight, severe,
-}: { label: string; value: string; highlight?: boolean; severe?: boolean }) {
+function CompactStat({ label, value }: { label: string; value: string }) {
   return (
     <div>
       <div className="text-[10px] uppercase tracking-wider text-neutral-500">{label}</div>
-      <div className={`tabular-nums font-semibold ${severe ? 'text-error-text text-xl' : highlight ? 'text-neutral-900 text-xl' : 'text-neutral-700 text-base'}`}>
-        {value}
-      </div>
-    </div>
-  )
-}
-
-function SnapshotFooter({ date }: { date: string | null }) {
-  if (!date) return null
-  return (
-    <div className="mt-4 pt-3 border-t text-[10px] text-neutral-400">
-      Atualizado em {new Date(date).toLocaleString('pt-BR')}
+      <div className="text-base font-semibold text-neutral-900 tabular-nums">{value}</div>
     </div>
   )
 }
 
 // ─────────────────────────────────────────────────────────────────
-// Pendências TI
+// Pixel card mini
+// ─────────────────────────────────────────────────────────────────
+
+function PixelMiniCard({ card }: { card: MetaDashboardCard }) {
+  if (!card.available) {
+    return (
+      <div className="bg-neutral-50 border border-dashed rounded-xl p-5 flex flex-col items-center text-center text-neutral-400">
+        <Camera size={20} />
+        <div className="text-sm font-medium text-neutral-600 mt-2">Pixel</div>
+        <div className="text-xs mt-1">Sem snapshot</div>
+      </div>
+    )
+  }
+  const idle = card.pixel_days_idle ?? 0
+  const isDead = idle > 365
+  const isStale = idle > 30 && !isDead
+  const tone = isDead ? 'rose' : isStale ? 'amber' : 'emerald'
+  const toneStyles = {
+    rose: { border: 'border-rose-200', bg: 'bg-rose-50', text: 'text-rose-700', label: 'Parado' },
+    amber: { border: 'border-amber-200', bg: 'bg-amber-50', text: 'text-amber-700', label: 'Atenção' },
+    emerald: { border: 'border-emerald-200', bg: 'bg-emerald-50', text: 'text-emerald-700', label: 'Ativo' },
+  }[tone]
+
+  return (
+    <div className={`bg-white border rounded-xl p-5 shadow-sm ${toneStyles.border}`}>
+      <div className="flex items-center justify-between mb-3">
+        <span className={`inline-flex items-center gap-2 text-[11px] uppercase tracking-wider font-medium px-2 py-1 rounded-full ${toneStyles.bg} ${toneStyles.text}`}>
+          <Camera size={14} /> Pixel · {toneStyles.label}
+        </span>
+      </div>
+      <div className="text-sm font-semibold text-neutral-900 truncate mb-1">{card.pixel_name || '—'}</div>
+      <div className="text-[11px] text-neutral-500">
+        Último disparo: <span className="text-neutral-700">
+          {card.pixel_last_fired_at ? new Date(card.pixel_last_fired_at).toLocaleDateString('pt-BR') : '—'}
+        </span>
+      </div>
+      <div className="mt-3 pt-3 border-t flex items-baseline gap-2">
+        <span className={`text-3xl font-bold tabular-nums ${isDead ? 'text-rose-700' : isStale ? 'text-amber-700' : 'text-emerald-700'}`}>
+          {fmtNum(card.pixel_days_idle)}
+        </span>
+        <span className="text-xs text-neutral-500">dias sem disparar</span>
+      </div>
+      {isDead && (
+        <div className="text-[11px] text-rose-700 mt-3 inline-flex items-start gap-1">
+          <XCircle size={12} className="mt-0.5 shrink-0" />
+          <span>Pedir reinstalação à TI</span>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Pendências TI (compacto)
 // ─────────────────────────────────────────────────────────────────
 
 function PendingTI({ items }: { items: MetaPendingItem[] }) {
   return (
     <section className="bg-white border rounded-xl overflow-hidden shadow-sm">
-      <div className="px-5 py-3 border-b bg-warning-bg flex items-center gap-2">
-        <AlertTriangle size={16} className="text-warning-text" />
-        <h2 className="text-sm font-semibold text-warning-text">
-          Pendente da TI da clínica ({items.length})
+      <div className="px-5 py-3 border-b bg-amber-50 flex items-center gap-2">
+        <FileEdit size={15} className="text-amber-700" />
+        <h2 className="text-sm font-semibold text-amber-800">
+          Pendências da TI da clínica ({items.length})
         </h2>
+        <span className="text-[10px] text-amber-700 ml-auto">conforme TI destrava, blocos novos aparecem aqui</span>
       </div>
       <ul className="divide-y">
         {items.map((p) => (
           <li key={p.key} className="px-5 py-3 flex items-start gap-3">
-            <XCircle size={16} className="text-error-text mt-0.5 shrink-0" />
+            <div className="w-6 h-6 rounded-full bg-amber-100 text-amber-700 flex items-center justify-center shrink-0 mt-0.5 text-[10px] font-semibold">
+              !
+            </div>
             <div className="flex-1 min-w-0">
               <div className="text-sm font-medium text-neutral-800">{p.label}</div>
               <div className="text-xs text-neutral-600 mt-0.5">{p.detail}</div>
               {p.blocked_features.length > 0 && (
                 <div className="text-[11px] mt-1.5 flex flex-wrap gap-1">
-                  <span className="text-neutral-500">Bloqueia:</span>
                   {p.blocked_features.map((f) => (
                     <span key={f} className="bg-neutral-100 text-neutral-600 px-1.5 py-0.5 rounded text-[10px]">{f}</span>
                   ))}
@@ -541,9 +594,6 @@ function PendingTI({ items }: { items: MetaPendingItem[] }) {
           </li>
         ))}
       </ul>
-      <div className="px-5 py-3 bg-neutral-50 border-t text-[11px] text-neutral-500">
-        Conforme essas pendências forem resolvidas, novos blocos aparecem automaticamente nesta página.
-      </div>
     </section>
   )
 }
@@ -552,34 +602,61 @@ function PendingTI({ items }: { items: MetaPendingItem[] }) {
 // Coming soon
 // ─────────────────────────────────────────────────────────────────
 
-function ComingSoon({ hasPending }: { hasPending: boolean }) {
+function ComingSoon() {
   return (
     <section className="bg-white border rounded-xl p-5 shadow-sm">
-      <h2 className="text-sm font-semibold text-neutral-700 mb-3">
-        Próximas seções (ativam quando a TI destravar)
+      <h2 className="text-sm font-semibold text-neutral-700 mb-3 inline-flex items-center gap-2">
+        <ArrowRight size={14} /> Próximas seções
       </h2>
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-        <ComingSoonItem icon={<MessageSquare size={16} />} title="Comentários & IA" desc="Leads quentes, depoimentos, dúvidas clínicas — classificação automática (destravado · sub-PR 21f)" />
-        <ComingSoonItem icon={<Users size={16} />} title="Funil Ads → Consulta" desc="Anúncios → leads → WhatsApp → agenda → realizada (depende de Ad Account autorizada)" />
-        <ComingSoonItem icon={<Camera size={16} />} title="Pixel Funil de Conversão" desc="ViewContent · Lead · Schedule · Purchase — destrava com Pixel reinstalado" />
+        <ComingItem
+          icon={<MessageCircle size={16} />}
+          title="Comentários & IA"
+          desc="Leads quentes, depoimentos, dúvidas clínicas — classificação automática."
+          status="Permissão liberada · 21f"
+          statusTone="ok"
+        />
+        <ComingItem
+          icon={<TrendingUp size={16} />}
+          title="Funil Ads → Consulta"
+          desc="Anúncios → leads → WhatsApp → agenda → realizada."
+          status="Aguarda Ad Account autorizada"
+          statusTone="warn"
+        />
+        <ComingItem
+          icon={<Camera size={16} />}
+          title="Pixel Funil de Conversão"
+          desc="ViewContent · Lead · Schedule · Purchase."
+          status="Aguarda reinstalação do Pixel"
+          statusTone="warn"
+        />
       </div>
-      {hasPending && (
-        <p className="text-[11px] text-neutral-500 mt-4">
-          Use a checklist acima para cobrar a TI da clínica.
-        </p>
-      )}
     </section>
   )
 }
 
-function ComingSoonItem({ icon, title, desc }: { icon: React.ReactNode; title: string; desc: string }) {
+function ComingItem({
+  icon, title, desc, status, statusTone,
+}: {
+  icon: React.ReactNode
+  title: string
+  desc: string
+  status: string
+  statusTone: 'ok' | 'warn'
+}) {
+  const toneStyle = statusTone === 'ok'
+    ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+    : 'bg-amber-50 text-amber-700 border-amber-200'
   return (
-    <div className="border border-dashed border-neutral-300 rounded-lg p-3 bg-neutral-50/50">
-      <div className="flex items-center gap-2 text-neutral-500 mb-1">
+    <div className="border border-dashed rounded-lg p-3 bg-neutral-50/40">
+      <div className="flex items-center gap-2 text-neutral-700 mb-1">
         {icon}
-        <span className="text-xs font-medium uppercase tracking-wider">{title}</span>
+        <span className="text-xs font-semibold uppercase tracking-wider">{title}</span>
       </div>
-      <p className="text-xs text-neutral-600">{desc}</p>
+      <p className="text-xs text-neutral-600 mb-2">{desc}</p>
+      <span className={`inline-block text-[10px] font-medium px-2 py-0.5 rounded-full border ${toneStyle}`}>
+        {status}
+      </span>
     </div>
   )
 }
