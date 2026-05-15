@@ -13,9 +13,9 @@
  */
 import { useQuery } from '@tanstack/react-query'
 import {
-  AlertTriangle, ArrowRight, Camera, CheckCircle2, ExternalLink,
-  Globe, Image as ImageIcon, MessageSquare, TrendingUp, Users,
-  XCircle,
+  Activity, AlertTriangle, ArrowRight, Camera, CheckCircle2, ExternalLink,
+  Globe, Heart, Image as ImageIcon, MessageCircle, MessageSquare, Share2,
+  TrendingUp, Users, XCircle,
 } from 'lucide-react'
 import { Link } from 'react-router-dom'
 
@@ -23,7 +23,7 @@ import { metaService } from '@/services/meta.service'
 import { usePageTitle } from '@/contexts/PageTitleContext'
 import { PageContainer } from '@/components/layout/PageContainer'
 import { PageHeader } from '@/components/layout/PageHeader'
-import type { MetaDashboardCard, MetaPendingItem } from '@/types/meta'
+import type { MetaDashboardCard, MetaPendingItem, MetaTopPost } from '@/types/meta'
 
 const fmtNum = (n: number | null | undefined) =>
   n == null ? '—' : new Intl.NumberFormat('pt-BR').format(n)
@@ -70,6 +70,9 @@ export default function VisaoGeralPage() {
 
       {!d.has_connection && <ConnectionWarning />}
 
+      {/* Barra de KPIs agregados últimos 7 dias */}
+      <KpisSevenDays ig={d.instagram} fb={d.facebook} />
+
       {/* Top 3 cards grandes */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <InstagramCard card={d.instagram} />
@@ -77,12 +80,196 @@ export default function VisaoGeralPage() {
         <PixelCard card={d.pixel} />
       </div>
 
+      {/* Top posts IG + FB */}
+      {(d.instagram.top_posts.length > 0 || d.facebook.top_posts.length > 0) && (
+        <TopPostsSection ig={d.instagram.top_posts} fb={d.facebook.top_posts} />
+      )}
+
       {/* Pendências TI */}
       {d.pending.length > 0 && <PendingTI items={d.pending} />}
 
       {/* Placeholders do que vem */}
       <ComingSoon hasPending={d.pending.length > 0} />
     </PageContainer>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────
+// KPIs agregados (últimos 7 dias)
+// ─────────────────────────────────────────────────────────────────
+
+function KpisSevenDays({ ig, fb }: { ig: MetaDashboardCard; fb: MetaDashboardCard }) {
+  const reachTotal = (ig.reach_7d ?? 0) + (fb.reach_7d ?? 0)
+  const hasAny =
+    ig.reach_7d != null || fb.reach_7d != null ||
+    ig.followers_gained_7d != null || fb.engagement_7d != null
+  if (!hasAny) return null
+
+  return (
+    <section className="bg-white border rounded-xl p-5 shadow-sm">
+      <div className="flex items-center justify-between mb-4">
+        <div>
+          <h2 className="text-sm font-semibold text-neutral-800">Performance — últimos 7 dias</h2>
+          <p className="text-[11px] text-neutral-500">Reach orgânico, ganho de seguidores e engajamento agregados</p>
+        </div>
+        <span className="text-[10px] uppercase tracking-wider text-neutral-400">Lifetime · 7d</span>
+      </div>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <KpiBlock
+          label="Alcance total"
+          value={fmtNum(reachTotal)}
+          hint="IG + FB combinados"
+          icon={<Activity size={18} />}
+          iconBg="bg-blue-50"
+          iconColor="text-blue-600"
+        />
+        <KpiBlock
+          label="Alcance Instagram"
+          value={fmtNum(ig.reach_7d)}
+          hint={ig.username ? `@${ig.username}` : undefined}
+          icon={<ImageIcon size={18} />}
+          iconBg="bg-pink-50"
+          iconColor="text-pink-600"
+        />
+        <KpiBlock
+          label="+Seguidores IG"
+          value={ig.followers_gained_7d != null ? `+${fmtNum(ig.followers_gained_7d)}` : '—'}
+          hint={ig.followers != null ? `total ${fmtNum(ig.followers)}` : undefined}
+          icon={<Users size={18} />}
+          iconBg="bg-violet-50"
+          iconColor="text-violet-600"
+        />
+        <KpiBlock
+          label="Engajamento Facebook"
+          value={fmtNum(fb.engagement_7d)}
+          hint={fb.reach_7d != null ? `${fmtNum(fb.reach_7d)} de alcance` : undefined}
+          icon={<Globe size={18} />}
+          iconBg="bg-blue-50"
+          iconColor="text-blue-700"
+        />
+      </div>
+    </section>
+  )
+}
+
+function KpiBlock({
+  label, value, hint, icon, iconBg, iconColor,
+}: {
+  label: string
+  value: string
+  hint?: string
+  icon: React.ReactNode
+  iconBg: string
+  iconColor: string
+}) {
+  return (
+    <div className="flex items-center gap-3">
+      <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${iconBg} ${iconColor} shrink-0`}>
+        {icon}
+      </div>
+      <div className="min-w-0">
+        <div className="text-[10px] uppercase tracking-wider text-neutral-500 truncate">{label}</div>
+        <div className="text-lg font-semibold text-neutral-900 truncate tabular-nums">{value}</div>
+        {hint && <div className="text-[11px] text-neutral-400 truncate">{hint}</div>}
+      </div>
+    </div>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Top Posts
+// ─────────────────────────────────────────────────────────────────
+
+function TopPostsSection({ ig, fb }: { ig: MetaTopPost[]; fb: MetaTopPost[] }) {
+  return (
+    <section className="bg-white border rounded-xl p-5 shadow-sm">
+      <div className="flex items-center justify-between mb-4">
+        <div>
+          <h2 className="text-sm font-semibold text-neutral-800">Top posts por alcance</h2>
+          <p className="text-[11px] text-neutral-500">3 maiores Instagram + 3 maiores Facebook (lifetime)</p>
+        </div>
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+        <div>
+          <div className="text-[10px] uppercase tracking-wider text-pink-600 font-medium mb-2">Instagram</div>
+          {ig.length === 0 ? (
+            <div className="text-xs text-neutral-400 italic">Sem dados.</div>
+          ) : (
+            <ul className="space-y-2">
+              {ig.map((p) => <TopPostRow key={p.post_external_id} post={p} channel="ig" />)}
+            </ul>
+          )}
+        </div>
+        <div>
+          <div className="text-[10px] uppercase tracking-wider text-blue-600 font-medium mb-2">Facebook</div>
+          {fb.length === 0 ? (
+            <div className="text-xs text-neutral-400 italic">Sem dados.</div>
+          ) : (
+            <ul className="space-y-2">
+              {fb.map((p) => <TopPostRow key={p.post_external_id} post={p} channel="fb" />)}
+            </ul>
+          )}
+        </div>
+      </div>
+    </section>
+  )
+}
+
+function TopPostRow({ post, channel }: { post: MetaTopPost; channel: 'ig' | 'fb' }) {
+  const caption = (post.caption || 'Sem legenda').replace(/\s+/g, ' ').slice(0, 110)
+  const date = post.posted_at
+    ? new Date(post.posted_at).toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' })
+    : null
+  return (
+    <li className="flex items-start gap-3 p-2 rounded-lg hover:bg-neutral-50 transition">
+      {post.media_url ? (
+        <img
+          src={post.media_url}
+          alt=""
+          className="w-14 h-14 rounded-md object-cover border shrink-0"
+          referrerPolicy="no-referrer"
+        />
+      ) : (
+        <div className="w-14 h-14 rounded-md bg-neutral-100 flex items-center justify-center text-neutral-400 shrink-0">
+          {channel === 'ig' ? <ImageIcon size={20} /> : <Globe size={20} />}
+        </div>
+      )}
+      <div className="min-w-0 flex-1">
+        <p className="text-xs text-neutral-700 line-clamp-2">{caption}</p>
+        <div className="flex items-center gap-3 mt-1 text-[11px] text-neutral-500 tabular-nums">
+          <span className="inline-flex items-center gap-1">
+            <Activity size={11} /> {fmtNum(post.reach)}
+          </span>
+          {post.likes != null && post.likes > 0 && (
+            <span className="inline-flex items-center gap-1">
+              <Heart size={11} /> {fmtNum(post.likes)}
+            </span>
+          )}
+          {post.comments != null && post.comments > 0 && (
+            <span className="inline-flex items-center gap-1">
+              <MessageCircle size={11} /> {fmtNum(post.comments)}
+            </span>
+          )}
+          {post.shares != null && post.shares > 0 && (
+            <span className="inline-flex items-center gap-1">
+              <Share2 size={11} /> {fmtNum(post.shares)}
+            </span>
+          )}
+          {date && <span className="text-neutral-400 ml-auto">{date}</span>}
+        </div>
+      </div>
+      {post.permalink && (
+        <a
+          href={post.permalink}
+          target="_blank"
+          rel="noreferrer"
+          className="text-neutral-400 hover:text-neutral-700 mt-1 shrink-0"
+          aria-label="Abrir post"
+        >
+          <ExternalLink size={14} />
+        </a>
+      )}
+    </li>
   )
 }
 
@@ -142,11 +329,24 @@ function InstagramCard({ card }: { card: MetaDashboardCard }) {
         </div>
       </div>
 
-      <div className="grid grid-cols-3 gap-2 mb-4">
+      <div className="grid grid-cols-3 gap-2 mb-3">
         <Stat label="Seguidores" value={fmtNum(card.followers)} highlight />
         <Stat label="Seguindo" value={fmtNum(card.follows)} />
         <Stat label="Posts" value={fmtNum(card.total_posts)} />
       </div>
+
+      {(card.reach_7d != null || card.followers_gained_7d != null) && (
+        <div className="grid grid-cols-2 gap-2 mb-4 pt-3 border-t border-neutral-100">
+          <Stat
+            label="Alcance 7d"
+            value={fmtNum(card.reach_7d)}
+          />
+          <Stat
+            label="+Seguidores 7d"
+            value={card.followers_gained_7d != null ? `+${fmtNum(card.followers_gained_7d)}` : '—'}
+          />
+        </div>
+      )}
 
       {card.biografia && (
         <p className="text-xs text-neutral-600 line-clamp-3 mb-3">{card.biografia}</p>
@@ -193,10 +393,17 @@ function FacebookCard({ card }: { card: MetaDashboardCard }) {
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-2 mb-4">
+      <div className="grid grid-cols-2 gap-2 mb-3">
         <Stat label="Fãs" value={fmtNum(card.fan_count)} highlight />
         <Stat label="Seguidores" value={fmtNum(card.followers)} />
       </div>
+
+      {(card.reach_7d != null || card.engagement_7d != null) && (
+        <div className="grid grid-cols-2 gap-2 mb-4 pt-3 border-t border-neutral-100">
+          <Stat label="Alcance 7d" value={fmtNum(card.reach_7d)} />
+          <Stat label="Engajamento 7d" value={fmtNum(card.engagement_7d)} />
+        </div>
+      )}
 
       {card.biografia && (
         <p className="text-xs text-neutral-600 line-clamp-3 mb-3">{card.biografia}</p>
@@ -352,9 +559,9 @@ function ComingSoon({ hasPending }: { hasPending: boolean }) {
         Próximas seções (ativam quando a TI destravar)
       </h2>
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-        <ComingSoonItem icon={<TrendingUp size={16} />} title="Alcance & Engajamento" desc="Reach, impressões, profile views — orgânico IG/FB" />
-        <ComingSoonItem icon={<MessageSquare size={16} />} title="Comentários & IA" desc="Leads quentes, depoimentos, dúvidas clínicas — classificação automática" />
-        <ComingSoonItem icon={<Users size={16} />} title="Funil Ads → Consulta" desc="Anúncios → leads → WhatsApp → agenda → realizada" />
+        <ComingSoonItem icon={<MessageSquare size={16} />} title="Comentários & IA" desc="Leads quentes, depoimentos, dúvidas clínicas — classificação automática (destravado · sub-PR 21f)" />
+        <ComingSoonItem icon={<Users size={16} />} title="Funil Ads → Consulta" desc="Anúncios → leads → WhatsApp → agenda → realizada (depende de Ad Account autorizada)" />
+        <ComingSoonItem icon={<Camera size={16} />} title="Pixel Funil de Conversão" desc="ViewContent · Lead · Schedule · Purchase — destrava com Pixel reinstalado" />
       </div>
       {hasPending && (
         <p className="text-[11px] text-neutral-500 mt-4">
