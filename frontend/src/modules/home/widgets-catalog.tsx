@@ -14,13 +14,24 @@
  *   - render      : como pintar com os dados atuais (HomeDashboardResponse)
  */
 import {
+  AlertCircle,
   AlertTriangle,
+  Banknote,
   Calendar,
+  CalendarCheck,
+  DollarSign,
   FileText,
+  Heart,
   ListTodo,
+  Percent,
   Phone,
+  Receipt,
+  Repeat,
   TrendingUp,
   Trophy,
+  UserMinus,
+  Users,
+  Wallet,
   type LucideIcon,
 } from 'lucide-react'
 
@@ -33,6 +44,25 @@ import { InadimplenciaCriticaCard } from './cards/InadimplenciaCriticaCard'
 import { OrcamentosParadosCard } from './cards/OrcamentosParadosCard'
 import { RecallCard } from './cards/RecallCard'
 import { TopProfsCard } from './cards/TopProfsCard'
+import { SaldoBancarioCard } from './widgets/SaldoBancarioCard'
+import {
+  KpiConversaoFinanceira,
+  KpiFaturamento,
+  KpiRecebido,
+  KpiTicketMedio,
+} from './widgets/kpis-financeiros'
+import {
+  KpiAbsenteismo,
+  KpiConsultas,
+  KpiConversaoComercial,
+  KpiPacientesUnicos,
+} from './widgets/kpis-comerciais'
+import {
+  KpiEmRisco,
+  KpiLtvMedio,
+  KpiPacientesAtivos,
+  KpiRecorrencia,
+} from './widgets/kpis-pacientes'
 
 export type WidgetCategory =
   | 'Agenda'
@@ -40,6 +70,9 @@ export type WidgetCategory =
   | 'Comercial'
   | 'Financeiro'
   | 'Operações'
+  | 'KPIs Financeiros'
+  | 'KPIs Comerciais'
+  | 'KPIs Pacientes'
 
 export interface WidgetMeta {
   id: string
@@ -141,6 +174,157 @@ export const WIDGET_CATALOG: WidgetMeta[] = [
       d.inadimplencia_critica ? (
         <InadimplenciaCriticaCard data={d.inadimplencia_critica} />
       ) : null,
+  },
+
+  // ── KPIs Financeiros (mês atual — /analise/financeiro) ──────
+  {
+    id: 'kpi_fin_faturamento',
+    name: 'Faturamento (mês atual)',
+    description: 'Total aprovado no mês + variação MoM/YoY + sparkline 12m.',
+    category: 'KPIs Financeiros',
+    permission: 'dashboard.read',
+    defaultSize: { w: 3, h: 5 },
+    minSize: { w: 3, h: 4 },
+    icon: DollarSign,
+    render: () => <KpiFaturamento />,
+  },
+  {
+    id: 'kpi_fin_recebido',
+    name: 'Recebido (mês atual)',
+    description: 'Valor efetivamente recebido no mês.',
+    category: 'KPIs Financeiros',
+    permission: 'dashboard.read',
+    defaultSize: { w: 3, h: 5 },
+    minSize: { w: 3, h: 4 },
+    icon: Wallet,
+    render: () => <KpiRecebido />,
+  },
+  {
+    id: 'kpi_fin_ticket',
+    name: 'Ticket médio',
+    description: 'Faturamento dividido pela quantidade de orçamentos aprovados.',
+    category: 'KPIs Financeiros',
+    permission: 'dashboard.read',
+    defaultSize: { w: 3, h: 5 },
+    minSize: { w: 3, h: 4 },
+    icon: Receipt,
+    render: () => <KpiTicketMedio />,
+  },
+  {
+    id: 'kpi_fin_conversao',
+    name: 'Conversão financeira (R$)',
+    description: 'R$ aprovado / R$ gerado no mês.',
+    category: 'KPIs Financeiros',
+    permission: 'dashboard.read',
+    defaultSize: { w: 3, h: 5 },
+    minSize: { w: 3, h: 4 },
+    icon: Percent,
+    render: () => <KpiConversaoFinanceira />,
+  },
+
+  // ── KPIs Comerciais (mês atual — /analise/comercial) ───────
+  {
+    id: 'kpi_com_consultas',
+    name: 'Consultas (mês atual)',
+    description: 'Total de consultas efetivas no mês.',
+    category: 'KPIs Comerciais',
+    permission: 'dashboard.read',
+    defaultSize: { w: 3, h: 5 },
+    minSize: { w: 3, h: 4 },
+    icon: CalendarCheck,
+    render: () => <KpiConsultas />,
+  },
+  {
+    id: 'kpi_com_absenteismo',
+    name: 'Absenteísmo',
+    description: 'Faltas / (efetivas + faltas). Quanto menor, melhor.',
+    category: 'KPIs Comerciais',
+    permission: 'dashboard.read',
+    defaultSize: { w: 3, h: 5 },
+    minSize: { w: 3, h: 4 },
+    icon: UserMinus,
+    render: () => <KpiAbsenteismo />,
+  },
+  {
+    id: 'kpi_com_conversao',
+    name: 'Consulta → orçamento',
+    description: 'Taxa de orçamentos gerados a partir das consultas efetivas.',
+    category: 'KPIs Comerciais',
+    permission: 'dashboard.read',
+    defaultSize: { w: 3, h: 5 },
+    minSize: { w: 3, h: 4 },
+    icon: Percent,
+    render: () => <KpiConversaoComercial />,
+  },
+  {
+    id: 'kpi_com_pacientes_unicos',
+    name: 'Pacientes únicos',
+    description: 'Pacientes distintos atendidos no mês.',
+    category: 'KPIs Comerciais',
+    permission: 'dashboard.read',
+    defaultSize: { w: 3, h: 5 },
+    minSize: { w: 3, h: 4 },
+    icon: Users,
+    render: () => <KpiPacientesUnicos />,
+  },
+
+  // ── KPIs Pacientes (mês atual — /analise/pacientes) ────────
+  {
+    id: 'kpi_pac_ativos',
+    name: 'Pacientes ativos',
+    description: 'Pacientes com visita há menos de 90 dias.',
+    category: 'KPIs Pacientes',
+    permission: 'pacientes.read',
+    defaultSize: { w: 3, h: 5 },
+    minSize: { w: 3, h: 4 },
+    icon: Heart,
+    render: () => <KpiPacientesAtivos />,
+  },
+  {
+    id: 'kpi_pac_recorrencia',
+    name: 'Recorrência',
+    description: '% de atendidos no mês que já eram da base.',
+    category: 'KPIs Pacientes',
+    permission: 'pacientes.read',
+    defaultSize: { w: 3, h: 5 },
+    minSize: { w: 3, h: 4 },
+    icon: Repeat,
+    render: () => <KpiRecorrencia />,
+  },
+  {
+    id: 'kpi_pac_ltv',
+    name: 'LTV médio',
+    description: 'Faturamento histórico dividido pela base ativa.',
+    category: 'KPIs Pacientes',
+    permission: 'pacientes.read',
+    defaultSize: { w: 3, h: 5 },
+    minSize: { w: 3, h: 4 },
+    icon: TrendingUp,
+    render: () => <KpiLtvMedio />,
+  },
+  {
+    id: 'kpi_pac_em_risco',
+    name: 'Em risco',
+    description: 'Pacientes no bucket 90-180d sem visita.',
+    category: 'KPIs Pacientes',
+    permission: 'pacientes.read',
+    defaultSize: { w: 3, h: 5 },
+    minSize: { w: 3, h: 4 },
+    icon: AlertCircle,
+    render: () => <KpiEmRisco />,
+  },
+
+  // ── Caixa / Bancos ─────────────────────────────────────────
+  {
+    id: 'saldo_bancario',
+    name: 'Saldo bancário consolidado',
+    description: 'Saldo total das contas + breakdown bancos/caixinhas.',
+    category: 'Financeiro',
+    permission: 'financeiro.read',
+    defaultSize: { w: 3, h: 5 },
+    minSize: { w: 3, h: 4 },
+    icon: Banknote,
+    render: () => <SaldoBancarioCard />,
   },
 ]
 
