@@ -18,6 +18,8 @@ type Props = {
   footer?: ReactNode
   /** Conteúdo do tooltip de ajuda — exibido ao passar o mouse no ícone "?" ao lado do label. */
   helpTooltip?: ReactNode
+  /** Classes extras pro container externo. Usado no MY-Analisys pra `h-full flex flex-col`. */
+  className?: string
 }
 
 const fmtPct = (v: number | null) => {
@@ -43,7 +45,7 @@ const deltaColor = (pct: number | null, isInverse: boolean) => {
 }
 
 export function KpiCardEnriched({
-  data, label, icon, iconBg = 'bg-primary-50', emphasized = false, footer, helpTooltip,
+  data, label, icon, iconBg = 'bg-primary-50', emphasized = false, footer, helpTooltip, className = '',
 }: Props) {
   const mom = fmtPct(data.mom_pct)
   const yoy = fmtPct(data.yoy_pct)
@@ -51,7 +53,7 @@ export function KpiCardEnriched({
   return (
     <div className={`bg-white border rounded-xl p-4 hover:shadow-md transition-shadow ${
       emphasized ? 'border-primary-200 shadow-sm' : 'border-neutral-200'
-    }`}>
+    } ${className}`}>
       {/* Header: ícone + label + sparkline */}
       <div className="flex items-start justify-between gap-2 mb-2">
         <div className="flex items-center gap-2 min-w-0">
@@ -113,9 +115,11 @@ export function KpiCardEnriched({
         )}
       </div>
 
-      {/* Insight narrativo (gerado por regras no backend) */}
+      {/* Insight narrativo (gerado por regras no backend). `mt-auto` só tem
+          efeito quando o pai é `flex flex-col h-full` (caso MY-Analisys) —
+          em CSS Grid normal não afeta. */}
       {data.insight && (
-        <div className="text-[11px] text-neutral-500 leading-snug border-t border-neutral-100 pt-2">
+        <div className="text-[11px] text-neutral-500 leading-snug border-t border-neutral-100 pt-2 mt-auto">
           {data.insight}
         </div>
       )}

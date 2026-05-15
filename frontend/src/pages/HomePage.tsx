@@ -7,9 +7,10 @@ import { usePageTitle } from '@/contexts/PageTitleContext'
 import { homeService } from '@/services/home.service'
 import { PageContainer } from '@/components/layout/PageContainer'
 import { PageHeader } from '@/components/layout/PageHeader'
-import SonIAInsightBanner from '@/components/sonia/SonIAInsightBanner'
 import { useSonIA } from '@/components/sonia/SonIAContext'
 import { CustomizableGrid } from '@/modules/home/CustomizableGrid'
+import { buildHomeInsight } from '@/modules/home/sonia-home-insight'
+import { useHomeLayout } from '@/modules/home/useHomeLayout'
 import type { HomeDashboardResponse } from '@/types/home'
 
 const fmtDateLong = (iso: string) => {
@@ -34,30 +35,23 @@ export default function HomePage() {
     staleTime: 60_000,
   })
 
+  const layoutQuery = useHomeLayout()
+  const widgetIds = (layoutQuery.data?.layout ?? []).map((i) => i.widget_id)
+
   const { publish, clear, setOpen } = useSonIA()
 
   useEffect(() => {
     if (!q.data) return
-    const hour = new Date().getHours()
-    const periodo = hour < 12 ? 'Bom dia' : hour < 18 ? 'Boa tarde' : 'Boa noite'
-    const nome = firstName || ''
-    const headline = nome ? `${periodo}, ${nome}.` : `${periodo}.`
-
     publish({
       pageKey: '/',
       pageTitle: 'Início',
-      data: {
-        insight: {
-          mood: 'default',
-          headline: `${headline} Que bom te ver por aqui.`,
-          detail:
-            'Estou aqui no canto, sempre por perto. Pode me chamar quando quiser uma observação sobre alguma página — vou olhar com calma e te trazer o que achar relevante.',
-        },
-      },
+      data: { insight: buildHomeInsight(q.data, widgetIds) },
     })
-
     return () => clear('/')
-  }, [q.data, firstName, publish, clear])
+    // widgetIds é derivado de layoutQuery.data — usamos a versão como sinal de mudança
+    // pra evitar re-publicar a cada render (array novo a cada vez).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [q.data, layoutQuery.data?.version, publish, clear])
 
   useEffect(() => {
     if (!q.data) return
@@ -86,8 +80,6 @@ export default function HomePage() {
       <PageContainer as="div" gap={6} className="relative">
         <Greeting name={firstName} data={q.data} />
 
-        {q.data && <SonIAInsightBanner data={q.data} firstName={firstName} />}
-
         {q.isLoading && (
           <div className="bg-white border rounded-xl p-12 text-center text-neutral-500 text-sm shadow-sm flex items-center justify-center gap-2">
             <Loader2 size={16} className="animate-spin" /> Carregando seu painel…
@@ -101,7 +93,6 @@ export default function HomePage() {
         {q.data && user && (
           <CustomizableGrid
             homeData={q.data}
-            userRole={q.data.role}
             userPermissions={user.permissions}
             firstName={firstName}
           />

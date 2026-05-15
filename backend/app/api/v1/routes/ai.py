@@ -56,6 +56,7 @@ async def ai_insight(
         year=year,
         month=month,
         user_first_name=first_name,
+        user_id=current_user.id,
     )
 
     if insight is None:

@@ -36,7 +36,7 @@ export function WidgetPicker({
 
   return (
     <div
-      className="fixed inset-0 z-50 bg-neutral-900/40 backdrop-blur-sm flex justify-end"
+      className="fixed inset-0 z-[100] bg-neutral-900/40 backdrop-blur-sm flex justify-end"
       onClick={onClose}
     >
       <aside

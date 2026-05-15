@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import GridLayout, { WidthProvider } from 'react-grid-layout'
-import { Plus, RotateCcw, Save, Settings2, X } from 'lucide-react'
+import { LayoutGrid, Plus, Save, Settings2, Trash2, X } from 'lucide-react'
 
 import 'react-grid-layout/css/styles.css'
 import 'react-resizable/css/styles.css'
@@ -17,7 +17,6 @@ interface RGLLayoutItem {
 import type { HomeLayoutItem } from '@/services/home.service'
 import type { HomeDashboardResponse } from '@/types/home'
 
-import { getDefaultLayoutForRole } from './default-layouts'
 import { useHomeLayout } from './useHomeLayout'
 import { WelcomeModal } from './WelcomeModal'
 import { WidgetPicker } from './WidgetPicker'
@@ -31,14 +30,12 @@ const ResponsiveGridLayout = WidthProvider(GridLayout)
 
 interface CustomizableGridProps {
   homeData: HomeDashboardResponse
-  userRole: string
   userPermissions: string[]
   firstName?: string
 }
 
 export function CustomizableGrid({
   homeData,
-  userRole,
   userPermissions,
   firstName,
 }: CustomizableGridProps) {
@@ -49,14 +46,11 @@ export function CustomizableGrid({
   const [welcomeOpen, setWelcomeOpen] = useState(false)
 
   // Layout efetivo: draft em edição, dados do servidor caso contrário,
-  // ou default da role se o user nunca customizou.
+  // ou array vazio se o user nunca customizou (começa do zero — UX opção A).
   const items: HomeLayoutItem[] = useMemo(() => {
     if (draft) return draft
-    if (layoutQuery.data?.layout && layoutQuery.data.layout.length > 0) {
-      return layoutQuery.data.layout
-    }
-    return getDefaultLayoutForRole(userRole)
-  }, [draft, layoutQuery.data, userRole])
+    return layoutQuery.data?.layout ?? []
+  }, [draft, layoutQuery.data])
 
   // Filtra itens cujos widgets sumiram do catálogo (defensivo) ou que o user
   // perdeu permissão pra ver. Permissions perdidas viram placeholder visível
@@ -99,9 +93,22 @@ export function CustomizableGrid({
     })
   }, [draft, layoutQuery])
 
-  const resetToDefault = useCallback(() => {
-    setDraft(getDefaultLayoutForRole(userRole))
-  }, [userRole])
+  const esvaziarPainel = useCallback(() => {
+    const ok = window.confirm(
+      'Esvaziar o painel? Você poderá adicionar widgets de novo via "Adicionar widget".',
+    )
+    if (!ok) return
+    layoutQuery.save([], {
+      onSuccess: () => {
+        // Reload completo: garante que o react-grid-layout descarte qualquer
+        // state interno residual ao limpar o layout.
+        window.location.reload()
+      },
+      onError: () => {
+        alert('Erro ao esvaziar o painel. Tente novamente.')
+      },
+    })
+  }, [layoutQuery])
 
   const removeWidget = useCallback(
     (widgetId: string) => {
@@ -151,9 +158,10 @@ export function CustomizableGrid({
 
   const handleWelcomeConfirm = useCallback(() => {
     setWelcomeOpen(false)
-    // Persiste o default da role como ponto de partida do user.
-    layoutQuery.save(getDefaultLayoutForRole(userRole))
-  }, [layoutQuery, userRole])
+    // Persiste layout vazio — user começa do zero e adiciona widgets via
+    // "Personalizar painel" → "Adicionar widget".
+    layoutQuery.save([])
+  }, [layoutQuery])
 
   if (layoutQuery.isLoading) {
     return (
@@ -165,6 +173,9 @@ export function CustomizableGrid({
 
   const presentIds = items.map((i) => i.widget_id)
 
+  // Empty state em modo view: painel sem widgets configurados.
+  const showEmptyState = !editing && items.length === 0 && !welcomeOpen
+
   return (
     <>
       <Toolbar
@@ -174,10 +185,36 @@ export function CustomizableGrid({
         onCancel={cancelEdit}
         onSave={saveEdit}
         onAdd={() => setPickerOpen(true)}
-        onReset={resetToDefault}
+        onReset={esvaziarPainel}
       />
 
+      {showEmptyState && (
+        <div className="bg-white border-2 border-dashed border-neutral-300 rounded-xl p-12 text-center">
+          <div className="w-14 h-14 rounded-full bg-primary-50 text-primary-600 flex items-center justify-center mx-auto mb-4">
+            <LayoutGrid size={26} />
+          </div>
+          <h3 className="text-base font-bold text-neutral-900 mb-1">
+            Seu MY-Analisys está vazio
+          </h3>
+          <p className="text-sm text-neutral-500 max-w-md mx-auto mb-5">
+            Clique em <strong>Personalizar painel</strong> no topo direito, depois em
+            <strong> Adicionar widget</strong> pra escolher o que quer ver aqui.
+          </p>
+          <button
+            type="button"
+            onClick={startEdit}
+            className="inline-flex items-center gap-1.5 px-4 py-2 text-sm font-bold text-white bg-primary-600 hover:bg-primary-700 rounded-lg transition-colors shadow-sm"
+          >
+            <Settings2 size={14} /> Personalizar agora
+          </button>
+        </div>
+      )}
+
+      {(items.length > 0 || editing) && (
       <ResponsiveGridLayout
+        // Força remount quando o layout muda drasticamente (reset, mudança de versão
+        // após save). Sem isso, o state interno do RGL pode reter widgets antigos.
+        key={`rgl-v${layoutQuery.data?.version ?? 0}-${items.length}`}
         className={editing ? 'rgl-editing' : ''}
         layout={items.map((i) => {
           const meta = findWidget(i.widget_id)
@@ -209,7 +246,15 @@ export function CustomizableGrid({
           return (
             <div
               key={item.widget_id}
-              className={`relative ${editing ? 'ring-2 ring-primary-300 ring-offset-2 rounded-xl' : ''}`}
+              // overflow-hidden: impede que widgets com mais conteúdo que o container
+              // vazem por cima dos vizinhos abaixo.
+              // [&>*]:h-full / [&>section]:h-full: força o card filho (qualquer tag)
+              // a preencher 100% da altura do grid item — sem isso, cards com conteúdo
+              // curto (KPI sem insight, Absenteísmo etc.) ficam visualmente menores
+              // que os outros na mesma linha.
+              className={`relative overflow-hidden [&>div]:h-full [&>section]:h-full ${
+                editing ? 'ring-2 ring-primary-300 ring-offset-2 rounded-xl' : ''
+              }`}
             >
               {editing && (
                 <button
@@ -238,6 +283,7 @@ export function CustomizableGrid({
           )
         })}
       </ResponsiveGridLayout>
+      )}
 
       <WidgetPicker
         open={pickerOpen}
@@ -305,9 +351,9 @@ function Toolbar({
           type="button"
           onClick={onReset}
           className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-neutral-600 bg-white border border-neutral-300 hover:bg-neutral-100 rounded-lg transition-colors"
-          title="Volta pro layout padrão da sua role"
+          title="Remove todos os widgets — você adiciona de novo via 'Adicionar widget'"
         >
-          <RotateCcw size={14} /> Resetar
+          <Trash2 size={14} /> Esvaziar
         </button>
         <button
           type="button"

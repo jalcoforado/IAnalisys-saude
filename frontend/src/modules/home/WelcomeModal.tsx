@@ -10,7 +10,7 @@ export function WelcomeModal({ open, onConfirm, firstName }: WelcomeModalProps) 
   if (!open) return null
 
   return (
-    <div className="fixed inset-0 z-50 bg-neutral-900/60 backdrop-blur-sm flex items-center justify-center px-4">
+    <div className="fixed inset-0 z-[100] bg-neutral-900/60 backdrop-blur-sm flex items-center justify-center px-4">
       <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full overflow-hidden">
         <div className="bg-gradient-to-br from-primary-600 to-primary-800 px-6 py-6 text-white">
           <div className="flex items-center gap-3 mb-2">
@@ -28,9 +28,9 @@ export function WelcomeModal({ open, onConfirm, firstName }: WelcomeModalProps) 
             </div>
           </div>
           <p className="text-sm text-white/90 leading-relaxed">
-            {firstName ? `${firstName}, ` : ''}essa é a sua home. Cada widget aqui
-            pode ser arrastado, redimensionado ou removido — e tudo fica salvo no
-            seu perfil. Você pode personalizar quantas vezes quiser.
+            {firstName ? `${firstName}, ` : ''}essa é a sua home. Você começa
+            com o painel vazio e escolhe os widgets que importam pra você — pode
+            mudar quantas vezes quiser, tudo fica salvo no seu perfil.
           </p>
         </div>
 

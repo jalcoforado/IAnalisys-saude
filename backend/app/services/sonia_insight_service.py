@@ -46,6 +46,7 @@ _SUPPORTED_PAGES = {
     "/financeiro/dre",
     "/pacientes",
     "/agenda",
+    "/",  # MY-Analisys (home customizada) — exige user_id pra ler layout do user
 }
 
 
@@ -58,6 +59,7 @@ async def generate_insight(
     month: int,
     user_first_name: Optional[str] = None,
     clinic_name: Optional[str] = None,
+    user_id: Optional[str] = None,
 ) -> Optional[SonIAInsightDTO]:
     """
     Gera insight da SonIA pra (page_key, year, month).
@@ -73,7 +75,7 @@ async def generate_insight(
         logger.debug("page_key %s ainda não suportado pela IA backend", page_key)
         return None
 
-    snapshot = await _build_snapshot(db, tenant_id, page_key, year, month)
+    snapshot = await _build_snapshot(db, tenant_id, page_key, year, month, user_id=user_id)
     if snapshot is None:
         return None
 
@@ -85,7 +87,7 @@ async def generate_insight(
         try:
             payload = await ds.complete_json(
                 system=_SYSTEM_PROMPT, user=user_prompt,
-                temperature=0.4, max_tokens=600,
+                temperature=0.3, max_tokens=1200,
             )
             return _payload_to_dto(payload, source="DeepSeek")
         except DeepSeekError as e:
@@ -197,6 +199,7 @@ async def _call_claude(*, system: str, user: str) -> dict[str, Any]:
 
 async def _build_snapshot(
     db: AsyncSession, tenant_id: str, page_key: str, year: int, month: int,
+    *, user_id: Optional[str] = None,
 ) -> Optional[dict[str, Any]]:
     """Roteador: chama o builder certo pra cada page_key suportado."""
     if page_key == "/analise/financeiro":
@@ -211,6 +214,10 @@ async def _build_snapshot(
         return await _snapshot_analise_pacientes(db, tenant_id, year, month)
     if page_key == "/agenda":
         return await _snapshot_agenda(db, tenant_id)
+    if page_key == "/":
+        if user_id is None:
+            return None  # home exige user_id pra ler layout
+        return await _snapshot_home(db, tenant_id, user_id, year, month)
     return None
 
 
@@ -914,6 +921,262 @@ async def _snapshot_agenda(
     }
 
 
+# ── Snapshot: / (MY-Analisys — home customizada por user) ───────
+
+
+async def _snapshot_home(
+    db: AsyncSession, tenant_id: str, user_id: str, year: int, month: int,
+) -> Optional[dict[str, Any]]:
+    """Snapshot do MY-Analisys.
+
+    Lê o layout salvo do user e monta `kpis_secundarios` SÓ pros widgets
+    presentes. Os widgets vêm de fontes diferentes (home/analise/financeiro),
+    então fazemos fetch apenas dos services necessários conforme o layout.
+    """
+    from datetime import datetime
+    from app.repositories.home_layout_repository import get_layout
+    from app.services.home_service import get_home_dashboard
+
+    layout = await get_layout(db, tenant_id, user_id)
+    if layout is None or not layout.layout_json:
+        return None
+
+    widget_ids = {item["widget_id"] for item in layout.layout_json if "widget_id" in item}
+    if not widget_ids:
+        return None
+
+    # Conjuntos pra decidir quais services chamar
+    HOME_WIDGETS = {"agenda_summary", "agenda_strategic", "recall", "pendencias",
+                    "orcamentos_parados", "inadimplencia_critica", "top_profs"}
+    FIN_WIDGETS = {"kpi_fin_faturamento", "kpi_fin_recebido", "kpi_fin_ticket",
+                   "kpi_fin_conversao", "evolucao_faturamento", "funil_orcamentos"}
+    COM_WIDGETS = {"kpi_com_consultas", "kpi_com_absenteismo", "kpi_com_conversao",
+                   "kpi_com_pacientes_unicos", "evolucao_consultas", "top_procedimentos"}
+    PAC_WIDGETS = {"kpi_pac_ativos", "kpi_pac_recorrencia", "kpi_pac_ltv",
+                   "kpi_pac_em_risco", "saude_base", "top_ltv", "para_resgatar"}
+
+    now_local = datetime.now()
+    home_data = None
+    fin_data = None
+    com_data = None
+    pac_data = None
+
+    if widget_ids & HOME_WIDGETS:
+        home_data = await get_home_dashboard(
+            db, tenant_id=tenant_id, role="tenant_admin",
+            user_full_name="", now_local=now_local,
+        )
+    if widget_ids & FIN_WIDGETS:
+        from app.services.analise_financeiro_service import get_analise_financeiro
+        fin_data = await get_analise_financeiro(db, tenant_id, year, month)
+    if widget_ids & COM_WIDGETS:
+        from app.services.analise_comercial_service import get_analise_comercial
+        com_data = await get_analise_comercial(db, tenant_id, year, month)
+    if widget_ids & PAC_WIDGETS:
+        from app.services.analise_pacientes_service import get_analise_pacientes
+        pac_data = await get_analise_pacientes(db, tenant_id, year, month)
+
+    secundarios: dict[str, dict[str, Any]] = {}
+
+    def _kpi_line(kpi: Any, *, sufixo: str = "") -> str:
+        # Em mês parcial, mostra parcial + projeção pro mês fechado. O LLM
+        # já é instruído (system prompt) a NÃO comparar MoM diretamente quando
+        # is_partial=true — então não imprimimos MoM nesse caso.
+        if getattr(kpi, "is_partial", False):
+            parts = [f"PARCIAL {kpi.value_label}{sufixo}"]
+            if getattr(kpi, "projected_label", None):
+                parts.append(f"projeção mês fechado: {kpi.projected_label}")
+            if getattr(kpi, "partial_days", None) and getattr(kpi, "partial_days_in_month", None):
+                parts.append(f"dia {kpi.partial_days}/{kpi.partial_days_in_month}")
+            return " · ".join(parts)
+        parts = [f"{kpi.value_label}{sufixo}"]
+        if kpi.mom_pct is not None:
+            parts.append(f"MoM {kpi.mom_pct:+.1f}%")
+        if kpi.yoy_pct is not None:
+            parts.append(f"YoY {kpi.yoy_pct:+.1f}%")
+        return " · ".join(parts)
+
+    # ── Home dashboard widgets ─────────────────────────────────
+    if home_data is not None:
+        d = home_data
+        if ("agenda_summary" in widget_ids or "agenda_strategic" in widget_ids) and d.agenda:
+            secundarios["agenda_dia"] = {
+                "label": "Agenda do dia",
+                "valor": f"{d.agenda.total} consultas no total (não há breakdown de confirmadas/pendentes — não invente)",
+                "nota": "olhar de hoje",
+            }
+        if "recall" in widget_ids and d.recall and d.recall.total_elegiveis > 0:
+            first = d.recall.items[0] if d.recall.items else None
+            valor = f"{d.recall.total_elegiveis} pacientes elegíveis"
+            nota = "vinham regularmente e estão atrasados"
+            if first:
+                nome = first.paciente_nome.split(" ")[0]
+                nota = f"{nota}; mais atrasado é {nome} ({first.dias_desde_ultima}d sem visita)"
+            secundarios["recall"] = {"label": "Pacientes pra recall", "valor": valor, "nota": nota}
+        if "pendencias" in widget_ids and d.pendencias and d.pendencias.total > 0:
+            secundarios["pendencias"] = {
+                "label": "Pendências operacionais",
+                "valor": f"{d.pendencias.total} pendências sinalizadas no Clinicorp",
+                "nota": "tags abertas",
+            }
+        if "orcamentos_parados" in widget_ids and d.orcamentos_parados and d.orcamentos_parados.total > 0:
+            secundarios["orcamentos_parados"] = {
+                "label": "Orçamentos parados (30-90d sem retorno)",
+                "valor": f"{d.orcamentos_parados.total} orçamentos · R$ {d.orcamentos_parados.valor_total:,.0f}".replace(",", "."),
+                "nota": "aprovados que não viraram nova consulta",
+            }
+        if "inadimplencia_critica" in widget_ids and d.inadimplencia_critica and d.inadimplencia_critica.total > 0:
+            secundarios["inadimplencia"] = {
+                "label": "Inadimplência crítica (+60d, +R$ 500)",
+                "valor": f"{d.inadimplencia_critica.total} parcelas · R$ {d.inadimplencia_critica.valor_total:,.0f}".replace(",", "."),
+                "nota": "vencidas há bastante tempo",
+            }
+        if "top_profs" in widget_ids and d.top_profs_semana and d.top_profs_semana.items:
+            top = d.top_profs_semana.items[0]
+            secundarios["top_profs"] = {
+                "label": "Profissional que mais aprovou esta semana",
+                "valor": f"{top.nome} — R$ {top.valor_aprovado:,.0f}".replace(",", "."),
+                "nota": "ranking semanal",
+            }
+
+    # ── KPIs Financeiros ───────────────────────────────────────
+    if fin_data is not None:
+        k = fin_data.kpis
+        if "kpi_fin_faturamento" in widget_ids:
+            secundarios["kpi_fat"] = {"label": "Faturamento do mês", "valor": _kpi_line(k.faturamento)}
+        if "kpi_fin_recebido" in widget_ids:
+            secundarios["kpi_rec"] = {"label": "Recebido (caixa do mês)", "valor": _kpi_line(k.recebido)}
+        if "kpi_fin_ticket" in widget_ids:
+            secundarios["kpi_tk"] = {"label": "Ticket médio", "valor": _kpi_line(k.ticket_medio)}
+        if "kpi_fin_conversao" in widget_ids:
+            secundarios["kpi_conv_fin"] = {"label": "Conversão R$ aprovado/gerado", "valor": _kpi_line(k.conversao)}
+        if "evolucao_faturamento" in widget_ids and fin_data.evolution:
+            ult = fin_data.evolution[-1]
+            antep = fin_data.evolution[-2] if len(fin_data.evolution) >= 2 else None
+            tendencia = ""
+            if antep is not None and antep.faturamento > 0:
+                delta = (ult.faturamento - antep.faturamento) / antep.faturamento * 100
+                tendencia = f" ({delta:+.1f}% vs mês anterior)"
+            secundarios["evol_fat"] = {
+                "label": "Evolução 12 meses (faturamento)",
+                "valor": f"último mês {ult.label}: R$ {ult.faturamento:,.0f}{tendencia}".replace(",", "."),
+                "nota": "linha temporal completa não cabe aqui — comente só a tendência recente",
+            }
+        if "funil_orcamentos" in widget_ids:
+            f = fin_data.funil
+            secundarios["funil_orc"] = {
+                "label": "Funil de orçamentos do mês",
+                "valor": f"{f.gerados_qty} gerados → {f.aprovados_qty} aprovados → {f.pagos_qty} pagos",
+                "nota": f"taxa aprovação R$: {f.conversao_aprovacao_valor_pct:.1f}%",
+            }
+
+    # ── KPIs Comerciais ────────────────────────────────────────
+    if com_data is not None:
+        k = com_data.kpis
+        if "kpi_com_consultas" in widget_ids:
+            secundarios["kpi_cons"] = {"label": "Consultas do mês", "valor": _kpi_line(k.consultas)}
+        if "kpi_com_absenteismo" in widget_ids:
+            secundarios["kpi_abs"] = {"label": "Absenteísmo (inverso: menor é melhor)", "valor": _kpi_line(k.absenteismo_pct)}
+        if "kpi_com_conversao" in widget_ids:
+            secundarios["kpi_conv_co"] = {"label": "Conversão consulta → orçamento", "valor": _kpi_line(k.conversao_consulta_orcamento_pct)}
+        if "kpi_com_pacientes_unicos" in widget_ids:
+            secundarios["kpi_pac_un"] = {"label": "Pacientes únicos atendidos", "valor": _kpi_line(k.pacientes_unicos)}
+        if "evolucao_consultas" in widget_ids and com_data.evolution:
+            ult = com_data.evolution[-1]
+            secundarios["evol_cons"] = {
+                "label": "Evolução 12 meses (agenda)",
+                "valor": f"último mês {ult.label}: {ult.efetivas} efetivas, {ult.faltas} faltas, {ult.canceladas} canceladas",
+                "nota": "stacked bar 12m",
+            }
+        if "top_procedimentos" in widget_ids and com_data.top_procedimentos:
+            p0 = com_data.top_procedimentos[0]
+            secundarios["top_procs"] = {
+                "label": "Procedimento mais executado",
+                "valor": f"{p0.procedure_name} — {p0.qtd_executados}× ({p0.pct_volume:.1f}% do volume)",
+            }
+
+    # ── KPIs Pacientes ─────────────────────────────────────────
+    if pac_data is not None:
+        k = pac_data.kpis
+        if "kpi_pac_ativos" in widget_ids:
+            secundarios["kpi_ativos"] = {"label": "Pacientes ativos (<90d)", "valor": _kpi_line(k.pacientes_ativos)}
+        if "kpi_pac_recorrencia" in widget_ids:
+            secundarios["kpi_recor"] = {"label": "Taxa de recorrência", "valor": _kpi_line(k.taxa_recorrencia_pct)}
+        if "kpi_pac_ltv" in widget_ids:
+            secundarios["kpi_ltv"] = {"label": "LTV médio", "valor": _kpi_line(k.ltv_medio)}
+        if "kpi_pac_em_risco" in widget_ids:
+            secundarios["kpi_risco"] = {"label": "Em risco (90-180d, inverso)", "valor": _kpi_line(k.em_risco_qty)}
+        if "saude_base" in widget_ids and pac_data.saude_base:
+            s = pac_data.saude_base
+            secundarios["saude"] = {
+                "label": "Saúde da base de pacientes",
+                "valor": f"{s.total} total · {s.ativo_pct:.1f}% ativos, {s.em_risco_pct:.1f}% em risco",
+            }
+        if "top_ltv" in widget_ids and pac_data.top_ltv:
+            secundarios["top_ltv"] = {
+                "label": "Top LTV — pacientes mais valiosos",
+                "valor": f"top é {pac_data.top_ltv[0].name or '#?'} com LTV R$ {pac_data.top_ltv[0].ltv:,.0f}".replace(",", "."),
+            }
+        if "para_resgatar" in widget_ids and pac_data.para_resgatar:
+            secundarios["resgatar"] = {
+                "label": "Para Resgatar",
+                "valor": f"{len(pac_data.para_resgatar)} pacientes em risco com LTV alto pra reativar",
+            }
+
+    if not secundarios:
+        return None
+
+    # Detecta se algum KPI vem em mês parcial — se sim, sinaliza pro LLM via
+    # `is_partial=True` (system prompt já trata: não compara MoM diretamente,
+    # fala de projeção). Mês parcial vem dos /analise/* services quando year/
+    # month == mês corrente.
+    is_partial = False
+    for src in (fin_data, com_data, pac_data):
+        if src is None:
+            continue
+        kpis = getattr(src, "kpis", None)
+        if kpis is None:
+            continue
+        for kpi_attr in vars(kpis).values() if hasattr(kpis, "__dict__") else []:
+            if getattr(kpi_attr, "is_partial", False):
+                is_partial = True
+                break
+        if is_partial:
+            break
+
+    # Info de progresso do mês (dia X de Y) pra o LLM proporcionar a leitura.
+    partial_days = None
+    partial_days_in_month = None
+    if is_partial:
+        for src in (fin_data, com_data, pac_data):
+            if src is None:
+                continue
+            kpis = getattr(src, "kpis", None)
+            if kpis is None:
+                continue
+            for kpi_attr in vars(kpis).values() if hasattr(kpis, "__dict__") else []:
+                if getattr(kpi_attr, "is_partial", False):
+                    partial_days = getattr(kpi_attr, "partial_days", None)
+                    partial_days_in_month = getattr(kpi_attr, "partial_days_in_month", None)
+                    if partial_days is not None:
+                        break
+            if partial_days is not None:
+                break
+
+    return {
+        "periodo": now_local.strftime("%d/%m/%Y"),
+        "is_partial": is_partial,
+        "partial_days": partial_days,
+        "partial_days_in_month": partial_days_in_month,
+        # NÃO é "diária" no sentido do snapshot agenda — é home mista com
+        # widgets do dia (agenda) E do mês (KPIs financeiros).
+        "is_home_customizada": True,
+        "widgets_no_layout": sorted(secundarios.keys()),
+        "kpis_principais": {},
+        "kpis_secundarios": secundarios,
+    }
+
+
 # ── DeepSeek call ────────────────────────────────────────────────
 
 
@@ -953,15 +1216,15 @@ REGRAS sobre os 3 ângulos comparativos (use TODOS quando disponíveis):
 - Se MoM e vs-média-6m apontam direções DIFERENTES, sempre contextualize: "abaixo de abril, mas próximo da média histórica" é muito mais útil que apenas "20% abaixo do mês passado".
 
 REGRAS sobre os dados estruturados que você recebe:
-- KPIs PRINCIPAIS (faturamento, conversão, ticket, recebido) — comente SEMPRE pelo menos 2-3 desses, com os 3 ângulos quando disponíveis.
-- OBSERVAÇÕES DESTA SESSÃO — pool aleatório que muda a cada visita. Use 1 ou 2 desses bullets quando trouxerem algo realmente relevante (alta variação, valor curioso, oportunidade clara). Pode IGNORAR se não agregar — preferimos qualidade a quantidade.
-- A variação de quais "observações desta sessão" aparecem é proposital: ao longo das visitas do usuário, a SonIA cobre todo o dashboard. Não comente que são aleatórios; apresente como se você tivesse "reparado" naquilo.
+- KPIs PRINCIPAIS (quando existirem) — comente SEMPRE 2-3 desses com os ângulos disponíveis.
+- OBSERVAÇÕES DESTA SESSÃO — pool aleatório que muda a cada visita. Use 2-4 desses pra DIVERSIFICAR a leitura (espalhe entre métricas diferentes). Não comente que são aleatórios; apresente como se você tivesse "reparado" naquilo.
 
 REGRAS sobre dados:
-- Use APENAS os números fornecidos. NUNCA invente.
-- Se um número for null/None, ignore-o silenciosamente (não comente "não temos esse dado").
-- Em mês parcial (is_partial=true), NUNCA dispare alerta por MoM — o mês mal começou. Fale de valor parcial + projeção; a média 6m e o desvio já foram calculados usando a projeção como referência, pode usar.
-- 3 a 5 bullets, ordenados por importância. Cada bullet com 1 número específico e contexto.
+- Use APENAS os números fornecidos. NUNCA invente. Se não tem dado, NÃO mencione.
+- Se um número for null/None, ignore silenciosamente.
+- Em mês parcial (is_partial=true), NUNCA dispare alerta por MoM. Fale de valor parcial + projeção.
+- **SEMPRE 4 a 6 bullets** (preferencialmente 5). Não menos de 4 se houver pool. Cada bullet com 1 número específico e contexto.
+- COBERTURA: cada bullet sobre uma métrica/ângulo DIFERENTE. Nunca 2 bullets sobre a mesma coisa.
 """
 
 
@@ -1058,6 +1321,27 @@ def _build_user_prompt(
         )
         lines.append("")
 
+    if snapshot.get("is_home_customizada"):
+        lines.append(
+            "Esta é a HOME CUSTOMIZADA do usuário (MY-Analisys). É uma VISÃO MISTA: "
+            "alguns widgets são do DIA (agenda, recall), outros são do MÊS (KPIs financeiros/comerciais/pacientes). "
+            "Trate cada observação no escopo em que ela vem: NÃO compare KPI do mês com baseline diária."
+        )
+        lines.append("")
+        lines.append("REGRAS CRÍTICAS pra esta página:")
+        lines.append(
+            "1. Use APENAS os números literais que aparecem nas OBSERVAÇÕES abaixo. "
+            "NUNCA invente baseline, meta, projeção, ocupação, ticket médio ou qualquer outro número "
+            "que não esteja LITERALMENTE escrito ali. Copie os valores exatos."
+        )
+        lines.append(
+            "2. Para CADA observação fornecida, gere 1 bullet. Total = 4-6 bullets (use TUDO o que tem)."
+        )
+        lines.append(
+            "3. Headline curto e acolhedor. Tom de \"trouxe o que reparei no seu painel\"."
+        )
+        lines.append("")
+
     if kp:
         if any("mom_pct" in v or "media_6m_label" in v for v in kp.values()):
             lines.append("KPIs PRINCIPAIS (cada um com até 3 ângulos: MoM / YoY / Média 6m):")
@@ -1071,27 +1355,28 @@ def _build_user_prompt(
                 lines.append(f"- {label}: {val.get('valor', '')}")
         lines.append("")
 
-        # Pool de secundários — escolhe N aleatórios pra trazer variedade.
-        # Cada chamada vê um subset diferente → ao longo das visitas o
-        # usuário recebe cobertura completa do dashboard.
-        secs: dict[str, dict[str, Any]] = snapshot.get("kpis_secundarios", {})
-        if secs:
-            chosen_keys = random.sample(list(secs.keys()), k=min(_N_SECUNDARIOS_ALEATORIOS, len(secs)))
-            lines.append(
-                f"OBSERVAÇÕES DESTA SESSÃO ({len(chosen_keys)} de {len(secs)} disponíveis — "
-                "use 1 ou 2 desses no seu insight se forem relevantes; pode ignorar os outros):"
-            )
-            for key in chosen_keys:
-                lines.append(f"- {_fmt_secundario_line(secs[key])}")
-            lines.append("")
+    # Pool de secundários — escolhe N aleatórios pra trazer variedade.
+    # Independente de ter kpis_principais ou não (home customizada, por exemplo,
+    # tem APENAS secundários — antes esse bloco vivia dentro de `if kp:` e o
+    # prompt saía sem dados, levando o LLM a alucinar tudo).
+    secs: dict[str, dict[str, Any]] = snapshot.get("kpis_secundarios", {})
+    if secs:
+        chosen_keys = random.sample(list(secs.keys()), k=min(_N_SECUNDARIOS_ALEATORIOS, len(secs)))
+        lines.append(
+            f"OBSERVAÇÕES DESTA SESSÃO ({len(chosen_keys)} de {len(secs)} disponíveis — "
+            "use 2-4 desses pra diversificar a leitura; copie valores LITERAIS):"
+        )
+        for key in chosen_keys:
+            lines.append(f"- {_fmt_secundario_line(secs[key])}")
+        lines.append("")
 
     lines.append("Devolva APENAS o JSON conforme schema, em pt-BR. Use o nome do usuário no headline ou detail quando fizer sentido.")
     return "\n".join(lines)
 
 
 # Quantos secundários incluir aleatoriamente em cada chamada.
-# Mais = mais variedade, mas tokens maiores e prompt mais difícil de focar.
-_N_SECUNDARIOS_ALEATORIOS = 3
+# Padrão SonIA: sempre 4-6 bullets, pool maior dá ao LLM espaço pra escolher.
+_N_SECUNDARIOS_ALEATORIOS = 8
 
 
 def _fmt_secundario_line(sec: dict[str, Any]) -> str:
