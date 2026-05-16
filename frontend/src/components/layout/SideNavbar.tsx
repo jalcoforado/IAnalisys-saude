@@ -1,9 +1,9 @@
 import { useState } from 'react'
-import { Link, useLocation } from 'react-router-dom'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { ChevronDown, ChevronRight, Settings as SettingsIcon } from 'lucide-react'
 
 import UserMenu from './UserMenu'
-import { MAIN_MENU, type MenuItem } from '@/config/menus'
+import { HOME_START_EDIT_EVENT, MAIN_MENU, type MenuItem } from '@/config/menus'
 import { useSettings, type TopbarColor } from '@/contexts/SettingsContext'
 
 interface VariantClasses {
@@ -78,6 +78,7 @@ export default function SideNavbar() {
 
 function SideItem({ item, v }: { item: MenuItem; v: VariantClasses }) {
   const location = useLocation()
+  const navigate = useNavigate()
   const Icon = item.icon
   const [expanded, setExpanded] = useState(true)
 
@@ -96,6 +97,26 @@ function SideItem({ item, v }: { item: MenuItem; v: VariantClasses }) {
           <span className="flex-1 text-left">{item.label}</span>
           <span className="text-[9px] uppercase px-1.5 py-0.5 rounded bg-warning-bg text-warning-text">soon</span>
         </span>
+      )
+    }
+    // Item de ação (não navega — dispara evento global).
+    if (item.action === 'home-start-edit') {
+      return (
+        <button
+          type="button"
+          onClick={() => {
+            if (location.pathname !== '/') {
+              navigate('/')
+              setTimeout(() => window.dispatchEvent(new CustomEvent(HOME_START_EDIT_EVENT)), 150)
+            } else {
+              window.dispatchEvent(new CustomEvent(HOME_START_EDIT_EVENT))
+            }
+          }}
+          className={`${baseClass} ${v.hover} ${v.itemHoverText} text-left`}
+        >
+          <Icon size={16} />
+          <span className="flex-1 text-left">{item.label}</span>
+        </button>
       )
     }
     return (

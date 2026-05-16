@@ -8,6 +8,7 @@ import type {
   PacienteHistoricoResponse,
   PrazoAuditResponse,
 } from '@/types/analise'
+import type { InteligenciaPacientesResponse } from '@/types/pacientes-inteligencia'
 
 export type AIInsightsResponse = {
   narrative: string
@@ -94,5 +95,12 @@ export const analiseService = {
   pacientesCaptacao: () =>
     api
       .get<CaptacaoOrigemResponse>('/analise/pacientes/captacao')
+      .then((r) => r.data),
+
+  pacientesInteligencia: (days = 90) =>
+    api
+      .get<InteligenciaPacientesResponse>('/analise/pacientes/inteligencia', {
+        params: { days },
+      })
       .then((r) => r.data),
 }

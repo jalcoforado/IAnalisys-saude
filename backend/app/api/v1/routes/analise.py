@@ -54,6 +54,8 @@ from app.services.analise_pacientes_service import (
     get_captacao_origem,
     get_paciente_historico,
 )
+from app.schemas.pacientes_inteligencia import InteligenciaPacientesResponse
+from app.services.pacientes_inteligencia_service import get_inteligencia_pacientes
 
 router = APIRouter(prefix="/analise", tags=["analise"])
 
@@ -302,6 +304,24 @@ async def analise_pacientes(
 
 # IMPORTANTE: rotas estáticas vêm ANTES das com path-param int para evitar
 # que /pacientes/captacao seja interpretado como id de paciente.
+@router.get("/pacientes/inteligencia", response_model=InteligenciaPacientesResponse)
+async def pacientes_inteligencia(
+    days: int = Query(90, ge=7, le=365),
+    current_user: UserMe = Depends(requires("dashboard.read")),
+    db: AsyncSession = Depends(get_db),
+) -> InteligenciaPacientesResponse:
+    """Inteligência de Pacientes — 6 visões num único endpoint.
+
+    Acurácia preditiva (backtest da heurística de risco), top faltosos,
+    curva de retenção, risco de evasão, heatmap no-show e eficácia da
+    confirmação. `days` controla a janela das visões temporais (default 90d);
+    retenção e evasão usam janelas fixas (até 365d / 12m).
+    """
+    if not current_user.tenant_id:
+        raise HTTPException(status_code=400, detail="Usuário sem tenant associado.")
+    return await get_inteligencia_pacientes(db, current_user.tenant_id, days)
+
+
 @router.get("/pacientes/captacao", response_model=CaptacaoOrigemResponse)
 async def pacientes_captacao(
     current_user: UserMe = Depends(requires("dashboard.read")),

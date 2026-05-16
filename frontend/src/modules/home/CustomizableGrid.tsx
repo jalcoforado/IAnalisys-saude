@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import GridLayout, { WidthProvider } from 'react-grid-layout'
-import { LayoutGrid, Plus, Save, Settings2, Trash2, X } from 'lucide-react'
+import { LayoutGrid, Plus, Save, Trash2, X } from 'lucide-react'
+
+import { HOME_START_EDIT_EVENT } from '@/config/menus'
 
 import 'react-grid-layout/css/styles.css'
 import 'react-resizable/css/styles.css'
@@ -67,6 +69,16 @@ export function CustomizableGrid({
       setWelcomeOpen(true)
     }
   }, [layoutQuery.isLoading, layoutQuery.data])
+
+  // Escuta o trigger global do UserMenu (item "Personalizar painel").
+  useEffect(() => {
+    const handler = () => {
+      setDraft(items)
+      setEditing(true)
+    }
+    window.addEventListener(HOME_START_EDIT_EVENT, handler)
+    return () => window.removeEventListener(HOME_START_EDIT_EVENT, handler)
+  }, [items])
 
   const startEdit = useCallback(() => {
     setDraft(items)
@@ -181,7 +193,6 @@ export function CustomizableGrid({
       <Toolbar
         editing={editing}
         isSaving={layoutQuery.isSaving}
-        onStartEdit={startEdit}
         onCancel={cancelEdit}
         onSave={saveEdit}
         onAdd={() => setPickerOpen(true)}
@@ -197,15 +208,15 @@ export function CustomizableGrid({
             Seu MY-Analisys está vazio
           </h3>
           <p className="text-sm text-neutral-500 max-w-md mx-auto mb-5">
-            Clique em <strong>Personalizar painel</strong> no topo direito, depois em
-            <strong> Adicionar widget</strong> pra escolher o que quer ver aqui.
+            Abra o menu do seu perfil (canto inferior esquerdo) e escolha
+            <strong> Personalizar painel</strong> — ou clique no botão abaixo pra começar agora.
           </p>
           <button
             type="button"
             onClick={startEdit}
             className="inline-flex items-center gap-1.5 px-4 py-2 text-sm font-bold text-white bg-primary-600 hover:bg-primary-700 rounded-lg transition-colors shadow-sm"
           >
-            <Settings2 size={14} /> Personalizar agora
+            <LayoutGrid size={14} /> Personalizar agora
           </button>
         </div>
       )}
@@ -305,7 +316,6 @@ export function CustomizableGrid({
 function Toolbar({
   editing,
   isSaving,
-  onStartEdit,
   onCancel,
   onSave,
   onAdd,
@@ -313,25 +323,14 @@ function Toolbar({
 }: {
   editing: boolean
   isSaving: boolean
-  onStartEdit: () => void
   onCancel: () => void
   onSave: () => void
   onAdd: () => void
   onReset: () => void
 }) {
-  if (!editing) {
-    return (
-      <div className="flex justify-end mb-3">
-        <button
-          type="button"
-          onClick={onStartEdit}
-          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-neutral-600 hover:text-primary-700 hover:bg-primary-50 rounded-lg transition-colors"
-        >
-          <Settings2 size={14} /> Personalizar painel
-        </button>
-      </div>
-    )
-  }
+  // Quando não está editando, o toolbar fica oculto — o trigger de edição
+  // vive no UserMenu (item "Personalizar painel") que dispara o evento global.
+  if (!editing) return null
 
   return (
     <div className="bg-primary-50 border border-primary-200 rounded-xl p-3 mb-4 flex items-center justify-between gap-3 flex-wrap">

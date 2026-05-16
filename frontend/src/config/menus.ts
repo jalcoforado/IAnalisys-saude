@@ -2,10 +2,12 @@ import type { LucideIcon } from 'lucide-react'
 import {
   Activity,
   BarChart3,
+  Brain,
   Building2,
   Calendar,
   DollarSign,
   Home,
+  LayoutGrid,
   Layers,
   RefreshCw,
   Settings,
@@ -17,6 +19,9 @@ import {
   UserPlus,
   Wallet,
 } from 'lucide-react'
+
+/** Evento global disparado por itens com `action: 'home-start-edit'`. */
+export const HOME_START_EDIT_EVENT = 'ianalisys:home-start-edit'
 
 export interface MenuItem {
   /** Visível no menu. */
@@ -33,6 +38,12 @@ export interface MenuItem {
   permission?: string
   /** Permite quando tem QUALQUER uma. */
   permissionAny?: string[]
+  /**
+   * Ação no lugar de navegação. O renderer dispara um CustomEvent com o nome
+   * indicado. Use pra itens que não viram rota (ex: abrir um modal/modo
+   * edição na página atual).
+   */
+  action?: 'home-start-edit'
 }
 
 /**
@@ -70,6 +81,7 @@ export const MAIN_MENU: MenuItem[] = [
     children: [
       { label: 'Dashboard', icon: BarChart3, path: '/pacientes', permission: 'dashboard.read' },
       { label: 'Captação & Origem', icon: UserPlus, path: '/pacientes/captacao', permission: 'dashboard.read' },
+      { label: 'Inteligência', icon: Brain, path: '/pacientes/inteligencia', permission: 'dashboard.read' },
     ],
   },
   {
@@ -108,6 +120,7 @@ export const MAIN_MENU: MenuItem[] = [
       { label: 'Permissões', icon: ShieldCheck, path: '/empresa/permissoes', permission: 'empresa.permissions.manage' },
       { label: 'Meta (IG · FB · Ads)', icon: Activity, path: '/empresa/meta-config', permission: 'empresa.settings.read' },
       { label: 'Sincronização', icon: RefreshCw, path: '/admin/sync', permission: 'sync.run' },
+      { label: 'Personalizar painel', icon: LayoutGrid, action: 'home-start-edit' },
       { label: 'Preferências', icon: Settings, path: '/configuracoes' },
     ],
   },

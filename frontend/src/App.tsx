@@ -19,6 +19,7 @@ import AnaliseFinanceiroPage from '@/modules/analise/financeiro/FinanceiroPage'
 import AnaliseComercialPage from '@/modules/analise/comercial/ComercialPage'
 import DashboardPacientesPage from '@/modules/pacientes/DashboardPacientesPage'
 import CaptacaoPage from '@/modules/pacientes/CaptacaoPage'
+import InteligenciaPage from '@/modules/pacientes/InteligenciaPage'
 import SettingsPage from '@/modules/settings/SettingsPage'
 import CompanySettingsPage from '@/modules/empresa/CompanySettingsPage'
 import MetaConfigPage from '@/modules/empresa/MetaConfigPage'
@@ -141,6 +142,18 @@ function App() {
                   <AppShell>
                     <RequirePermission permission="dashboard.read">
                       <CaptacaoPage />
+                    </RequirePermission>
+                  </AppShell>
+                </PrivateRoute>
+              }
+            />
+            <Route
+              path="/pacientes/inteligencia"
+              element={
+                <PrivateRoute>
+                  <AppShell>
+                    <RequirePermission permission="dashboard.read">
+                      <InteligenciaPage />
                     </RequirePermission>
                   </AppShell>
                 </PrivateRoute>

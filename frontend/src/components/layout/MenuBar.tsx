@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
-import { Link, useLocation } from 'react-router-dom'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { ChevronRight } from 'lucide-react'
 
-import { MAIN_MENU, type MenuItem } from '@/config/menus'
+import { HOME_START_EDIT_EVENT, MAIN_MENU, type MenuItem } from '@/config/menus'
 import { useSettings, type TopbarColor } from '@/contexts/SettingsContext'
 import { usePermissions } from '@/hooks/usePermissions'
 
@@ -134,6 +134,7 @@ function NavbarItem({ item, colors }: {
 function DropdownItem({ item, onClose }: { item: MenuItem; onClose: () => void }) {
   const Icon = item.icon
   const location = useLocation()
+  const navigate = useNavigate()
   const isActive = item.path && location.pathname === item.path
 
   if (item.comingSoon) {
@@ -145,6 +146,30 @@ function DropdownItem({ item, onClose }: { item: MenuItem; onClose: () => void }
       </div>
     )
   }
+
+  // Item de ação (não navega — dispara evento global).
+  if (item.action === 'home-start-edit') {
+    return (
+      <button
+        type="button"
+        onClick={() => {
+          onClose()
+          if (location.pathname !== '/') {
+            // Vai pra home e dispara depois do mount do CustomizableGrid.
+            navigate('/')
+            setTimeout(() => window.dispatchEvent(new CustomEvent(HOME_START_EDIT_EVENT)), 150)
+          } else {
+            window.dispatchEvent(new CustomEvent(HOME_START_EDIT_EVENT))
+          }
+        }}
+        className="w-full text-left px-4 py-2.5 text-sm flex items-center gap-2.5 transition text-neutral-700 hover:bg-neutral-50"
+      >
+        <Icon size={14} />
+        {item.label}
+      </button>
+    )
+  }
+
   return (
     <Link
       to={item.path!}

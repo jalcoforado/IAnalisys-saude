@@ -1,18 +1,19 @@
 # Roadmap — IAnalisys Saúde
 
-> **🟢 ATUALIZADO 2026-05-13 — Validação CA completa · MERGE CA+Clinicorp desbloqueado.**
+> **🟢 ATUALIZADO 2026-05-15 — Sub-PR 20f Inteligência de Pacientes entregue (cards autoexplicativos).**
 >
 > **Estado atual:**
-> - Meta foundation (Sub-PR 21a-d) ✅ — Sub-PRs 21e-g bloqueados pela TI Parente
-> - SonIA MVP funcional em 6 páginas com DeepSeek ✅ (commit `ca6ba59` em 12/05)
-> - Sub-PR 20d frontend `/pacientes` ✅ (concluído 09-10/05 · 912 linhas)
-> - **Validação CA × DBF Parente em 6 ondas — 100 % aprovada** ✅ (commit `03d09ab` em 12/05)
-> - **25 categorias órfãs vinculadas ao DRE → 100 % cobertura** ✅ (commit `cb67fa2` em 13/05)
-> - **3 saldos negativos diagnosticados** ✅ — não é bug, é uso real (cofres só pra saída)
+> - Meta foundation (Sub-PR 21a-f) ✅ — token TI 15/05 destravou IG/FB · sync de comentários + IA + scheduler
+> - SonIA MVP funcional em 6 páginas com DeepSeek ✅
+> - Sub-PR 20d frontend `/pacientes` ✅ (09-10/05)
+> - **Sub-PR 20f — `/pacientes/inteligencia` ENTREGUE 15/05** ✅ — 6 visões (acurácia preditiva, top faltosos, retenção, evasão, heatmap dow×hora, eficácia do lembrete) + cards reescritos em linguagem leiga
+> - Sub-PR 22.3.D ✅ — item "Personalizar painel" no menu lateral (gatilha edição da MY-Analisys via evento global)
+> - Validação CA × DBF Parente — 100% aprovada
+> - 25 categorias órfãs vinculadas ao DRE → 100% cobertura
 >
-> **🎯 Próxima ação (não-bloqueada):** **MERGE CA + Clinicorp no `/financeiro`** — receitas vêm de Clinicorp `fato_financeiro` (validado), despesas vêm de CA `fato_caixa` (validado). Todas pré-condições atendidas. Detalhes em `reference_ca_uso_real_parente.md` (memória) e `backend/scripts/validacao_ca/PENDENCIAS_TI_RESOLVIDAS.md` (implicações de UI).
->
-> **Git:** 3 commits ahead do origin/main aguardando push: `ca6ba59` (SonIA+Meta), `03d09ab` (validação CA), `cb67fa2` (resolução pendências TI).
+> **🎯 Próximas ações:**
+> 1. **Inteligência de Pacientes — fase 2** (não-bloqueada): drill-down do paciente nas listas + SonIA narrativa explicando os achados + ações (campanha de reativação, exportar CSV)
+> 2. **MERGE CA + Clinicorp no `/financeiro`** — receitas Clinicorp + despesas CA, ambos validados
 
 ---
 
@@ -766,6 +767,56 @@ Removido após 20d:
 - Frontend: `modules/dashboard/`, `services/dashboard.service.ts`, item de menu "Visão Consolidada (legado)", rota `/dashboard` em `App.tsx`
 - Backend: `routes/dashboard.py`, `services/dashboard_service.py`, `services/dashboard_drilldown_service.py`, `schemas/dashboard_drilldown.py` + include_router
 - Mantido: `schemas/dashboard.py` e `types/dashboard.ts` reduzidos só ao `PeriodInfo` (usado por Fluxo de Caixa). Pode ser movido para `common.py/.ts` em limpeza futura.
+
+#### Sub-PR 20f — `/pacientes/inteligencia` ✅ (entregue 2026-05-15)
+
+Foco: medir o quanto a previsão de no-show acerta + descobrir padrões de comportamento que viram ação na clínica.
+Pergunta-guia: "a heurística está funcionando? em que dia/hora a clínica perde mais? quem está sumindo?"
+
+**6 visões num único endpoint** `GET /analise/pacientes/inteligencia?days=N` (7-365, default 90):
+
+1. **Acurácia da Previsão de No-Show** — backtest da heurística `home_service._risk` em N dias, **sem vazamento** (recalcula o risco de cada compromisso usando só dados anteriores ao dia dele). KPIs: acerto geral, "quando alertamos é falta?" (precisão@alto), "capturamos as faltas?" (recall@alto), baseline. Buckets alto/médio/baixo + matriz de confusão visual + listas paralelas "acertos no alto" vs "faltas que não previmos".
+2. **Quem mais falta no período** — top 20 ranking absoluto + taxa pessoal.
+3. **Os pacientes voltam?** — curva de retenção 30/60/90/180/365d a partir da 1ª visita efetiva (CHECKOUT/LATE).
+4. **Pacientes ativos que sumiram** — ≥3 visitas em 12m, >90d sem voltar (top 30, mais antigos primeiro).
+5. **Quando as faltas acontecem** — heatmap dia da semana × hora com % na célula + tooltip "Seg 14h: 28/250 faltaram (11%)".
+6. **O lembrete está funcionando?** — taxa de falta com vs sem `has_lembrete` + frase condicional ("quem recebe lembrete falta X% a menos/mais"). Warning automático quando amostra < 50.
+
+**Validação Parente 90d (15/05):**
+- Acurácia: 72% em 2197 compromissos · baseline 10% · precisão@alto 16% · recall@alto 33%
+- Top faltosos: Márcio Gomes 83% / Maria Erica 71%
+- Retenção: 49→76% (30d→365d)
+- Evasão: 30 ativos sumidos
+- Heatmap: 11% no-show global
+- Lembrete: cobertura **só 1%** (22/2175) — campo `has_lembrete` provavelmente é usado pra outra finalidade na clínica; warning já avisa.
+
+**Cards autoexplicativos** (Pedro: "fiquei na dúvida de vários"):
+- KPIs viraram label-pergunta + valor + frase ("Quando alertamos, é falta? · 16% · Dos pacientes marcados como ALTO risco, 16% realmente faltaram.")
+- Matriz de confusão: parágrafo "como ler" antes + tooltip por célula + legenda colorida em frase.
+- Sem jargão de ML ("pp", "precisão/recall" puros, "baseline"). Tudo em linguagem leiga.
+- Heatmap: célula com `%` (não só número) + tooltip detalhado.
+- Eficácia: frase condicional explicando o resultado (reduz/aumenta/sem diferença), em vez de "-12pp".
+
+**Pegadinhas técnicas resolvidas:**
+- `RISK_NO_CONFIRMATION_BUMP` não simulável no backtest (não temos snapshot do `status_type` no momento da predição) — documentado.
+- LATE conta como "veio" (foi atendido, só atrasou).
+- Backtest faz 1 query carregando período + 90d de janela histórica; em Python separa "avaliar" vs "histórico".
+
+**Próximas frentes (Sub-PR 20f.2 — pausadas em 15/05):**
+1. **Drill-down do paciente** — clicar nos nomes das listas (Top faltosos / Evasão / Acertos / Escapes) abre `PacienteDetalheDrawer` (já existe, usado em `/pacientes`).
+2. **SonIA narrativa** — bloco no topo com explicação textual gerada pelo DeepSeek dos achados, padrão do sistema.
+3. **Ações sobre listas** — marcar paciente em risco pra campanha de reativação (whatsapp), exportar CSV de evasão.
+
+**Arquivos:**
+- Backend novo: `app/schemas/pacientes_inteligencia.py`, `app/services/pacientes_inteligencia_service.py` (~580 linhas)
+- Frontend novo: `src/types/pacientes-inteligencia.ts`, `src/modules/pacientes/InteligenciaPage.tsx` (~530 linhas)
+- Modificados: rota em `routes/analise.py`, método em `services/analise.service.ts`, rota em `App.tsx`, item em `config/menus.ts` (ícone Brain)
+
+#### Sub-PR 22.3.D — Item "Personalizar painel" no menu lateral ✅ (entregue 2026-05-15)
+
+Pequena melhoria UX: o botão "Personalizar painel" do MY-Analisys agora também aparece no menu do usuário (canto inferior esquerdo). Implementado via `MenuItem.action: 'home-start-edit'` que dispara um `CustomEvent` global ouvido pelo `CustomizableGrid`. Empty state da MY-Analisys atualizado pra orientar o usuário pelo menu.
+
+Arquivos: `config/menus.ts`, `components/layout/MenuBar.tsx`, `components/layout/SideNavbar.tsx`, `modules/home/CustomizableGrid.tsx`.
 
 ---
 
